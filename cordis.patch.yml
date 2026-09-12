@@ -1,0 +1,9 @@
+# dsh-deepseek-companion bundle patch.
+#
+# This patch only inserts the current plugin into the composed Cordis tree.
+# It must never remove DSH default plugins, replace default config, modify
+# other bundles, or change the DSH preset.
+
+- insert:
+    - id: deepseek-companion
+      name: 'dsh-deepseek-companion'

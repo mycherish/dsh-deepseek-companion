@@ -1,0 +1,23 @@
+# dependencies
+node_modules/
+
+# build output
+lib/
+dist/
+
+# test coverage
+coverage/
+
+# OS
+.DS_Store
+
+# logs
+*.log
+
+# auth & local runtime data (must never be committed)
+.env
+.env.*
+.env.local
+
+# Future phases: browser profile / cookie / session data must be ignored here.
+# Never commit any authentication data.
