@@ -1,60 +1,39 @@
-import { useState, type CSSProperties } from 'react'
+import { useSyncExternalStore, type CSSProperties } from 'react'
+import type { DockController } from './index.ts'
 
-/** Minimal Phase 03 placeholder entry shown in the DSH sidebar footer. */
-export function CompanionEntry({ wide }: { wide: boolean }): JSX.Element {
-  const [open, setOpen] = useState(false)
+const triggerStyle: CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 8,
+  padding: '6px 10px',
+  border: 'none',
+  background: 'transparent',
+  color: 'inherit',
+  cursor: 'pointer',
+  fontSize: 13,
+  borderRadius: 6,
+}
 
-  const triggerStyle: CSSProperties = {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 8,
-    padding: '6px 10px',
-    border: 'none',
-    background: 'transparent',
-    color: 'inherit',
-    cursor: 'pointer',
-    fontSize: 13,
-    borderRadius: 6,
-  }
+const markStyle: CSSProperties = {
+  fontWeight: 600,
+  letterSpacing: '0.02em',
+  lineHeight: 1,
+}
 
-  const markStyle: CSSProperties = {
-    fontWeight: 600,
-    letterSpacing: '0.02em',
-    lineHeight: 1,
-  }
-
+/** Sidebar footer entry that toggles the Companion Dock. */
+export function CompanionEntry({ wide, dock }: { wide: boolean; dock: DockController }): JSX.Element {
+  const open = useSyncExternalStore(dock.subscribe, dock.isOpen)
   return (
-    <div style={{ position: 'relative' }}>
-      <button
-        type="button"
-        title="DeepSeek Companion"
-        aria-label="DeepSeek Companion"
-        aria-expanded={open}
-        onClick={() => setOpen((value) => !value)}
-        style={triggerStyle}
-      >
-        <span style={markStyle}>DS</span>
-        {wide ? <span>DeepSeek</span> : null}
-      </button>
-      {open ? (
-        <div
-          style={{
-            position: 'absolute',
-            right: 0,
-            bottom: 'calc(100% + 6px)',
-            minWidth: 180,
-            padding: '10px 12px',
-            border: '1px solid rgba(128, 128, 128, 0.35)',
-            borderRadius: 8,
-            background: 'rgba(128, 128, 128, 0.12)',
-            boxShadow: '0 4px 16px rgba(0, 0, 0, 0.16)',
-            fontSize: 13,
-          }}
-        >
-          <strong>DeepSeek Companion</strong>
-          <div style={{ opacity: 0.7, marginTop: 4 }}>Coming soon</div>
-        </div>
-      ) : null}
-    </div>
+    <button
+      type="button"
+      title="DeepSeek Companion"
+      aria-label={open ? 'Close DeepSeek Companion' : 'Open DeepSeek Companion'}
+      aria-expanded={open}
+      onClick={dock.toggle}
+      style={triggerStyle}
+    >
+      <span style={markStyle}>DS</span>
+      {wide ? <span>DeepSeek</span> : null}
+    </button>
   )
 }
