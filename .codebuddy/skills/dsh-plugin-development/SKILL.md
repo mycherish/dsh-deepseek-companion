@@ -118,6 +118,15 @@ blank Session 下，即使 `register` 成功、occupant `active: true`、`ctx.la
 
 不要通过 `document.querySelector`、`MutationObserver`、`appendChild`、直接改 DSH 主 DOM、monkey patch `AppFrame` 来实现右侧面板。若官方 Layout/Slot API 不满足需求，先停止并调查，不自动采用 DOM Hack。
 
+## Width Ownership（谁拥有布局，谁拥有宽度）
+
+宽度归属是稳定架构事实：
+
+- `shell.overlay`：Companion owns width。自定义 resize handle，宽度持久化到浏览器 localStorage（key：`dsh-deepseek-companion:overlay-width`）。
+- `details`：DSH owns width。使用 DSH 原生 DragHandle，Companion 不控制、不持久化、**禁止同步** details 宽度。
+
+overlay 与 details 宽度故意独立，绝不相同步，也不把 localStorage 的 overlay 宽度应用到 details。
+
 ## Host / Client 边界
 
 长期架构：Host 拥有未来的 Browser State、Auth State、Conversation State、Message Store；Client 只负责 UI（Dock open/close、展示方式、Resize width、滚动等纯 UI 状态）。

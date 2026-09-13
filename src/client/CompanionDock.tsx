@@ -101,13 +101,19 @@ function ResizeHandle({ dock }: { dock: DockController }): JSX.Element {
     )
   }
 
-  const finish = (event: ReactPointerEvent<HTMLDivElement>) => {
+  const finish = (event: ReactPointerEvent<HTMLDivElement>, persist: boolean) => {
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId)
     }
     startRef.current = null
     setDragging(false)
+    // Persist only on a normal release; a cancelled drag keeps the in-memory
+    // width but does not force a half-finished value into localStorage.
+    if (persist) dock.commitOverlayWidth()
   }
+
+  const onPointerUp = (event: ReactPointerEvent<HTMLDivElement>) => finish(event, true)
+  const onPointerCancel = (event: ReactPointerEvent<HTMLDivElement>) => finish(event, false)
 
   const shown = dragging || hovered
 
@@ -118,8 +124,8 @@ function ResizeHandle({ dock }: { dock: DockController }): JSX.Element {
       aria-label="Resize DeepSeek Companion"
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
-      onPointerUp={finish}
-      onPointerCancel={finish}
+      onPointerUp={onPointerUp}
+      onPointerCancel={onPointerCancel}
       onPointerEnter={() => setHovered(true)}
       onPointerLeave={() => setHovered(false)}
       style={{

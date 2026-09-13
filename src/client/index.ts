@@ -5,7 +5,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
 import type {} from '@deepseek-ai/dsh-api-session-controller/client'
 import { CompanionDock } from './CompanionDock.tsx'
 import { CompanionEntry } from './CompanionEntry.tsx'
-import { DOCK_DEFAULT_WIDTH } from './resize.ts'
+import { overlayStorage, readOverlayWidth, writeOverlayWidth } from './storage.ts'
 
 /** Cordis services the browser plugin requires before `apply`. */
 export const inject = ['slots', 'layout', 'sessions']
@@ -27,6 +27,8 @@ export interface DockController {
   surface(): CompanionSurface | null
   dockWidth(): number
   setDockWidth(px: number): void
+  /** Persist the current overlay width (no-op on details / when closed). */
+  commitOverlayWidth(): void
   subscribe(listener: () => void): () => void
   toggle(): void
   open(): void
@@ -49,7 +51,9 @@ function createDockController(ctx: Context): DockController {
   let open = false
   let surface: CompanionSurface | null = null
   let disposer: (() => void) | null = null
-  let dockWidth = DOCK_DEFAULT_WIDTH
+  // Read the persisted overlay preference once at client init; running width
+  // stays in memory and is only written back on resize end.
+  let dockWidth = readOverlayWidth(overlayStorage(), window.innerWidth)
   const listeners = new Set<() => void>()
   const emit = () => {
     for (const listener of listeners) listener()
@@ -63,6 +67,11 @@ function createDockController(ctx: Context): DockController {
       if (dockWidth === px) return
       dockWidth = px
       emit()
+    },
+    commitOverlayWidth() {
+      // Only the overlay is Companion-owned; details width is DSH's.
+      if (surface !== 'overlay') return
+      writeOverlayWidth(overlayStorage(), dockWidth)
     },
     subscribe(listener) {
       listeners.add(listener)
