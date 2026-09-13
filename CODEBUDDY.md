@@ -13,6 +13,11 @@ DeepSeek 网页聊天工具，复用用户自己的 `chat.deepseek.com` 登录�
 - `docs/architecture.md`
 - `docs/roadmap.md`
 
+项目级技能：
+
+- `.codebuddy/skills/dsh-plugin-development/SKILL.md`
+  开发 DSH Plugin / Client / Slots / Layout 相关功能时，应使用该 Skill（固化了已源码验证的 DSH 0.1.2-rc.1 插件开发知识）。
+
 必须遵守：
 
 - 一次只做当前 Phase
