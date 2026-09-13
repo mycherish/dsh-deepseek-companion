@@ -5,6 +5,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
 import type {} from '@deepseek-ai/dsh-api-session-controller/client'
 import { CompanionDock } from './CompanionDock.tsx'
 import { CompanionEntry } from './CompanionEntry.tsx'
+import { DOCK_DEFAULT_WIDTH } from './resize.ts'
 
 /** Cordis services the browser plugin requires before `apply`. */
 export const inject = ['slots', 'layout', 'sessions']
@@ -24,6 +25,8 @@ export type CompanionSurface = 'details' | 'overlay'
 export interface DockController {
   isOpen(): boolean
   surface(): CompanionSurface | null
+  dockWidth(): number
+  setDockWidth(px: number): void
   subscribe(listener: () => void): () => void
   toggle(): void
   open(): void
@@ -46,6 +49,7 @@ function createDockController(ctx: Context): DockController {
   let open = false
   let surface: CompanionSurface | null = null
   let disposer: (() => void) | null = null
+  let dockWidth = DOCK_DEFAULT_WIDTH
   const listeners = new Set<() => void>()
   const emit = () => {
     for (const listener of listeners) listener()
@@ -54,6 +58,12 @@ function createDockController(ctx: Context): DockController {
   const controller: DockController = {
     isOpen: () => open,
     surface: () => surface,
+    dockWidth: () => dockWidth,
+    setDockWidth(px) {
+      if (dockWidth === px) return
+      dockWidth = px
+      emit()
+    },
     subscribe(listener) {
       listeners.add(listener)
       return () => {
