@@ -5,6 +5,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
 import type {} from '@deepseek-ai/dsh-api-session-controller/client'
 import { CompanionDock } from './CompanionDock.tsx'
 import { CompanionEntry } from './CompanionEntry.tsx'
+import { CompanionFloat } from './CompanionFloat.tsx'
 import { disposePopout, openPopout as openPopoutWindow } from './popout.ts'
 import { overlayStorage, readOverlayWidth, writeOverlayWidth } from './storage.ts'
 
@@ -12,7 +13,7 @@ import { overlayStorage, readOverlayWidth, writeOverlayWidth } from './storage.t
 export const inject = ['slots', 'layout', 'sessions']
 
 /** The surface a Companion dock currently occupies. */
-export type CompanionSurface = 'details' | 'overlay'
+export type CompanionSurface = 'details' | 'overlay' | 'float'
 
 /**
  * Minimal shared UI state for the Companion dock.
@@ -32,6 +33,10 @@ export interface DockController {
   commitOverlayWidth(): void
   /** Open (or focus) the single Companion pop-out window. */
   openPopout(): void
+  /** Switch from the docked surface to the in-page floating window. */
+  enterFloat(): void
+  /** Switch from the floating window back to the docked surface. */
+  dockBack(): void
   subscribe(listener: () => void): () => void
   toggle(): void
   open(): void
@@ -62,6 +67,46 @@ function createDockController(ctx: Context): DockController {
     for (const listener of listeners) listener()
   }
 
+  /** Docked surface for the current session: non-blank → details, else overlay. */
+  const decideDockSurface = (): CompanionSurface =>
+    currentSessionBlank(ctx) === false ? 'details' : 'overlay'
+
+  const unmount = (): void => {
+    if (disposer) {
+      disposer()
+      disposer = null
+    }
+  }
+
+  /** Register the given surface. Throws on failure; callers reset state. */
+  const mount = (variant: CompanionSurface): void => {
+    if (variant === 'details') {
+      disposer = ctx.slots.register(
+        { name: 'details', priority: -1, inject: () => ({ dock: controller, variant }) },
+        CompanionDock,
+      )
+      ctx.layout.openDetails()
+    } else if (variant === 'overlay') {
+      disposer = ctx.slots.register(
+        { name: 'shell.overlay', id: 'deepseek-companion', order: 100, inject: () => ({ dock: controller, variant }) },
+        CompanionDock,
+      )
+    } else {
+      disposer = ctx.slots.register(
+        { name: 'shell.overlay', id: 'deepseek-companion', order: 100, inject: () => ({ dock: controller, variant }) },
+        CompanionFloat,
+      )
+    }
+  }
+
+  const closeDetails = (): void => {
+    try {
+      ctx.layout.closeDetails()
+    } catch (error) {
+      console.warn('[dsh-deepseek-companion] failed to close details', error)
+    }
+  }
+
   const controller: DockController = {
     isOpen: () => open,
     surface: () => surface,
@@ -79,6 +124,38 @@ function createDockController(ctx: Context): DockController {
     openPopout() {
       openPopoutWindow()
     },
+    enterFloat() {
+      if (!open || surface === 'float') return
+      const activeSurface = surface
+      if (activeSurface === 'details') closeDetails()
+      unmount()
+      surface = 'float'
+      try {
+        mount('float')
+      } catch (error) {
+        open = false
+        surface = null
+        console.warn('[dsh-deepseek-companion] failed to open float window', error)
+        emit()
+        return
+      }
+      emit()
+    },
+    dockBack() {
+      if (!open || surface !== 'float') return
+      unmount()
+      surface = decideDockSurface()
+      try {
+        mount(surface)
+      } catch (error) {
+        open = false
+        surface = null
+        console.warn('[dsh-deepseek-companion] failed to dock companion', error)
+        emit()
+        return
+      }
+      emit()
+    },
     subscribe(listener) {
       listeners.add(listener)
       return () => {
@@ -89,30 +166,9 @@ function createDockController(ctx: Context): DockController {
       if (open) return
       open = true
       // Decide once: non-blank → details (narrows); blank/unknown → overlay (always available).
-      surface = currentSessionBlank(ctx) === false ? 'details' : 'overlay'
-      const variant: CompanionSurface = surface
+      surface = decideDockSurface()
       try {
-        if (variant === 'details') {
-          disposer = ctx.slots.register(
-            {
-              name: 'details',
-              priority: -1,
-              inject: () => ({ dock: controller, variant }),
-            },
-            CompanionDock,
-          )
-          ctx.layout.openDetails()
-        } else {
-          disposer = ctx.slots.register(
-            {
-              name: 'shell.overlay',
-              id: 'deepseek-companion',
-              order: 100,
-              inject: () => ({ dock: controller, variant }),
-            },
-            CompanionDock,
-          )
-        }
+        mount(surface)
       } catch (error) {
         open = false
         surface = null
@@ -127,17 +183,8 @@ function createDockController(ctx: Context): DockController {
       open = false
       const activeSurface = surface
       surface = null
-      if (activeSurface === 'details') {
-        try {
-          ctx.layout.closeDetails()
-        } catch (error) {
-          console.warn('[dsh-deepseek-companion] failed to close details', error)
-        }
-      }
-      if (disposer) {
-        disposer()
-        disposer = null
-      }
+      if (activeSurface === 'details') closeDetails()
+      unmount()
       emit()
     },
     toggle() {

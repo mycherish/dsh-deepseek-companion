@@ -146,3 +146,17 @@ DSH Host
 
 - Dock 与 Pop-out 读取**同一个 Host State**，**Host 状态变化时**（真实业务变化调用 `bumpRevision()`）会实时推送到两个视图（已实测）；单独关闭任一侧不影响另一侧；重新打开会立即收到当前最新状态。
 - Phase 06C 目前只是**状态同步通道**，`revision` 初始为 1，不包含定时/轮询触发；真实的状态变化源（聊天轮次等）与写入留待后续 Phase。**不是 DeepSeek 回复流式输出。**
+
+## Companion 界面形态（Phase 06D）
+
+Companion 支持三种界面形态，三者**复用同一份 Host State**（都渲染同一个 `HostStateView`、订阅同一条 SSE 通道），互不新增状态逻辑：
+
+| 形态 | 实现 | 说明 |
+|---|---|---|
+| 右侧停靠 | `details`（non-blank session）/ `shell.overlay`（blank session，右侧停靠样式） | 打开 Companion 的默认形态 |
+| 页面内浮窗 | `shell.overlay`（`position: fixed` 浮窗样式，`CompanionFloat`） | 标题栏拖动、右下角调整宽高、限制在可视区域 |
+| 独立浏览器窗口 | browser-native `window.open`（Phase 06A） | 单独存在，可与其他形态并存 |
+
+- 停靠 ↔ 浮窗互斥（同一时刻只有其一），通过 `DockController` 的 `enterFloat()` / `dockBack()` 切换；独立窗口独立存在。
+- 浮窗位置/尺寸是**内存态**（`float.ts` 的纯函数 `clampFloatPosition` / `clampFloatSize`），本阶段不持久化。
+- 浮窗与停靠都不复制状态逻辑，继续复用 `HostStateView`（订阅 `/api/deepseek-companion/state/stream`）。

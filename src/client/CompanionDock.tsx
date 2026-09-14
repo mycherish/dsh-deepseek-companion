@@ -211,6 +211,9 @@ export function CompanionDock({ dock, variant }: { dock: DockController; variant
       <header style={headerStyle}>
         <span style={titleStyle}>DeepSeek</span>
         <div style={headerActionsStyle}>
+          <HeaderIconButton label="在页面内浮动" onClick={dock.enterFloat} fontSize={16}>
+            □
+          </HeaderIconButton>
           <HeaderIconButton label="Open DeepSeek Companion in new window" onClick={dock.openPopout} fontSize={16}>
             ↗
           </HeaderIconButton>
