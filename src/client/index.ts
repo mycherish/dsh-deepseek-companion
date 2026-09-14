@@ -5,6 +5,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
 import type {} from '@deepseek-ai/dsh-api-session-controller/client'
 import { CompanionDock } from './CompanionDock.tsx'
 import { CompanionEntry } from './CompanionEntry.tsx'
+import { disposePopout, openPopout as openPopoutWindow } from './popout.ts'
 import { overlayStorage, readOverlayWidth, writeOverlayWidth } from './storage.ts'
 
 /** Cordis services the browser plugin requires before `apply`. */
@@ -29,6 +30,8 @@ export interface DockController {
   setDockWidth(px: number): void
   /** Persist the current overlay width (no-op on details / when closed). */
   commitOverlayWidth(): void
+  /** Open (or focus) the single Companion pop-out window. */
+  openPopout(): void
   subscribe(listener: () => void): () => void
   toggle(): void
   open(): void
@@ -72,6 +75,9 @@ function createDockController(ctx: Context): DockController {
       // Only the overlay is Companion-owned; details width is DSH's.
       if (surface !== 'overlay') return
       writeOverlayWidth(overlayStorage(), dockWidth)
+    },
+    openPopout() {
+      openPopoutWindow()
     },
     subscribe(listener) {
       listeners.add(listener)
@@ -152,6 +158,17 @@ function createDockController(ctx: Context): DockController {
  */
 export function apply(ctx: Context): void {
   const dock = createDockController(ctx)
+
+  // The pop-out is a local UI shell owned by the Client plugin: it closes when
+  // the plugin disposes or the parent page unloads.
+  ctx.effect(() => {
+    const onPageHide = () => disposePopout()
+    window.addEventListener('pagehide', onPageHide)
+    return () => {
+      window.removeEventListener('pagehide', onPageHide)
+      disposePopout()
+    }
+  })
 
   ctx.slots.inject('sidebar.footer.action', () => {
     return ctx.slots.register(

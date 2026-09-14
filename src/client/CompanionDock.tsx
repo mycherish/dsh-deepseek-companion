@@ -20,15 +20,59 @@ const titleStyle: CSSProperties = {
   color: 'var(--dsw-alias-label-primary)',
 }
 
-const closeStyle: CSSProperties = {
-  border: 'none',
-  background: 'transparent',
-  color: 'var(--dsw-alias-label-secondary)',
-  cursor: 'pointer',
-  fontSize: 18,
-  lineHeight: 1,
-  padding: '4px 6px',
-  borderRadius: 6,
+const headerActionsStyle: CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 2,
+}
+
+/** Small header icon button (↗ / ×) with DSH hover / active feedback. */
+function HeaderIconButton({
+  label,
+  onClick,
+  fontSize = 18,
+  children,
+}: {
+  label: string
+  onClick: () => void
+  fontSize?: number
+  children: string
+}): JSX.Element {
+  const [hovered, setHovered] = useState(false)
+  const [pressed, setPressed] = useState(false)
+  const background = pressed
+    ? 'var(--dsw-alias-interactive-bg-active)'
+    : hovered
+      ? 'var(--dsw-alias-interactive-bg-hover)'
+      : 'transparent'
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      onClick={onClick}
+      onPointerEnter={() => setHovered(true)}
+      onPointerLeave={() => {
+        setHovered(false)
+        setPressed(false)
+      }}
+      onPointerDown={() => setPressed(true)}
+      onPointerUp={() => setPressed(false)}
+      onPointerCancel={() => setPressed(false)}
+      style={{
+        border: 'none',
+        background,
+        color: 'var(--dsw-alias-label-secondary)',
+        cursor: 'pointer',
+        fontSize,
+        lineHeight: 1,
+        padding: '4px 6px',
+        borderRadius: 6,
+        transition: 'background 120ms ease',
+      }}
+    >
+      {children}
+    </button>
+  )
 }
 
 const bodyStyle: CSSProperties = {
@@ -165,14 +209,14 @@ export function CompanionDock({ dock, variant }: { dock: DockController; variant
       {variant === 'overlay' ? <ResizeHandle dock={dock} /> : null}
       <header style={headerStyle}>
         <span style={titleStyle}>DeepSeek</span>
-        <button
-          type="button"
-          aria-label="Close DeepSeek Companion"
-          onClick={dock.close}
-          style={closeStyle}
-        >
-          ×
-        </button>
+        <div style={headerActionsStyle}>
+          <HeaderIconButton label="Open DeepSeek Companion in new window" onClick={dock.openPopout} fontSize={16}>
+            ↗
+          </HeaderIconButton>
+          <HeaderIconButton label="Close DeepSeek Companion" onClick={dock.close}>
+            ×
+          </HeaderIconButton>
+        </div>
       </header>
       <div style={bodyStyle}>
         <strong style={strongStyle}>DeepSeek Companion</strong>

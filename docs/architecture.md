@@ -104,3 +104,19 @@ overlay 与 details 的宽度**故意独立**，绝不相同步。
 - overlay resize + 持久化 ✅ 可合法实现。
 - details resize ❌ 被 DSH 官方 API 限制；Companion 不控制、不持久化、不同步 details 宽度。
 - 是否后续单独做 details 宽度兼容层，待架构决策。
+
+## Companion Pop-out（Phase 06A）
+
+### 现状
+
+- 使用 **browser-native `window.open`**（DSH 0.1.2-rc.1 不提供公开 pop-out / detached-window API；`window.open` 在 DSH 源码中仅出现在一处注释，无插件使用先例）。
+- **单实例**：固定 `window.name = 'dsh-deepseek-companion-popout'`；已存在且未关闭时 `focus()`，否则重新创建。
+- **React 渲染**：通过 DSH ModuleLoader 暴露的 `react-dom/client` 的 `createRoot` 渲染到 popup document（复用宿主 React runtime，不打包第二份 React）。
+- 初始尺寸 `480 × 720`，`resizable` / `scrollbars`；本阶段不做位置/尺寸记忆。
+- 生命周期属于 Client Plugin：关闭 Dock 不影响 Pop-out；插件 dispose 或父页面 unload（`pagehide`）时关闭 Pop-out。
+- 当前只是本地 UI Shell（Header + Coming soon），**不支持聊天、不共享 Host 状态**。
+
+### 结论
+
+- Pop-out 骨架 ✅ 已实现。
+- Phase 06B 才接入 Host-backed State（聊天状态共享、HTTP/SSE、postMessage 协议等）。
