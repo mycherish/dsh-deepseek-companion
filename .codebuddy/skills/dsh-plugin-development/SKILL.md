@@ -36,6 +36,21 @@ export function apply(ctx: Context): void {
 - 可选能力失败不得拖垮 DSH Host。
 - 不 monkey patch DSH、不修改 node_modules、不访问 DSH 私有 store 代替公开 API。
 
+## Host Route 注册生命周期（Phase 06B 已验证）
+
+DSH 0.1.2-rc.1 中 `ctx.connection.fetch.register(route)`：
+
+- **返回 disposer**，调用它可移除 route。
+- **重复 path 会抛错**（`already registered`）。
+- 其内部清理（`owner.effect(...)`）绑定的 `owner = HostConnectionService.ctx`，即 **dsh-client-connection 自己的 Context**，**不是**调用它的第三方插件 Context。
+- 因此**不要假设 `Service.ctx` 是调用插件的 ctx**；第三方插件注册 Route 必须自己管理生命周期：
+
+```ts
+ctx.effect(() => ctx.connection.fetch.register({ ... }), 'label')
+```
+
+这样插件卸载（dispose/reload）时 Route 才会一起注销，避免残留 route 和重复注册报错。
+
 ## DSH Bundle 配置
 
 `package.json`：

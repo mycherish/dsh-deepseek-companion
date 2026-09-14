@@ -1,5 +1,5 @@
 import { useEffect, useState, type CSSProperties } from 'react'
-import { fetchCompanionState, type CompanionState } from './api.ts'
+import { subscribeCompanionState, type CompanionState } from './api.ts'
 
 type Status = 'loading' | 'ready' | 'error'
 
@@ -17,24 +17,30 @@ const instanceStyle: CSSProperties = {
   fontFamily: 'var(--ds-font-family-code, ui-monospace, monospace)',
 }
 
-/** Read-only Host-state view shared by the Dock and the Pop-out (Phase 06B). */
+/** Live Host-state view shared by the Dock and the Pop-out (Phase 06C). */
 export function HostStateView({ origin }: { origin: string }): JSX.Element {
   const [status, setStatus] = useState<Status>('loading')
   const [state, setState] = useState<CompanionState | null>(null)
 
   useEffect(() => {
-    const controller = new AbortController()
+    let active = true
     setStatus('loading')
-    fetchCompanionState(origin, controller.signal)
-      .then((value) => {
-        setState(value)
+    const unsubscribe = subscribeCompanionState(
+      origin,
+      (next) => {
+        if (!active) return
+        setState(next)
         setStatus('ready')
-      })
-      .catch((error: unknown) => {
-        if (error instanceof Error && error.name === 'AbortError') return
+      },
+      () => {
+        if (!active) return
         setStatus('error')
-      })
-    return () => controller.abort()
+      },
+    )
+    return () => {
+      active = false
+      unsubscribe()
+    }
   }, [origin])
 
   if (status === 'loading') return <div style={rowsStyle}>Host state loading…</div>

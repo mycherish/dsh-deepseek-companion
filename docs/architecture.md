@@ -121,25 +121,28 @@ overlay 与 details 的宽度**故意独立**，绝不相同步。
 - Pop-out 骨架 ✅ 已实现。
 - Phase 06B 才接入 Host-backed State（聊天状态共享、HTTP/SSE、postMessage 协议等）。
 
-## Companion Host State 通道（Phase 06B）
+## Companion Host State 通道（Phase 06B–06C）
 
 ### 现状
 
-- **Host 拥有权威 Companion State**：`src/host/state.ts` 的 `createCompanionState()` 返回 `{ status: 'ready', revision: 1, instanceId }`，`instanceId` 每次 Host 启动生成一次（`node:crypto.randomUUID`）。
-- **只读 Host API**：通过 DSH 官方 `ctx.connection.fetch.register(...)`（`@deepseek-ai/dsh-client-connection` 的 `HostConnectionFetch`）注册一个 exact GET route：`/api/deepseek-companion/state`。认证由 Connection 自动处理（Host/Origin fence + browser cookie）。
-- **Client 读取**：`src/client/api.ts` 的 `fetchCompanionState(origin, signal)`，Dock 与 Pop-out 共用这一份 fetch；Pop-out 基于父 DSH 页面 origin 构建 URL（about:blank 下仍能同源请求）。
+- **Host 拥有权威 Companion State**：`src/host/state.ts` 的 `createCompanionStateStore()` 返回可订阅 store（`getState` / `subscribe` / `bumpRevision` / `dispose`）。`instanceId` 每次 Host 启动生成一次；`revision` 每次 `bumpRevision` 递增，`subscribe` 立即回放当前状态。
+- **只读 Host API**：通过 DSH 官方 `ctx.connection.fetch.register(...)`（`@deepseek-ai/dsh-client-connection` 的 `HostConnectionFetch`）注册两个 exact GET route：
+  - `/api/deepseek-companion/state` — 一次性快照。
+  - `/api/deepseek-companion/state/stream` — `text/event-stream` 实时推送通道（复用 Connection 的流式 `Response.body`，bridge 逐 chunk 转发，客户端断开会触发 `request.signal` abort）。
+- **Client 读取**：`src/client/api.ts` 的 `fetchCompanionState`（快照）与 `subscribeCompanionState`（fetch + ReadableStream 解析 SSE，返回 unsubscribe）。Dock 与 Pop-out 共用同一份 reader，各自持独立 SSE 连接。
 
 ### 数据流
 
 ```
 DSH Host
-  └─ createCompanionState() → { status, revision, instanceId }
-       └─ GET /api/deepseek-companion/state (ctx.connection.fetch.register)
-            ├─ Dock   (window.location.origin)   → 显示 Host: ready / Revision / Instance
-            └─ Pop-out (parent origin)           → 显示同一份 Host State
+  └─ CompanionStateStore { status, revision, instanceId }
+       ├─ GET /api/deepseek-companion/state        → 一次性快照
+       └─ GET /api/deepseek-companion/state/stream → SSE 实时推送
+            ├─ Dock   (window.location.origin) → 实时更新
+            └─ Pop-out (parent origin)         → 实时更新（独立连接）
 ```
 
 ### 结论
 
-- Dock 与 Pop-out 读取**同一个 Host State**（instanceId / revision 一致）已实测验证；Host 重启后 instanceId 变化。
-- 当前 Phase 06B **只有读取**，尚无实时同步（无 SSE / WebSocket / BroadcastChannel / postMessage / polling）。实时同步与 Host 写入留待后续 Phase。
+- Dock 与 Pop-out 读取**同一个 Host State**，**Host 状态变化时**（真实业务变化调用 `bumpRevision()`）会实时推送到两个视图（已实测）；单独关闭任一侧不影响另一侧；重新打开会立即收到当前最新状态。
+- Phase 06C 目前只是**状态同步通道**，`revision` 初始为 1，不包含定时/轮询触发；真实的状态变化源（聊天轮次等）与写入留待后续 Phase。**不是 DeepSeek 回复流式输出。**
