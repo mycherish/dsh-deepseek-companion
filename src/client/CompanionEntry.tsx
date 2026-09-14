@@ -79,7 +79,7 @@ export function CompanionEntry({ wide, dock }: { wide: boolean; dock: DockContro
       style={triggerStyle(wide, hovered, pressed)}
     >
       <span style={markStyle}>DS</span>
-      {wide ? <span>DeepSeek</span> : null}
+      {wide ? <span>快速聊天</span> : null}
     </button>
   )
 }
