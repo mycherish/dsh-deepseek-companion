@@ -1,4 +1,5 @@
 import type { CSSProperties } from 'react'
+import { HostStateView } from './HostStateView.tsx'
 
 const rootStyle: CSSProperties = {
   display: 'flex',
@@ -53,8 +54,8 @@ const strongStyle: CSSProperties = {
   fontWeight: 600,
 }
 
-/** Minimal pop-out shell: header + Coming-soon placeholder (no chat / state). */
-export function CompanionPopout({ onClose }: { onClose: () => void }): JSX.Element {
+/** Minimal pop-out shell: header + shared Host-state view. */
+export function CompanionPopout({ onClose, origin }: { onClose: () => void; origin: string }): JSX.Element {
   return (
     <div style={rootStyle}>
       <header style={headerStyle}>
@@ -65,7 +66,7 @@ export function CompanionPopout({ onClose }: { onClose: () => void }): JSX.Eleme
       </header>
       <div style={bodyStyle}>
         <strong style={strongStyle}>DeepSeek Companion</strong>
-        <div>Coming soon</div>
+        <HostStateView origin={origin} />
       </div>
     </div>
   )

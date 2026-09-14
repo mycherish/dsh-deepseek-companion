@@ -1,6 +1,7 @@
 import { useRef, useState, useSyncExternalStore } from 'react'
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react'
 import type { CompanionSurface, DockController } from './index.ts'
+import { HostStateView } from './HostStateView.tsx'
 import { clampDockWidth, widthFromPointer } from './resize.ts'
 
 const headerStyle: CSSProperties = {
@@ -220,7 +221,7 @@ export function CompanionDock({ dock, variant }: { dock: DockController; variant
       </header>
       <div style={bodyStyle}>
         <strong style={strongStyle}>DeepSeek Companion</strong>
-        <div>Coming soon</div>
+        <HostStateView origin={window.location.origin} />
       </div>
     </aside>
   )

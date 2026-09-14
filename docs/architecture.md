@@ -120,3 +120,26 @@ overlay 与 details 的宽度**故意独立**，绝不相同步。
 
 - Pop-out 骨架 ✅ 已实现。
 - Phase 06B 才接入 Host-backed State（聊天状态共享、HTTP/SSE、postMessage 协议等）。
+
+## Companion Host State 通道（Phase 06B）
+
+### 现状
+
+- **Host 拥有权威 Companion State**：`src/host/state.ts` 的 `createCompanionState()` 返回 `{ status: 'ready', revision: 1, instanceId }`，`instanceId` 每次 Host 启动生成一次（`node:crypto.randomUUID`）。
+- **只读 Host API**：通过 DSH 官方 `ctx.connection.fetch.register(...)`（`@deepseek-ai/dsh-client-connection` 的 `HostConnectionFetch`）注册一个 exact GET route：`/api/deepseek-companion/state`。认证由 Connection 自动处理（Host/Origin fence + browser cookie）。
+- **Client 读取**：`src/client/api.ts` 的 `fetchCompanionState(origin, signal)`，Dock 与 Pop-out 共用这一份 fetch；Pop-out 基于父 DSH 页面 origin 构建 URL（about:blank 下仍能同源请求）。
+
+### 数据流
+
+```
+DSH Host
+  └─ createCompanionState() → { status, revision, instanceId }
+       └─ GET /api/deepseek-companion/state (ctx.connection.fetch.register)
+            ├─ Dock   (window.location.origin)   → 显示 Host: ready / Revision / Instance
+            └─ Pop-out (parent origin)           → 显示同一份 Host State
+```
+
+### 结论
+
+- Dock 与 Pop-out 读取**同一个 Host State**（instanceId / revision 一致）已实测验证；Host 重启后 instanceId 变化。
+- 当前 Phase 06B **只有读取**，尚无实时同步（无 SSE / WebSocket / BroadcastChannel / postMessage / polling）。实时同步与 Host 写入留待后续 Phase。

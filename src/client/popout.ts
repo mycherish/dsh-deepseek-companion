@@ -76,7 +76,7 @@ function renderPopout(win: Window): void {
   doc.body.appendChild(container)
 
   popupRoot = createRoot(container)
-  popupRoot.render(createElement(CompanionPopout, { onClose: closePopout }))
+  popupRoot.render(createElement(CompanionPopout, { onClose: closePopout, origin: window.location.origin }))
 }
 
 /**
