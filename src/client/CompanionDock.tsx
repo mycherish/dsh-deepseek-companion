@@ -1,4 +1,4 @@
-import { useRef, useState, useSyncExternalStore } from 'react'
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react'
 import type { CompanionSurface, DockController } from './index.ts'
 import { HostStateView } from './HostStateView.tsx'
@@ -93,7 +93,7 @@ const strongStyle: CSSProperties = {
   fontWeight: 600,
 }
 
-/** Frame-right shell for the overlay fallback; details uses the column's own bounds. */
+/** Frame-right shell for the overlay fallback; rightbar uses the column's own bounds. */
 function surfaceStyle(variant: CompanionSurface, dockWidth: number): CSSProperties {
   const base: CSSProperties = {
     display: 'flex',
@@ -205,6 +205,14 @@ function ResizeHandle({ dock }: { dock: DockController }): JSX.Element {
 /** Shared Companion dock body: header + Coming-soon placeholder (+ overlay resize handle). */
 export function CompanionDock({ dock, variant }: { dock: DockController; variant: CompanionSurface }): JSX.Element {
   const dockWidth = useSyncExternalStore(dock.subscribe, dock.dockWidth)
+
+  // Report the rightbar surface as open only after this component has mounted:
+  // shadowing ui-sidebar-right unmounts its RightbarSeat, whose cleanup calls
+  // closeRightbar — an open issued in the same tick would be overwritten.
+  useEffect(() => {
+    if (variant === 'rightbar') dock.openRightbarSurface()
+  }, [variant, dock])
+
   return (
     <aside aria-label="DeepSeek Companion" style={surfaceStyle(variant, dockWidth)}>
       {variant === 'overlay' ? <ResizeHandle dock={dock} /> : null}

@@ -1,7 +1,7 @@
 /**
  * Overlay width persistence (Phase 05B).
  *
- * Only the `shell.overlay` width is persisted; the `details` column width stays
+ * Only the `shell.overlay` width is persisted; the `rightbar` column width stays
  * fully owned by DSH and is never read, written, or synced here. Storage is an
  * optional UI capability: every read/write degrades to the default width on
  * failure and never throws into the React tree.

@@ -35,6 +35,7 @@ export function apply(ctx: Context): void {
       ctx.connection.fetch.register({
         path: STATE_PATH,
         methods: ['GET'],
+        requestBody: 'buffered',
         fetch: async () => Response.json(store.getState()),
       }),
     'deepseek-companion: companion state route',
@@ -45,6 +46,7 @@ export function apply(ctx: Context): void {
       ctx.connection.fetch.register({
         path: STREAM_PATH,
         methods: ['GET'],
+        requestBody: 'buffered',
         fetch: async (request) => createStateStream(store, request.signal),
       }),
     'deepseek-companion: companion state stream route',

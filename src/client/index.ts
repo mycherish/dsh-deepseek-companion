@@ -13,26 +13,28 @@ import { overlayStorage, readOverlayWidth, writeOverlayWidth } from './storage.t
 export const inject = ['slots', 'layout', 'sessions']
 
 /** The surface a Companion dock currently occupies. */
-export type CompanionSurface = 'details' | 'overlay' | 'float'
+export type CompanionSurface = 'rightbar' | 'overlay' | 'float'
 
 /**
  * Minimal shared UI state for the Companion dock.
  *
  * The surface is decided once per open: a non-blank session uses the official
- * `details` column (the conversation genuinely narrows); a blank session falls
+ * `rightbar` column (the conversation genuinely narrows); a blank session falls
  * back to the frame-wide `shell.overlay` (root scope, available with no session
  * content). The surface stays stable until close, so the UI never jumps between
- * overlay and details mid-session.
+ * rightbar and overlay mid-session.
  */
 export interface DockController {
   isOpen(): boolean
   surface(): CompanionSurface | null
   dockWidth(): number
   setDockWidth(px: number): void
-  /** Persist the current overlay width (no-op on details / when closed). */
+  /** Persist the current overlay width (no-op on rightbar / when closed). */
   commitOverlayWidth(): void
   /** Open (or focus) the single Companion pop-out window. */
   openPopout(): void
+  /** Report the rightbar surface as open (called after the dock mounts). */
+  openRightbarSurface(): void
   /** Switch from the docked surface to the in-page floating window. */
   enterFloat(): void
   /** Switch from the floating window back to the docked surface. */
@@ -67,9 +69,9 @@ function createDockController(ctx: Context): DockController {
     for (const listener of listeners) listener()
   }
 
-  /** Docked surface for the current session: non-blank → details, else overlay. */
+  /** Docked surface for the current session: non-blank → rightbar, else overlay. */
   const decideDockSurface = (): CompanionSurface =>
-    currentSessionBlank(ctx) === false ? 'details' : 'overlay'
+    currentSessionBlank(ctx) === false ? 'rightbar' : 'overlay'
 
   const unmount = (): void => {
     if (disposer) {
@@ -80,12 +82,17 @@ function createDockController(ctx: Context): DockController {
 
   /** Register the given surface. Throws on failure; callers reset state. */
   const mount = (variant: CompanionSurface): void => {
-    if (variant === 'details') {
+    if (variant === 'rightbar') {
+      // Transiently shadow the shipped right Sidebar (same pattern as the old
+      // `details` seat); disposing the registration restores it untouched.
       disposer = ctx.slots.register(
-        { name: 'details', priority: -1, inject: () => ({ dock: controller, variant }) },
+        { name: 'rightbar', priority: -1, inject: () => ({ dock: controller, variant }) },
         CompanionDock,
       )
-      ctx.layout.openDetails()
+      // `openRightbar` is reported from CompanionDock's mount effect instead of
+      // here: shadowing ui-sidebar-right unmounts its RightbarSeat, whose
+      // cleanup reports `shown: false` (closeRightbar) and would overwrite a
+      // synchronous open in this same tick.
     } else if (variant === 'overlay') {
       disposer = ctx.slots.register(
         { name: 'shell.overlay', id: 'deepseek-companion', order: 100, inject: () => ({ dock: controller, variant }) },
@@ -99,11 +106,22 @@ function createDockController(ctx: Context): DockController {
     }
   }
 
-  const closeDetails = (): void => {
+  const openRightbarSurface = (): void => {
     try {
-      ctx.layout.closeDetails()
+      // Normal docked presentation: reserve the grid track (conversation
+      // narrows), fullscreen off. Arguments mirror ui-sidebar-right's own
+      // `syncPresentation({ shown: true, track: true, fullscreen: false })`.
+      ctx.layout.openRightbar(true, false)
     } catch (error) {
-      console.warn('[dsh-deepseek-companion] failed to close details', error)
+      console.warn('[dsh-deepseek-companion] failed to open rightbar', error)
+    }
+  }
+
+  const closeRightbar = (): void => {
+    try {
+      ctx.layout.closeRightbar()
+    } catch (error) {
+      console.warn('[dsh-deepseek-companion] failed to close rightbar', error)
     }
   }
 
@@ -117,17 +135,20 @@ function createDockController(ctx: Context): DockController {
       emit()
     },
     commitOverlayWidth() {
-      // Only the overlay is Companion-owned; details width is DSH's.
+      // Only the overlay is Companion-owned; rightbar width is DSH's.
       if (surface !== 'overlay') return
       writeOverlayWidth(overlayStorage(), dockWidth)
     },
     openPopout() {
       openPopoutWindow()
     },
+    openRightbarSurface() {
+      openRightbarSurface()
+    },
     enterFloat() {
       if (!open || surface === 'float') return
       const activeSurface = surface
-      if (activeSurface === 'details') closeDetails()
+      if (activeSurface === 'rightbar') closeRightbar()
       unmount()
       surface = 'float'
       try {
@@ -165,7 +186,7 @@ function createDockController(ctx: Context): DockController {
     open() {
       if (open) return
       open = true
-      // Decide once: non-blank → details (narrows); blank/unknown → overlay (always available).
+      // Decide once: non-blank → rightbar (narrows); blank/unknown → overlay (always available).
       surface = decideDockSurface()
       try {
         mount(surface)
@@ -183,7 +204,7 @@ function createDockController(ctx: Context): DockController {
       open = false
       const activeSurface = surface
       surface = null
-      if (activeSurface === 'details') closeDetails()
+      if (activeSurface === 'rightbar') closeRightbar()
       unmount()
       emit()
     },
@@ -199,8 +220,8 @@ function createDockController(ctx: Context): DockController {
  * DeepSeek Companion browser half.
  *
  * Only the sidebar entry is registered at load. On open the dock transiently
- * occupies `details` (non-blank session) or `shell.overlay` (blank session),
- * and disposes that registration on close — the shipped DetailsPanel and the
+ * occupies `rightbar` (non-blank session) or `shell.overlay` (blank session),
+ * and disposes that registration on close — the shipped right Sidebar and the
  * overlay roster both recover untouched.
  */
 export function apply(ctx: Context): void {

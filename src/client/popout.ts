@@ -1,7 +1,7 @@
 /**
  * Pop-out window shell (Phase 06A).
  *
- * DSH 0.1.2-rc.1 exposes no pop-out / detached-window API, so we use the
+ * DSH 0.1.5-rc.2 exposes no pop-out / detached-window API, so we use the
  * browser-native `window.open`. The pop-out is a local UI shell only: it renders
  * the same "Coming soon" placeholder through the host-provided React runtime
  * (`react-dom/client` from the module loader) and shares no state with the dock.

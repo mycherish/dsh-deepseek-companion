@@ -51,7 +51,7 @@ React Client 只负责渲染，**不得**成为聊天状态的唯一 Owner。
 
 ### 兼容性策略
 
-- 当前首要兼容目标：DSH 0.1.2-rc.1。
+- 当前首要兼容目标：DSH 0.1.5-rc.2。
 - 后续兼容其他版本时优先做 capability detection。
 - 版本敏感 API 优先 `ctx.inject` / capability detection / type guard / runtime feature detection。
 - 不假定所有 DSH 版本 API 一致。
@@ -63,18 +63,18 @@ Companion Dock 在用户点击 sidebar 入口时打开。打开时根据当前 S
 
 | 当前 Session | Surface | 槽位 / Scope | 效果 |
 |---|---|---|---|
-| 非 blank（`blank === false`） | `details` | 单槽、`session` scope | conversation 真实缩窄，dock 在官方右侧列内 |
+| 非 blank（`blank === false`） | `rightbar` | 单槽、`root` scope | conversation 真实缩窄，dock 在官方右侧列内（`openRightbar(true, false)` 保留 grid track） |
 | blank（`blank === true`）或无当前 Session | `shell.overlay` | 列表槽、`root` scope | frame-right 浮层（fixed right 420px），conversation 不缩窄 |
 
 ### 规则
 
 - Surface 在 `open()` 时只决定一次，open 期间不变。即便 Session 的 blank 状态发生变化，也不切换 Surface（避免 UI 跳动、焦点丢失、未来聊天输入状态被冲掉）。
 - 只有 `close` → 再次 `open` 时才重新读取 Session blank 并选择 Surface。
-- 任何时刻最多只有一个 Surface registration（details 或 overlay）。`close()` 调用对应的 `dispose`，DSH 默认 DetailsPanel 与 `shell.overlay` 容器都自动恢复原状。
+- 任何时刻最多只有一个 Surface registration（rightbar 或 overlay）。`close()` 调用对应的 `dispose`，DSH 默认右侧 Sidebar（ui-sidebar-right）与 `shell.overlay` 容器都自动恢复原状。
 
 ### 原因
 
-DSH 0.1.2-rc.1 的 `AppFrame` 在 `detailsSession === undefined`（即当前 Session 为 blank）时强制 `details` 宽度为 0；不存在合法公开 API 可以在不伪造 Host 语义的前提下把 blank Session 变 non-blank。因此 `details` 无法作为唯一 Surface。`shell.overlay`（`root` scope、不依赖 session、官方推荐的 frame-wide surface 座位）作为 fallback 保证「新建 Session 立即可用」的核心需求。
+DSH 0.1.2-rc.1 的 `AppFrame` 在 blank Session 时强制 `details` 宽度为 0，且 blank Session 无法合法变为 non-blank，因此当时的 `details` 无法作为唯一 Surface（历史原因）。0.1.5-rc.2 已删除 `details` 槽位与 `openDetails()`/`closeDetails()`：non-blank Surface 迁移为官方 `rightbar` 单槽 —— Companion 以 `priority: -1` 临时占用（与 0.1.2 details 同一套 shadow/restore 模式），`ctx.layout.openRightbar(true, false)` / `closeRightbar()` 控制显隐。`shell.overlay`（`root` scope、不依赖 session）作为 fallback 保证「新建 Session 立即可用」的核心需求，0.1.5 语义不变。
 
 ## Companion Dock Width（Phase 05A / 05B）
 
@@ -83,9 +83,9 @@ DSH 0.1.2-rc.1 的 `AppFrame` 在 `detailsSession === undefined`（即当前 Ses
 | Surface | 宽度拥有者 | 调整方式 | 持久化 |
 |---|---|---|---|
 | `shell.overlay` | Companion | 自定义 resize handle（Pointer Capture） | ✅ browser localStorage |
-| `details` | DSH | DSH 原生 DragHandle | ❌ Companion 不持久化 / 不同步 |
+| `rightbar` | DSH | DSH 原生 DragHandle（0.1.5 rightbar 列） | ❌ Companion 不持久化 / 不同步 |
 
-overlay 与 details 的宽度**故意独立**，绝不相同步。
+overlay 与 rightbar 的宽度**故意独立**，绝不相同步。
 
 ### overlay（Companion owns width）
 
@@ -94,22 +94,22 @@ overlay 与 details 的宽度**故意独立**，绝不相同步。
 - 读取/写入对 localStorage 异常安全降级（读失败用默认 420、写失败仅本次不持久化），绝不抛进 React tree。
 - 刷新页面或重启浏览器后从 localStorage 恢复；跨 blank Session 共享（是插件 UI 偏好，非 Session 属性）。
 
-### details（DSH owns width）
+### rightbar（DSH owns width）
 
-- DSH 0.1.2-rc.1 **不提供公开的 details 列宽修改 API**。`ctx.layout` 公开面（`ILayout`，`dsh-client-ui-layout/lib/types/client/service.d.ts`）只有 `toggleSidebar()` / `openDetails()` / `closeDetails()`；内部 store 的 `setDetails`（`stores.d.ts`）仅由 `AppFrame` 内置的 `DragHandle` 使用（`client.js` 的 `onDetailsDrag`），插件无法合法调用。
-- details 保持 DSH 默认宽度（`DETAILS_DEFAULT = 360`，min `300` / max `520`），复用 DSH 自带的左侧拖动把手。localStorage 中即使保存 600，也**不会**应用到 details。
+- DSH 0.1.5-rc.2 的 `ctx.layout`（`ILayout`）公开 `toggleSidebar()` / `selectPanel()` / `openRightbar(track, fullscreen)` / `closeRightbar()`，**不提供列宽修改 API**；列宽由 `AppFrame` 依 `RightbarOwnerProps.width` 解析并配合内置拖动把手调整，插件只报告显隐与 track/fullscreen 组合。
+- rightbar 保持 DSH 解析宽度（`RIGHTBAR_MIN = 300`，首开偏好 `RIGHTBAR_DEFAULT_RATIO = 0.45`，上限 `RIGHTBAR_MAX_RATIO = 0.7`），复用 DSH 自带的拖动把手。localStorage 中即使保存 600，也**不会**应用到 rightbar。
 
 ### 结论
 
 - overlay resize + 持久化 ✅ 可合法实现。
-- details resize ❌ 被 DSH 官方 API 限制；Companion 不控制、不持久化、不同步 details 宽度。
-- 是否后续单独做 details 宽度兼容层，待架构决策。
+- rightbar resize ❌ 被 DSH 官方 API 限制；Companion 不控制、不持久化、不同步 rightbar 宽度。
+- 是否后续单独做 rightbar 宽度兼容层，待架构决策。
 
 ## Companion Pop-out（Phase 06A）
 
 ### 现状
 
-- 使用 **browser-native `window.open`**（DSH 0.1.2-rc.1 不提供公开 pop-out / detached-window API；`window.open` 在 DSH 源码中仅出现在一处注释，无插件使用先例）。
+- 使用 **browser-native `window.open`**（DSH 不提供公开 pop-out / detached-window API；0.1.2-rc.1 与 0.1.5-rc.2 的官方 client 插件 bundle 中均无 `window.open(` 使用先例）。
 - **单实例**：固定 `window.name = 'dsh-deepseek-companion-popout'`；已存在且未关闭时 `focus()`，否则重新创建。
 - **React 渲染**：通过 DSH ModuleLoader 暴露的 `react-dom/client` 的 `createRoot` 渲染到 popup document（复用宿主 React runtime，不打包第二份 React）。
 - 初始尺寸 `480 × 720`，`resizable` / `scrollbars`；本阶段不做位置/尺寸记忆。
@@ -153,7 +153,7 @@ Companion 支持三种界面形态，三者**复用同一份 Host State**（都�
 
 | 形态 | 实现 | 说明 |
 |---|---|---|
-| 右侧停靠 | `details`（non-blank session）/ `shell.overlay`（blank session，右侧停靠样式） | 打开 Companion 的默认形态 |
+| 右侧停靠 | `rightbar`（non-blank session）/ `shell.overlay`（blank session，右侧停靠样式） | 打开 Companion 的默认形态 |
 | 页面内浮窗 | `shell.overlay`（`position: fixed` 浮窗样式，`CompanionFloat`） | 标题栏拖动、右下角调整宽高、限制在可视区域 |
 | 独立浏览器窗口 | browser-native `window.open`（Phase 06A） | 单独存在，可与其他形态并存 |
 

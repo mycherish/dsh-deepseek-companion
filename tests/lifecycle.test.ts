@@ -6,7 +6,7 @@ import { Context } from '@deepseek-ai/cordis'
 /**
  * 生命周期验证（Phase 06B 审核补充）。
  *
- * 源码结论（@deepseek-ai/dsh-client-connection@0.1.2-rc.1）：
+ * 源码结论（@deepseek-ai/dsh-client-connection@0.1.5-rc.2）：
  * - `ctx.connection.fetch.register(route)` 返回 disposer。
  * - 其内部用 `owner.effect(...)` 绑定生命周期，而 `owner = HostConnectionService.ctx`
  *   （client-connection 插件的 ctx），**不是**调用者插件的 ctx。
