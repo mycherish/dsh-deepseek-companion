@@ -83,7 +83,7 @@ const bodyStyle: CSSProperties = {
   alignItems: 'center',
   justifyContent: 'center',
   gap: 8,
-  padding: 24,
+  padding: 28,
   fontSize: 14,
   color: 'var(--dsw-alias-label-secondary)',
 }
@@ -114,9 +114,15 @@ function surfaceStyle(variant: CompanionSurface, dockWidth: number): CSSProperti
       borderLeft: '1px solid var(--dsw-alias-border-l3)',
     }
   }
+  // rightbar: an independent column — DSH background + a left hairline border
+  // separate it from the conversation, plus a whisper-light edge shadow so the
+  // boundary reads clearly without floating like the overlay card.
   return {
     ...base,
     height: '100%',
+    background: 'var(--dsw-alias-bg-base)',
+    borderLeft: '1px solid var(--dsw-alias-border-l3)',
+    boxShadow: '-1px 0 2px 0 rgba(0, 0, 0, 0.04)',
   }
 }
 
