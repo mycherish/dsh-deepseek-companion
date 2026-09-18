@@ -1,7 +1,21 @@
 import { useEffect, useState, type CSSProperties } from 'react'
 import { subscribeCompanionState, type CompanionState } from './api.ts'
+import type { DeepSeekStatus } from '../shared/state.ts'
 
 type Status = 'loading' | 'ready' | 'error'
+
+function deepseekLabel(status: DeepSeekStatus): string {
+  switch (status) {
+    case 'checking':
+      return '检测中'
+    case 'logged_in':
+      return '已登录'
+    case 'logged_out':
+      return '未登录'
+    case 'error':
+      return '检测失败'
+  }
+}
 
 const rowsStyle: CSSProperties = {
   display: 'flex',
@@ -51,6 +65,7 @@ export function HostStateView({ origin }: { origin: string }): JSX.Element {
       <div>Host: {state.status}</div>
       <div>Revision: {state.revision}</div>
       <div style={instanceStyle}>Instance: {state.instanceId.slice(0, 8)}</div>
+      <div>DeepSeek: {deepseekLabel(state.deepseek.status)}</div>
     </div>
   )
 }

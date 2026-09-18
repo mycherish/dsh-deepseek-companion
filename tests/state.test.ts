@@ -69,3 +69,28 @@ test('dispose 后不再推送', () => {
   assert.deepEqual(received, [1], 'dispose 后不应再推送任何更新')
   assert.equal(store.getState().revision, 1, 'dispose 后 bump 不再改变 revision')
 })
+
+test('初始 deepseek.status 为 checking', () => {
+  const store = createCompanionStateStore()
+  assert.equal(store.getState().deepseek.status, 'checking')
+})
+
+test('setDeepSeekStatus 更新状态并通知监听者', () => {
+  const store = createCompanionStateStore()
+  const received: string[] = []
+  store.subscribe((state) => received.push(state.deepseek.status))
+
+  store.setDeepSeekStatus('logged_out')
+  assert.deepEqual(received, ['checking', 'logged_out'])
+  assert.equal(store.getState().deepseek.status, 'logged_out')
+})
+
+test('setDeepSeekStatus 相同状态不重复通知', () => {
+  const store = createCompanionStateStore()
+  const received: string[] = []
+  store.subscribe((state) => received.push(state.deepseek.status))
+
+  store.setDeepSeekStatus('logged_in')
+  store.setDeepSeekStatus('logged_in') // 重复，不应通知
+  assert.deepEqual(received, ['checking', 'logged_in'])
+})

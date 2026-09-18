@@ -1,5 +1,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-client-connection'
+import { createDeepSeekBrowser, type DeepSeekBrowser } from './host/browser.ts'
+import { browserProfileDir } from './host/paths.ts'
 import { createCompanionStateStore, type CompanionStateStore } from './host/state.ts'
 import type { CompanionState } from './shared/state.ts'
 
@@ -17,17 +19,16 @@ const STREAM_PATH = '/api/deepseek-companion/state/stream'
 /**
  * DeepSeek Web Companion host half.
  *
- * The Host owns the single authoritative Companion state and exposes it as:
- * - `GET /state`        — one-shot snapshot.
- * - `GET /state/stream` — `text/event-stream` push channel (SSE-style, over the
- *                         official `connection.fetch` streaming response body).
- *
- * Dock and Pop-out subscribe to the same stream, so whenever the Host bumps the
- * state (future real business changes call `bumpRevision()`), both views update
- * live. No write API, no user data, no chat.
+ * The Host owns the single authoritative Companion state (including the
+ * DeepSeek web session login state) and a single persistent DeepSeek browser.
+ * State is exposed over a snapshot route and an SSE stream so Dock, Float, and
+ * Pop-out all read the same live data. No chat yet.
  */
 export function apply(ctx: Context): void {
   const store = createCompanionStateStore()
+
+  // Per-profile browser profile (via ctx.baseUrl), overridable for tests.
+  const browserProfileDirForCtx = browserProfileDir(process.env, ctx.baseUrl)
 
   ctx.effect(
     () =>
@@ -48,6 +49,34 @@ export function apply(ctx: Context): void {
       }),
     'deepseek-companion: companion state stream route',
   )
+
+  // DeepSeek browser lifecycle: owned by the Host, shared by all views. Closing
+  // a dock/float/pop-out never closes it; only plugin dispose does.
+  ctx.effect(() => {
+    let disposed = false
+    let browser: DeepSeekBrowser | null = null
+
+    void createDeepSeekBrowser(browserProfileDirForCtx, (status) => {
+      if (!disposed) store.setDeepSeekStatus(status)
+    })
+      .then((created) => {
+        if (disposed) {
+          void created.dispose()
+          return
+        }
+        browser = created
+        return created.check()
+      })
+      .catch((error: unknown) => {
+        console.warn('[dsh-deepseek-companion] failed to start DeepSeek browser', error)
+        if (!disposed) store.setDeepSeekStatus('error')
+      })
+
+    return () => {
+      disposed = true
+      if (browser !== null) void browser.dispose()
+    }
+  }, 'deepseek-companion: deepseek browser')
 
   ctx.effect(() => () => store.dispose(), 'deepseek-companion: state store')
 

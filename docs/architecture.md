@@ -160,3 +160,21 @@ Companion 支持三种界面形态，三者**复用同一份 Host State**（都�
 - 停靠 ↔ 浮窗互斥（同一时刻只有其一），通过 `DockController` 的 `enterFloat()` / `dockBack()` 切换；独立窗口独立存在。
 - 浮窗位置/尺寸是**内存态**（`float.ts` 的纯函数 `clampFloatPosition` / `clampFloatSize`），本阶段不持久化。
 - 浮窗与停靠都不复制状态逻辑，继续复用 `HostStateView`（订阅 `/api/deepseek-companion/state/stream`）。
+
+## DeepSeek 浏览器会话（Phase 07A）
+
+### 现状
+
+- **Host 管理浏览器**：`src/host/browser.ts` 用 Playwright（`chromium.launchPersistentContext`）打开并复用 **插件自己的独立 Profile**。多个界面共用一个浏览器会话，关闭 Dock/浮窗/独立窗口都不关闭它。
+- **Profile 路径规则**（`src/host/paths.ts`）：默认 `<profileDir>/deepseek-companion-browser`，其中 `<profileDir>` 取自 DSH 公开的 `ctx.baseUrl`（boot 时锚定在 `$DSH_HOME/profiles/<name>/`），因此 **web / companion-test 等不同 profile 默认即隔离**；`DEEPSEEK_COMPANION_PROFILE` 仍可覆盖（测试用）；`ctx.baseUrl` 缺失时回退 `$DSH_HOME/deepseek-companion-browser`。
+- **Chromium 策略**：只用 Playwright 自己匹配的 Chromium（`chromium.executablePath()`）；缺失时 `launchPersistentContext` 抛清晰的 "Executable doesn't exist" 错误，由 Host 映射为 `error` 状态（不崩溃）。**不自动下载、不执行 shell 安装、不遍历旧版本缓存**（`findCachedChromium` 已移除）。Playwright 锁在 `1.62.0`（匹配本机已有 chromium-1234），安装后即可直接使用。
+- **登录状态判断**（`deepseek.status`）：`checking` / `logged_in` / `logged_out` / `error`。**不以 `userToken` 是否非空为据**，改为调用 DeepSeek 自己的 **`GET /api/v0/users/current`**，由服务端返回的稳定字段判定（`src/host/login.ts` 的 `loginStatusFromCurrentUser`，接收最小信号 `{ code, id }`）：`id` 非空 → `logged_in`；`code !== 0` 且无 `id`（如 `40002 Missing Token`）→ `logged_out`；异常 → `error`。检测由 `page.on('load')`（全页导航）与 `page.on('response')`（SPA 内登录/退出后前端重调 `users/current`）触发，无轮询。
+- **凭证与隐私边界**：`localStorage.userToken` **仅作为 `GET /api/v0/users/current` 的 `Authorization: Bearer <token>` 请求凭证**，不作为登录判定依据。token 在 `page.evaluate` 浏览器上下文内读取、使用并丢弃，**只把 `{ code, id }` 最小信号返回 Host**；token/Cookie/用户信息不 console.log、不写文件、不进 `CompanionState`、不通过实时接口下发、不进错误信息。
+- **状态同步**：`deepseek.status` 纳入现有 `CompanionState`，通过 `/api/deepseek-companion/state/stream` 实时推送到 Dock / 浮窗 / 独立窗口，三者显示 `DeepSeek：检测中/已登录/未登录/检测失败`。
+- **依赖**：新增 `playwright@1.62.0`（Host 依赖，tsdown `external`，不打包进 bundle；DSH 自身的 `dsh-web-frontend` 只在 devDependencies 用 `playwright@^1.49.0`，运行时无需对齐）。
+
+### 结论
+
+- 已实测：浏览器缺失 → `error`（DSH 不崩溃）；chromium-1234 直接可用（Playwright 1.62 匹配，无需下载）；浏览器 Profile 落在 `profiles/<name>/deepseek-companion-browser`（按 profile 隔离）。
+- 登录态：全新未登录 Profile → `logged_out`（`users/current` 返回 `40002 Missing Token`）；已登录 → `logged_in`（`users/current` 返回 `code:0` + 用户 id）。判定以服务端为准，显著降低误判风险。
+- 未做：自动登录、发送消息、聊天、历史、Deep Think、Search、Handoff。浏览器 Profile 数据（含 Cookie）不进 Git。

@@ -1,14 +1,13 @@
 /**
- * Companion Host state store (Phase 06C).
+ * Companion Host state store (Phase 07A).
  *
  * The Host owns the authoritative, subscribable Companion state. `instanceId`
  * is minted once per Host process; `revision` increments when the Host bumps
- * the state, and every listener receives the new snapshot. `subscribe` replays
- * the current state immediately so a new listener always starts fresh. This is
- * a plain in-memory observable — no Redux/Zustand, no persistence.
+ * the state; `deepseek.status` tracks the DeepSeek web session login state and
+ * updates independently of `revision`. Every change notifies all listeners.
  */
 import { randomUUID } from 'node:crypto'
-import type { CompanionState } from '../shared/state.ts'
+import type { CompanionState, DeepSeekStatus } from '../shared/state.ts'
 
 export type StateListener = (state: CompanionState) => void
 
@@ -16,6 +15,7 @@ export interface CompanionStateStore {
   getState(): CompanionState
   subscribe(listener: StateListener): () => void
   bumpRevision(): void
+  setDeepSeekStatus(status: DeepSeekStatus): void
   dispose(): void
 }
 
@@ -24,9 +24,20 @@ export function createCompanionStateStore(): CompanionStateStore {
     status: 'ready',
     revision: 1,
     instanceId: randomUUID(),
+    deepseek: { status: 'checking' },
   }
   const listeners = new Set<StateListener>()
   let disposed = false
+
+  const notify = (next: CompanionState): void => {
+    for (const listener of [...listeners]) {
+      try {
+        listener(next)
+      } catch {
+        // a failing listener must not break the store
+      }
+    }
+  }
 
   return {
     getState: () => state,
@@ -46,13 +57,14 @@ export function createCompanionStateStore(): CompanionStateStore {
     bumpRevision() {
       if (disposed) return
       state = { ...state, revision: state.revision + 1 }
-      for (const listener of [...listeners]) {
-        try {
-          listener(state)
-        } catch {
-          // a failing listener must not break the store
-        }
-      }
+      notify(state)
+    },
+
+    setDeepSeekStatus(status: DeepSeekStatus) {
+      if (disposed) return
+      if (state.deepseek.status === status) return
+      state = { ...state, deepseek: { status } }
+      notify(state)
     },
 
     dispose() {
