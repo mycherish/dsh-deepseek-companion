@@ -13,6 +13,17 @@ export type { CompanionState }
 const STATE_PATH = '/api/deepseek-companion/state'
 /** Read-only SSE stream route. */
 const STREAM_PATH = '/api/deepseek-companion/state/stream'
+/** POST route to focus/reopen the DeepSeek login page. */
+const SHOW_PATH = '/api/deepseek-companion/browser/show'
+
+/** Ask the Host to focus (or reopen) the DeepSeek login page. */
+export async function showDeepSeekBrowser(origin: string): Promise<void> {
+  const response = await fetch(`${origin}${SHOW_PATH}`, {
+    method: 'POST',
+    credentials: 'include',
+  })
+  if (!response.ok) throw new Error(`show browser failed (HTTP ${response.status})`)
+}
 
 /** One-shot snapshot (still used for simple/fallback reads). */
 export async function fetchCompanionState(origin: string, signal?: AbortSignal): Promise<CompanionState> {

@@ -15,6 +15,8 @@ export const inject = ['connection']
 const STATE_PATH = '/api/deepseek-companion/state'
 /** Read-only SSE stream route (Phase 06C realtime sync). */
 const STREAM_PATH = '/api/deepseek-companion/state/stream'
+/** POST route to focus/reopen the DeepSeek login page (Phase 07B). */
+const SHOW_PATH = '/api/deepseek-companion/browser/show'
 
 /**
  * DeepSeek Web Companion host half.
@@ -52,11 +54,14 @@ export function apply(ctx: Context): void {
     'deepseek-companion: companion state stream route',
   )
 
-  // DeepSeek browser lifecycle: owned by the Host, shared by all views. Closing
-  // a dock/float/pop-out never closes it; only plugin dispose does.
+  // DeepSeek browser: a single persistent instance owned by the Host and shared
+  // by every view. The `browser` reference lives in `apply` scope so the show
+  // route below can reach it. Closing a dock/float/pop-out never closes it;
+  // only plugin dispose does.
+  let browser: DeepSeekBrowser | null = null
+
   ctx.effect(() => {
     let disposed = false
-    let browser: DeepSeekBrowser | null = null
 
     void createDeepSeekBrowser(browserProfileDirForCtx, (status) => {
       if (!disposed) store.setDeepSeekStatus(status)
@@ -76,9 +81,34 @@ export function apply(ctx: Context): void {
 
     return () => {
       disposed = true
-      if (browser !== null) void browser.dispose()
+      if (browser !== null) {
+        void browser.dispose()
+        browser = null
+      }
     }
   }, 'deepseek-companion: deepseek browser')
+
+  // Manual login entry: focus or reopen the DeepSeek page. The browser object,
+  // token, and cookies never leave the Host.
+  ctx.effect(
+    () =>
+      ctx.connection.fetch.register({
+        path: SHOW_PATH,
+        methods: ['POST'],
+        requestBody: 'buffered',
+        fetch: async () => {
+          if (browser === null) return Response.json({ ok: false }, { status: 503 })
+          try {
+            await browser.showLogin()
+            return Response.json({ ok: true })
+          } catch (error) {
+            console.warn('[dsh-deepseek-companion] failed to show DeepSeek login', error)
+            return Response.json({ ok: false }, { status: 500 })
+          }
+        },
+      }),
+    'deepseek-companion: browser show route',
+  )
 
   ctx.effect(() => () => store.dispose(), 'deepseek-companion: state store')
 

@@ -22,6 +22,8 @@ const CURRENT_USER_PATH = '/api/v0/users/current'
 export interface DeepSeekBrowser {
   /** Run one initial check now (then re-checks automatically on navigation). */
   check(): Promise<DeepSeekStatus>
+  /** Focus the live DeepSeek page, reopening the sign-in page if it was closed. */
+  showLogin(): Promise<void>
   dispose(): Promise<void>
 }
 
@@ -88,20 +90,23 @@ export async function createDeepSeekBrowser(
     }
   }
 
-  // Re-check whenever the page finishes a full navigation (login OAuth
-  // redirects across pages fire `load`), without an explicit polling loop.
-  page.on('load', () => {
-    void runDetect()
-  })
+  // Wire the detection triggers to a page. Re-run after a full navigation
+  // (login OAuth redirects across pages fire `load`) and after the SPA
+  // re-fetches `/users/current` (in-app login/logout use history.pushState and
+  // do NOT fire `load`). We only treat that response as a "state may have
+  // changed" trigger and never read its body here — the token stays inside the
+  // page context, where `detectStatus()` reads it.
+  const attachListeners = (target: Page): void => {
+    target.on('load', () => {
+      void runDetect()
+    })
+    target.on('response', (response) => {
+      if (!response.url().includes(CURRENT_USER_PATH)) return
+      void runDetect()
+    })
+  }
 
-  // The SPA re-fetches `/users/current` after in-app login/logout (which use
-  // history.pushState and do NOT fire `load`). We only treat that response as
-  // a "state may have changed" trigger and never read its body here — the
-  // token stays inside the page context, where `detectStatus()` reads it.
-  page.on('response', (response) => {
-    if (!response.url().includes(CURRENT_USER_PATH)) return
-    void runDetect()
-  })
+  attachListeners(page)
 
   const check = async (): Promise<DeepSeekStatus> => {
     try {
@@ -114,8 +119,25 @@ export async function createDeepSeekBrowser(
     }
   }
 
+  // Show the DeepSeek page for manual login. Reuse the live page and navigate it
+  // to the sign-in route, then focus it; only when it was closed do we open a
+  // fresh page and re-attach detection first. Never spawns a second browser
+  // context or page. DeepSeek may redirect /sign_in back to the home page when
+  // a session already exists — that is normal site behavior (a redirect is not
+  // a `goto` failure). Errors here propagate to the Host show route, which maps
+  // them to a 500 response.
+  const showLogin = async (): Promise<void> => {
+    if (page.isClosed()) {
+      page = await context.newPage()
+      attachListeners(page)
+    }
+    await page.goto(`${DEEPSEEK_URL}/sign_in`, { waitUntil: 'domcontentloaded', timeout: 30000 })
+    await page.bringToFront()
+  }
+
   return {
     check,
+    showLogin,
     async dispose() {
       await context.close().catch(() => {})
     },
