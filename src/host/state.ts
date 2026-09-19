@@ -7,7 +7,7 @@
  * updates independently of `revision`. Every change notifies all listeners.
  */
 import { randomUUID } from 'node:crypto'
-import type { CompanionState, DeepSeekStatus } from '../shared/state.ts'
+import type { ChatMessage, CompanionState, DeepSeekStatus } from '../shared/state.ts'
 
 export type StateListener = (state: CompanionState) => void
 
@@ -16,6 +16,8 @@ export interface CompanionStateStore {
   subscribe(listener: StateListener): () => void
   bumpRevision(): void
   setDeepSeekStatus(status: DeepSeekStatus): void
+  appendChatMessage(role: ChatMessage['role'], content: string): void
+  setChatSending(sending: boolean): void
   dispose(): void
 }
 
@@ -25,6 +27,7 @@ export function createCompanionStateStore(): CompanionStateStore {
     revision: 1,
     instanceId: randomUUID(),
     deepseek: { status: 'checking' },
+    chat: { messages: [], sending: false },
   }
   const listeners = new Set<StateListener>()
   let disposed = false
@@ -64,6 +67,20 @@ export function createCompanionStateStore(): CompanionStateStore {
       if (disposed) return
       if (state.deepseek.status === status) return
       state = { ...state, deepseek: { status } }
+      notify(state)
+    },
+
+    appendChatMessage(role: ChatMessage['role'], content: string) {
+      if (disposed) return
+      const message: ChatMessage = { id: randomUUID(), role, content }
+      state = { ...state, chat: { ...state.chat, messages: [...state.chat.messages, message] } }
+      notify(state)
+    },
+
+    setChatSending(sending: boolean) {
+      if (disposed) return
+      if (state.chat.sending === sending) return
+      state = { ...state, chat: { ...state.chat, sending } }
       notify(state)
     },
 

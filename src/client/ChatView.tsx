@@ -1,11 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { sendChatMessage, showDeepSeekBrowser, subscribeCompanionState } from './api.ts'
-import type { DeepSeekStatus } from '../shared/state.ts'
-
-interface ChatMessage {
-  role: 'user' | 'assistant'
-  text: string
-}
+import type { ChatMessage, DeepSeekStatus } from '../shared/state.ts'
 
 const rootStyle: CSSProperties = {
   display: 'flex',
@@ -88,40 +83,53 @@ const sendButtonStyle: CSSProperties = {
 }
 
 /**
- * Minimal shared chat view used by the Dock, Float, and Pop-out (Phase 07C).
- * It owns its own message list and talks to the Host over the `/chat` route,
- * so none of the three surfaces duplicate the send/reply logic.
+ * Minimal shared chat view used by the Dock, Float, and Pop-out (Phase 07C.1).
+ * The Host owns the authoritative message list; this view only mirrors it from
+ * the realtime state stream, so all three surfaces always show the same history.
  */
 export function ChatView({ origin }: { origin: string }): JSX.Element {
   const [status, setStatus] = useState<DeepSeekStatus>('checking')
   const [messages, setMessages] = useState<ChatMessage[]>([])
+  const [hostSending, setHostSending] = useState(false)
   const [input, setInput] = useState('')
-  const [sending, setSending] = useState(false)
+  const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const listRef = useRef<HTMLDivElement>(null)
 
-  useEffect(() => subscribeCompanionState(origin, (state) => setStatus(state.deepseek.status)), [origin])
+  useEffect(
+    () =>
+      subscribeCompanionState(origin, (state) => {
+        setStatus(state.deepseek.status)
+        setMessages(state.chat.messages)
+        setHostSending(state.chat.sending)
+      }),
+    [origin],
+  )
+
+  // `hostSending` is the authoritative send state; `submitting` only covers the
+  // short local window before the Host's first SSE push lands, so the button
+  // stays disabled between the click and that push.
+  const busy = submitting || hostSending
 
   // Keep the newest message in view.
   useEffect(() => {
     const list = listRef.current
     if (list !== null) list.scrollTop = list.scrollHeight
-  }, [messages, sending])
+  }, [messages, busy])
 
   const send = async (): Promise<void> => {
     const text = input.trim()
-    if (text === '' || sending || status !== 'logged_in') return
-    setMessages((prev) => [...prev, { role: 'user', text }])
+    if (text === '' || busy || status !== 'logged_in') return
     setInput('')
-    setSending(true)
+    setSubmitting(true)
     setError(null)
     try {
-      const reply = await sendChatMessage(origin, text)
-      setMessages((prev) => [...prev, { role: 'assistant', text: reply }])
+      // The Host appends the user + assistant messages; this view only waits.
+      await sendChatMessage(origin, text)
     } catch (e) {
       setError(e instanceof Error ? e.message : '发送失败')
     } finally {
-      setSending(false)
+      setSubmitting(false)
     }
   }
 
@@ -162,12 +170,12 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
     <div style={rootStyle}>
       <div ref={listRef} style={messagesStyle}>
         {messages.length === 0 ? <div style={hintStyle}>输入消息开始对话</div> : null}
-        {messages.map((message, index) => (
-          <div key={index} style={messageRowStyle(message.role)}>
-            {message.text}
+        {messages.map((message) => (
+          <div key={message.id} style={messageRowStyle(message.role)}>
+            {message.content}
           </div>
         ))}
-        {sending ? <div style={messageRowStyle('assistant')}>正在回复…</div> : null}
+        {busy ? <div style={messageRowStyle('assistant')}>正在回复…</div> : null}
       </div>
       {error !== null ? <div style={errorStyle}>{error}</div> : null}
       <div style={inputRowStyle}>
@@ -183,8 +191,8 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
             }
           }}
         />
-        <button type="button" style={sendButtonStyle} onClick={() => void send()} disabled={sending}>
-          {sending ? '发送中' : '发送'}
+        <button type="button" style={sendButtonStyle} onClick={() => void send()} disabled={busy}>
+          {busy ? '发送中' : '发送'}
         </button>
       </div>
     </div>

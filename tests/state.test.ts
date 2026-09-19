@@ -94,3 +94,48 @@ test('setDeepSeekStatus 相同状态不重复通知', () => {
   store.setDeepSeekStatus('logged_in') // 重复，不应通知
   assert.deepEqual(received, ['checking', 'logged_in'])
 })
+
+test('初始 chat 状态：messages 为空且 sending=false', () => {
+  const store = createCompanionStateStore()
+  assert.deepEqual(store.getState().chat.messages, [])
+  assert.equal(store.getState().chat.sending, false)
+})
+
+test('appendChatMessage 追加 user/assistant 并通知监听者', () => {
+  const store = createCompanionStateStore()
+  const counts: number[] = []
+  store.subscribe((state) => counts.push(state.chat.messages.length))
+
+  store.appendChatMessage('user', '你好')
+  store.appendChatMessage('assistant', '你好！')
+
+  const messages = store.getState().chat.messages
+  assert.equal(messages.length, 2)
+  assert.equal(messages[0]!.role, 'user')
+  assert.equal(messages[0]!.content, '你好')
+  assert.ok(messages[0]!.id.length > 0)
+  assert.equal(messages[1]!.role, 'assistant')
+  assert.equal(messages[1]!.content, '你好！')
+  assert.deepEqual(counts, [0, 1, 2])
+})
+
+test('setChatSending false→true→false 并通知监听者', () => {
+  const store = createCompanionStateStore()
+  const received: boolean[] = []
+  store.subscribe((state) => received.push(state.chat.sending))
+
+  store.setChatSending(true)
+  store.setChatSending(false)
+  assert.deepEqual(received, [false, true, false])
+  assert.equal(store.getState().chat.sending, false)
+})
+
+test('setChatSending 相同值不重复通知', () => {
+  const store = createCompanionStateStore()
+  const received: boolean[] = []
+  store.subscribe((state) => received.push(state.chat.sending))
+
+  store.setChatSending(true)
+  store.setChatSending(true) // 重复，不应通知
+  assert.deepEqual(received, [false, true])
+})

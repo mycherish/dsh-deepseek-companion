@@ -1,6 +1,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-client-connection'
 import { createDeepSeekBrowser, type DeepSeekBrowser } from './host/browser.ts'
+import { handleChatMessage } from './host/chat.ts'
 import { browserProfileDir } from './host/paths.ts'
 import { createCompanionStateStore, type CompanionStateStore } from './host/state.ts'
 import type { CompanionState } from './shared/state.ts'
@@ -112,8 +113,9 @@ export function apply(ctx: Context): void {
     'deepseek-companion: browser show route',
   )
 
-  // Minimal text chat: parse the JSON body, forward one message to the browser,
-  // and return the final complete reply. No streaming, no history management.
+  // Minimal text chat: the Host is the authoritative message source. It claims
+  // the send slot, appends the user message, sends via the browser, then
+  // appends the assistant reply — every change streams to all views.
   ctx.effect(
     () =>
       ctx.connection.fetch.register({
@@ -130,14 +132,15 @@ export function apply(ctx: Context): void {
           }
           if (message === '') return Response.json({ error: 'message is empty' }, { status: 400 })
           if (browser === null) return Response.json({ error: 'browser not ready' }, { status: 503 })
-          try {
-            const reply = await browser.sendMessage(message)
-            return Response.json({ reply })
-          } catch (error) {
-            const detail = error instanceof Error ? error.message : String(error)
-            console.warn('[dsh-deepseek-companion] failed to send chat message', detail)
-            return Response.json({ error: detail }, { status: 500 })
+          // Capture a non-null reference so the send closure below type-checks.
+          const currentBrowser = browser
+          // Delegate to the tested send flow (claims the slot, appends user,
+          // sends, appends assistant, resets sending in `finally`).
+          const result = await handleChatMessage(store, (text) => currentBrowser.sendMessage(text), message)
+          if (result.status === 500) {
+            console.warn('[dsh-deepseek-companion] failed to send chat message', result.body.error)
           }
+          return Response.json(result.body, { status: result.status })
         },
       }),
     'deepseek-companion: chat route',
