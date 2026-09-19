@@ -15,6 +15,8 @@ const STATE_PATH = '/api/deepseek-companion/state'
 const STREAM_PATH = '/api/deepseek-companion/state/stream'
 /** POST route to focus/reopen the DeepSeek login page. */
 const SHOW_PATH = '/api/deepseek-companion/browser/show'
+/** POST route to send one chat message and await the final reply. */
+const CHAT_PATH = '/api/deepseek-companion/chat'
 
 /** Ask the Host to focus (or reopen) the DeepSeek login page. */
 export async function showDeepSeekBrowser(origin: string): Promise<void> {
@@ -23,6 +25,29 @@ export async function showDeepSeekBrowser(origin: string): Promise<void> {
     credentials: 'include',
   })
   if (!response.ok) throw new Error(`show browser failed (HTTP ${response.status})`)
+}
+
+/** Send one message and resolve with the final complete reply text. */
+export async function sendChatMessage(origin: string, message: string): Promise<string> {
+  const response = await fetch(`${origin}${CHAT_PATH}`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message }),
+  })
+  if (!response.ok) {
+    let detail = `HTTP ${response.status}`
+    try {
+      const body = (await response.json()) as { error?: unknown }
+      if (typeof body.error === 'string') detail = body.error
+    } catch {
+      // keep the HTTP detail
+    }
+    throw new Error(detail)
+  }
+  const body = (await response.json()) as { reply?: unknown }
+  if (typeof body.reply !== 'string') throw new Error('invalid reply from Host')
+  return body.reply
 }
 
 /** One-shot snapshot (still used for simple/fallback reads). */

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react'
 import type { DockController } from './index.ts'
-import { HostStateView } from './HostStateView.tsx'
+import { ChatView } from './ChatView.tsx'
 import {
   clampFloatPosition,
   clampFloatSize,
@@ -107,18 +107,10 @@ const bodyStyle: CSSProperties = {
   flex: 1,
   display: 'flex',
   flexDirection: 'column',
-  alignItems: 'center',
-  justifyContent: 'center',
-  gap: 8,
-  padding: 24,
+  padding: 12,
   color: 'var(--dsw-alias-label-secondary)',
   minHeight: 0,
   overflow: 'hidden',
-}
-
-const strongStyle: CSSProperties = {
-  color: 'var(--dsw-alias-label-primary)',
-  fontWeight: 600,
 }
 
 /** Transparent resize handles: four edges (6px) plus four corners (16px). */
@@ -273,8 +265,7 @@ export function CompanionFloat({ dock }: { dock: DockController }): JSX.Element 
         </div>
       </header>
       <div style={bodyStyle}>
-        <strong style={strongStyle}>DeepSeek Companion</strong>
-        <HostStateView origin={window.location.origin} />
+        <ChatView origin={window.location.origin} />
       </div>
       {RESIZE_EDGES.map((edge) => (
         <div

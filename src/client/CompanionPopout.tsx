@@ -1,5 +1,5 @@
 import type { CSSProperties } from 'react'
-import { HostStateView } from './HostStateView.tsx'
+import { ChatView } from './ChatView.tsx'
 
 const rootStyle: CSSProperties = {
   display: 'flex',
@@ -42,16 +42,9 @@ const bodyStyle: CSSProperties = {
   flex: 1,
   display: 'flex',
   flexDirection: 'column',
-  alignItems: 'center',
-  justifyContent: 'center',
-  gap: 8,
-  padding: 24,
+  minHeight: 0,
+  padding: 12,
   color: 'var(--dsw-alias-label-secondary)',
-}
-
-const strongStyle: CSSProperties = {
-  color: 'var(--dsw-alias-label-primary)',
-  fontWeight: 600,
 }
 
 /** Minimal pop-out shell: header + shared Host-state view. */
@@ -65,8 +58,7 @@ export function CompanionPopout({ onClose, origin }: { onClose: () => void; orig
         </button>
       </header>
       <div style={bodyStyle}>
-        <strong style={strongStyle}>DeepSeek Companion</strong>
-        <HostStateView origin={origin} />
+        <ChatView origin={origin} />
       </div>
     </div>
   )

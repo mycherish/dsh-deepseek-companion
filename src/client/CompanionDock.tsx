@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react'
 import type { CompanionSurface, DockController } from './index.ts'
-import { HostStateView } from './HostStateView.tsx'
+import { ChatView } from './ChatView.tsx'
 import { clampDockWidth, widthFromPointer } from './resize.ts'
 
 const headerStyle: CSSProperties = {
@@ -80,17 +80,10 @@ const bodyStyle: CSSProperties = {
   flex: 1,
   display: 'flex',
   flexDirection: 'column',
-  alignItems: 'center',
-  justifyContent: 'center',
-  gap: 8,
-  padding: 28,
+  minHeight: 0,
+  padding: 12,
   fontSize: 14,
   color: 'var(--dsw-alias-label-secondary)',
-}
-
-const strongStyle: CSSProperties = {
-  color: 'var(--dsw-alias-label-primary)',
-  fontWeight: 600,
 }
 
 /** Frame-right shell for the overlay fallback; rightbar uses the column's own bounds. */
@@ -237,8 +230,7 @@ export function CompanionDock({ dock, variant }: { dock: DockController; variant
         </div>
       </header>
       <div style={bodyStyle}>
-        <strong style={strongStyle}>DeepSeek Companion</strong>
-        <HostStateView origin={window.location.origin} />
+        <ChatView origin={window.location.origin} />
       </div>
     </aside>
   )

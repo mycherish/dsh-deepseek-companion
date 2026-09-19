@@ -17,6 +17,8 @@ const STATE_PATH = '/api/deepseek-companion/state'
 const STREAM_PATH = '/api/deepseek-companion/state/stream'
 /** POST route to focus/reopen the DeepSeek login page (Phase 07B). */
 const SHOW_PATH = '/api/deepseek-companion/browser/show'
+/** POST route to send one chat message and await the final reply (Phase 07C). */
+const CHAT_PATH = '/api/deepseek-companion/chat'
 
 /**
  * DeepSeek Web Companion host half.
@@ -108,6 +110,37 @@ export function apply(ctx: Context): void {
         },
       }),
     'deepseek-companion: browser show route',
+  )
+
+  // Minimal text chat: parse the JSON body, forward one message to the browser,
+  // and return the final complete reply. No streaming, no history management.
+  ctx.effect(
+    () =>
+      ctx.connection.fetch.register({
+        path: CHAT_PATH,
+        methods: ['POST'],
+        requestBody: 'buffered',
+        fetch: async (request) => {
+          let message: string
+          try {
+            const body = (await request.json()) as { message?: unknown }
+            message = typeof body?.message === 'string' ? body.message.trim() : ''
+          } catch {
+            return Response.json({ error: 'invalid request body' }, { status: 400 })
+          }
+          if (message === '') return Response.json({ error: 'message is empty' }, { status: 400 })
+          if (browser === null) return Response.json({ error: 'browser not ready' }, { status: 503 })
+          try {
+            const reply = await browser.sendMessage(message)
+            return Response.json({ reply })
+          } catch (error) {
+            const detail = error instanceof Error ? error.message : String(error)
+            console.warn('[dsh-deepseek-companion] failed to send chat message', detail)
+            return Response.json({ error: detail }, { status: 500 })
+          }
+        },
+      }),
+    'deepseek-companion: chat route',
   )
 
   ctx.effect(() => () => store.dispose(), 'deepseek-companion: state store')

@@ -18,12 +18,22 @@ import { loginStatusFromCurrentUser } from './login.ts'
 const DEEPSEEK_URL = 'https://chat.deepseek.com'
 /** DeepSeek's authoritative "current user" endpoint. */
 const CURRENT_USER_PATH = '/api/v0/users/current'
+/** Completion endpoint the SPA posts to when sending a message. */
+const COMPLETION_PATH = '/chat/completion'
+/** The single chat input (a plain `textarea`, no stable id/role/aria). */
+const INPUT_SELECTOR = 'textarea'
+/** The send button (DeepSeek's `ds-button--primary`). */
+const SEND_BUTTON_SELECTOR = '.ds-button--primary'
+/** Assistant replies are rendered as markdown in `.ds-markdown`. */
+const REPLY_SELECTOR = '.ds-markdown'
 
 export interface DeepSeekBrowser {
   /** Run one initial check now (then re-checks automatically on navigation). */
   check(): Promise<DeepSeekStatus>
   /** Focus the live DeepSeek page, reopening the sign-in page if it was closed. */
   showLogin(): Promise<void>
+  /** Send one message and resolve with the final complete reply text. */
+  sendMessage(text: string): Promise<string>
   dispose(): Promise<void>
 }
 
@@ -135,9 +145,48 @@ export async function createDeepSeekBrowser(
     await page.bringToFront()
   }
 
+  // Single-flight guard: only one in-flight send at a time (no per-message
+  // session isolation in this phase).
+  let sending = false
+
+  const sendMessage = async (text: string): Promise<string> => {
+    if (sending) throw new Error('a send is already in progress')
+    sending = true
+    try {
+      // Fail fast when logged out; the token check happens inside the page and
+      // only a boolean/code leaves it — no token or cookie is ever read here.
+      const status = await detectStatus(page)
+      if (status !== 'logged_in') {
+        throw new Error(status === 'logged_out' ? 'not logged in' : 'login state unknown')
+      }
+      // Wait for the completion POST before clicking, then wait for its SSE
+      // stream to finish — the reliable "reply complete" signal (no polling).
+      const completionPromise = page.waitForResponse(
+        (response) => response.request().method() === 'POST' && response.url().includes(COMPLETION_PATH),
+        { timeout: 60000 },
+      )
+      await page.fill(INPUT_SELECTOR, text)
+      await page.locator(SEND_BUTTON_SELECTOR).first().click()
+      const response = await completionPromise
+      await response.finished()
+      // Give the SPA a beat to render the final markdown after the stream ends.
+      await page.waitForTimeout(200)
+      const reply = await page.evaluate((selector) => {
+        const nodes = document.querySelectorAll(selector)
+        const last = nodes[nodes.length - 1]
+        return last ? (last.textContent ?? '').trim() : ''
+      }, REPLY_SELECTOR)
+      if (reply === '') throw new Error('empty reply from DeepSeek')
+      return reply
+    } finally {
+      sending = false
+    }
+  }
+
   return {
     check,
     showLogin,
+    sendMessage,
     async dispose() {
       await context.close().catch(() => {})
     },
