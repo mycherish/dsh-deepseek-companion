@@ -16,7 +16,8 @@ export interface CompanionStateStore {
   subscribe(listener: StateListener): () => void
   bumpRevision(): void
   setDeepSeekStatus(status: DeepSeekStatus): void
-  appendChatMessage(role: ChatMessage['role'], content: string): void
+  appendChatMessage(role: ChatMessage['role'], content: string): ChatMessage
+  updateChatMessage(id: string, content: string): void
   setChatSending(sending: boolean): void
   dispose(): void
 }
@@ -70,10 +71,23 @@ export function createCompanionStateStore(): CompanionStateStore {
       notify(state)
     },
 
-    appendChatMessage(role: ChatMessage['role'], content: string) {
-      if (disposed) return
+    appendChatMessage(role: ChatMessage['role'], content: string): ChatMessage {
       const message: ChatMessage = { id: randomUUID(), role, content }
+      if (disposed) return message
       state = { ...state, chat: { ...state.chat, messages: [...state.chat.messages, message] } }
+      notify(state)
+      return message
+    },
+
+    updateChatMessage(id: string, content: string) {
+      if (disposed) return
+      const index = state.chat.messages.findIndex((message) => message.id === id)
+      if (index === -1) return
+      const existing = state.chat.messages[index]!
+      if (existing.content === content) return
+      const messages = state.chat.messages.slice()
+      messages[index] = { ...existing, content }
+      state = { ...state, chat: { ...state.chat, messages } }
       notify(state)
     },
 

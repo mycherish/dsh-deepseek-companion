@@ -14,6 +14,7 @@
 import { chromium, type BrowserContext, type Page } from 'playwright'
 import type { DeepSeekStatus } from '../shared/state.ts'
 import { loginStatusFromCurrentUser } from './login.ts'
+import { createThrottle } from './throttle.ts'
 
 const DEEPSEEK_URL = 'https://chat.deepseek.com'
 /** DeepSeek's authoritative "current user" endpoint. */
@@ -24,16 +25,22 @@ const COMPLETION_PATH = '/chat/completion'
 const INPUT_SELECTOR = 'textarea'
 /** The send button (DeepSeek's `ds-button--primary`). */
 const SEND_BUTTON_SELECTOR = '.ds-button--primary'
-/** Assistant replies are rendered as markdown in `.ds-markdown`. */
-const REPLY_SELECTOR = '.ds-markdown'
+/** Primary assistant reply container (semantic class, Phase 07D-0). */
+const REPLY_SELECTOR = '.ds-assistant-message-main-content'
+/** Fallback when the semantic class is absent (older/renamed DOM). */
+const REPLY_FALLBACK_SELECTOR = '.ds-markdown'
 
 export interface DeepSeekBrowser {
   /** Run one initial check now (then re-checks automatically on navigation). */
   check(): Promise<DeepSeekStatus>
   /** Focus the live DeepSeek page, reopening the sign-in page if it was closed. */
   showLogin(): Promise<void>
-  /** Send one message and resolve with the final complete reply text. */
-  sendMessage(text: string): Promise<string>
+  /**
+   * Send one message and resolve with the final complete reply text. `onDelta`
+   * fires with the growing reply text while DeepSeek is still generating (pure
+   * text snapshots — no token or cookie ever leaves the page context).
+   */
+  sendMessage(text: string, onDelta: (text: string) => void): Promise<string>
   dispose(): Promise<void>
 }
 
@@ -118,6 +125,17 @@ export async function createDeepSeekBrowser(
 
   attachListeners(page)
 
+  // Bridge from the page's MutationObserver back to the Host. Registered on the
+  // CONTEXT once, so every page (current AND future — including a page
+  // recreated after close) automatically has `window.__onReplyDelta`; the
+  // context re-injects it on every document load, so one install survives
+  // navigation and there is never a duplicate registration across sends.
+  let currentDeltaReceiver: ((text: string) => void) | null = null
+
+  await context.exposeFunction('__onReplyDelta', (text: string) => {
+    currentDeltaReceiver?.(text)
+  })
+
   const check = async (): Promise<DeepSeekStatus> => {
     try {
       await page.goto(DEEPSEEK_URL, { waitUntil: 'domcontentloaded', timeout: 30000 })
@@ -149,9 +167,27 @@ export async function createDeepSeekBrowser(
   // session isolation in this phase).
   let sending = false
 
-  const sendMessage = async (text: string): Promise<string> => {
+  const sendMessage = async (text: string, onDelta: (text: string) => void): Promise<string> => {
     if (sending) throw new Error('a send is already in progress')
     sending = true
+
+    // Light throttle: emit at most ~every 100ms, always with the latest text.
+    const throttle = createThrottle(onDelta, 100)
+    currentDeltaReceiver = (snapshot) => throttle.push(snapshot)
+
+    const cleanupObserver = (): Promise<void> =>
+      page
+        .evaluate(() => {
+          const w = window as unknown as {
+            __replyObserver?: { disconnect(): void }
+            __readCurrentReply?: () => string
+          }
+          w.__replyObserver?.disconnect()
+          delete w.__replyObserver
+          delete w.__readCurrentReply
+        })
+        .catch(() => {})
+
     try {
       // Fail fast when logged out; the token check happens inside the page and
       // only a boolean/code leaves it — no token or cookie is ever read here.
@@ -159,6 +195,36 @@ export async function createDeepSeekBrowser(
       if (status !== 'logged_in') {
         throw new Error(status === 'logged_out' ? 'not logged in' : 'login state unknown')
       }
+
+      // Install the DOM observer BEFORE sending, capturing the current reply
+      // count so we only read the NEW assistant reply (never stale history).
+      await page.evaluate(
+        ({ selector, fallback }) => {
+          const w = window as unknown as {
+            __onReplyDelta?: (text: string) => void
+            __replyObserver?: MutationObserver
+            __readCurrentReply?: () => string
+          }
+          const selectNodes = (): NodeListOf<Element> => {
+            const nodes = document.querySelectorAll(selector)
+            return nodes.length > 0 ? nodes : document.querySelectorAll(fallback)
+          }
+          const startCount = selectNodes().length
+          const readCurrent = (): string => {
+            const nodes = selectNodes()
+            if (nodes.length <= startCount) return ''
+            return (nodes[nodes.length - 1]!.textContent ?? '').trim()
+          }
+          const observer = new MutationObserver(() => {
+            w.__onReplyDelta?.(readCurrent())
+          })
+          observer.observe(document.body, { childList: true, subtree: true, characterData: true })
+          w.__replyObserver = observer
+          w.__readCurrentReply = readCurrent
+        },
+        { selector: REPLY_SELECTOR, fallback: REPLY_FALLBACK_SELECTOR },
+      )
+
       // Wait for the completion POST before clicking, then wait for its SSE
       // stream to finish — the reliable "reply complete" signal (no polling).
       const completionPromise = page.waitForResponse(
@@ -169,16 +235,32 @@ export async function createDeepSeekBrowser(
       await page.locator(SEND_BUTTON_SELECTOR).first().click()
       const response = await completionPromise
       await response.finished()
-      // Give the SPA a beat to render the final markdown after the stream ends.
-      await page.waitForTimeout(200)
-      const reply = await page.evaluate((selector) => {
-        const nodes = document.querySelectorAll(selector)
-        const last = nodes[nodes.length - 1]
-        return last ? (last.textContent ?? '').trim() : ''
-      }, REPLY_SELECTOR)
-      if (reply === '') throw new Error('empty reply from DeepSeek')
-      return reply
+
+      // Final read (also disconnects the observer), then force-flush so the
+      // final text can never be dropped by the throttle.
+      const finalText = await page.evaluate(() => {
+        const w = window as unknown as {
+          __replyObserver?: { disconnect(): void }
+          __readCurrentReply?: () => string
+        }
+        const text = typeof w.__readCurrentReply === 'function' ? w.__readCurrentReply() : ''
+        w.__replyObserver?.disconnect()
+        delete w.__replyObserver
+        delete w.__readCurrentReply
+        return text
+      })
+
+      // Force-flush the final text (bypasses any pending throttle timer so the
+      // last chunk can never be dropped).
+      throttle.push(finalText)
+      throttle.flush()
+
+      if (finalText === '') throw new Error('empty reply from DeepSeek')
+      return finalText
     } finally {
+      currentDeltaReceiver = null
+      throttle.dispose()
+      await cleanupObserver()
       sending = false
     }
   }

@@ -1,8 +1,9 @@
 /**
- * Host chat send flow (Phase 07C.1).
+ * Host chat send flow (Phase 07C.1 → 07D).
  *
- * Extracted from the route handler so the concurrency gate and finally-reset
- * can be unit-tested without a real browser or connection service.
+ * Extracted from the route handler so the concurrency gate, single-message
+ * streaming update, and finally-reset can be unit-tested without a real browser
+ * or connection service.
  */
 import type { CompanionStateStore } from './state.ts'
 
@@ -13,7 +14,7 @@ export interface ChatSendResult {
 
 export async function handleChatMessage(
   store: CompanionStateStore,
-  send: (message: string) => Promise<string>,
+  send: (message: string, onDelta: (text: string) => void) => Promise<string>,
   message: string,
 ): Promise<ChatSendResult> {
   // Concurrency gate: atomically claim the send slot before touching messages,
@@ -23,11 +24,17 @@ export async function handleChatMessage(
   }
   store.setChatSending(true)
   store.appendChatMessage('user', message)
+  // One empty assistant message is created up front; every delta updates the
+  // SAME message, so the message count never grows while streaming.
+  const assistant = store.appendChatMessage('assistant', '')
   try {
-    const reply = await send(message)
-    store.appendChatMessage('assistant', reply)
+    const reply = await send(message, (delta) => store.updateChatMessage(assistant.id, delta))
+    // Force-write the final reply even if the last delta was throttled/dropped.
+    store.updateChatMessage(assistant.id, reply)
     return { status: 200, body: { reply } }
   } catch (error) {
+    // Keep the user message and any partial assistant text; never fabricate a
+    // completion.
     const detail = error instanceof Error ? error.message : String(error)
     return { status: 500, body: { error: detail } }
   } finally {

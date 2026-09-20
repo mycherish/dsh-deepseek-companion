@@ -136,7 +136,7 @@ export function apply(ctx: Context): void {
           const currentBrowser = browser
           // Delegate to the tested send flow (claims the slot, appends user,
           // sends, appends assistant, resets sending in `finally`).
-          const result = await handleChatMessage(store, (text) => currentBrowser.sendMessage(text), message)
+          const result = await handleChatMessage(store, (text, onDelta) => currentBrowser.sendMessage(text, onDelta), message)
           if (result.status === 500) {
             console.warn('[dsh-deepseek-companion] failed to send chat message', result.body.error)
           }

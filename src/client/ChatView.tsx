@@ -170,11 +170,18 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
     <div style={rootStyle}>
       <div ref={listRef} style={messagesStyle}>
         {messages.length === 0 ? <div style={hintStyle}>输入消息开始对话</div> : null}
-        {messages.map((message) => (
-          <div key={message.id} style={messageRowStyle(message.role)}>
-            {message.content}
-          </div>
-        ))}
+        {messages.map((message) => {
+          // An empty assistant message only exists transiently while the reply
+          // is streaming (or right after a pre-send failure); it would render
+          // as a stray blank bubble, so skip it — the "replying…" placeholder
+          // below already covers the in-flight state.
+          if (message.role === 'assistant' && message.content === '') return null
+          return (
+            <div key={message.id} style={messageRowStyle(message.role)}>
+              {message.content}
+            </div>
+          )
+        })}
         {busy ? <div style={messageRowStyle('assistant')}>正在回复…</div> : null}
       </div>
       {error !== null ? <div style={errorStyle}>{error}</div> : null}

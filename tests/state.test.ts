@@ -139,3 +139,41 @@ test('setChatSending 相同值不重复通知', () => {
   store.setChatSending(true) // 重复，不应通知
   assert.deepEqual(received, [false, true])
 })
+
+test('updateChatMessage 更新指定消息且不影响其他消息', () => {
+  const store = createCompanionStateStore()
+  const user = store.appendChatMessage('user', '你好')
+  const assistant = store.appendChatMessage('assistant', '')
+  store.appendChatMessage('user', '第三条')
+
+  store.updateChatMessage(assistant.id, '回复内容')
+
+  const messages = store.getState().chat.messages
+  assert.equal(messages[1]!.content, '回复内容')
+  assert.equal(messages[0]!.id, user.id)
+  assert.equal(messages[0]!.content, '你好')
+  assert.equal(messages[2]!.content, '第三条')
+})
+
+test('updateChatMessage 相同 content 不重复 notify', () => {
+  const store = createCompanionStateStore()
+  store.appendChatMessage('user', '你好')
+  const assistant = store.appendChatMessage('assistant', '')
+  const contents: string[] = []
+  store.subscribe((state) => contents.push(state.chat.messages[1]?.content ?? ''))
+
+  store.updateChatMessage(assistant.id, '内容A')
+  store.updateChatMessage(assistant.id, '内容A') // 重复，不应通知
+
+  assert.deepEqual(contents, ['', '内容A'])
+})
+
+test('updateChatMessage 找不到 id 时安全 no-op', () => {
+  const store = createCompanionStateStore()
+  store.appendChatMessage('user', '你好')
+  const before = store.getState().chat.messages
+
+  store.updateChatMessage('nonexistent-id', '内容')
+
+  assert.deepEqual(store.getState().chat.messages, before)
+})

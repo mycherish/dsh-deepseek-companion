@@ -178,3 +178,33 @@ Companion 支持三种界面形态，三者**复用同一份 Host State**（都�
 - 已实测：浏览器缺失 → `error`（DSH 不崩溃）；chromium-1234 直接可用（Playwright 1.62 匹配，无需下载）；浏览器 Profile 落在 `profiles/<name>/deepseek-companion-browser`（按 profile 隔离）。
 - 登录态：全新未登录 Profile → `logged_out`（`users/current` 返回 `40002 Missing Token`）；已登录 → `logged_in`（`users/current` 返回 `code:0` + 用户 id）。判定以服务端为准，显著降低误判风险。
 - 未做：自动登录、发送消息、聊天、历史、Deep Think、Search、Handoff。浏览器 Profile 数据（含 Cookie）不进 Git。
+
+## DeepSeek 文本聊天（Phase 07C / 07C.1 / 07D）
+
+### 现状
+
+- **发送链路**：Client `ChatView` → `POST /api/deepseek-companion/chat`（`src/host/chat.ts` 的 `handleChatMessage`）→ `browser.sendMessage()`。
+- **消息结构**：`ChatMessage { id, role, content }`，Host 统一维护 `chat.messages` + `chat.sending`；并发由 `chat.sending` 单飞门控制（busy → 409）。
+
+### 流式回复（Phase 07D，纯文本）
+
+正式链路：
+
+```
+DeepSeek DOM MutationObserver（.ds-assistant-message-main-content，fallback .ds-markdown）
+  → window.__onReplyDelta（context.exposeFunction 桥接，一次性注册，所有 page 自动拥有）
+  → Host throttle（~100ms 合并，createThrottle）
+  → updateChatMessage(assistantId, text)（同一条 assistant 持续覆盖，不新增消息）
+  → CompanionState（chat.messages / chat.sending）
+  → SSE（/api/deepseek-companion/state/stream）
+  → Dock / Float / Pop-out（三者读同一份 Host 消息）
+```
+
+要点：
+
+- 发送前 `appendChatMessage('assistant', '')` 创建空 assistant，后续所有 delta 都 `updateChatMessage` 到同一个 id，消息数量不随 chunk 增长。
+- **流式内容是 `textContent` 渲染后的纯文本**，不是 Markdown 源文；Markdown 富文本、代码高亮、reasoning、Deep Think、Search 尚未实现。
+- **`response.finished()`（completion POST 的 SSE 结束）是回复完成主信号**；结束后再读一次最终 DOM 并强制 flush，最终文本不因 throttle 丢失。
+- **token/cookie 不离开 browser context**：MutationObserver 在页面上下文读取文本，只向 Host 传纯文本快照。
+- **错误处理**：发送失败保留 user 与已收到的部分 assistant 文本，`finally` 恢复 `chat.sending = false` 并清理 observer / throttle。
+- ChatView 不渲染 `content === ''` 的空 assistant 气泡（流式中的空 assistant 由「正在回复…」占位覆盖）。
