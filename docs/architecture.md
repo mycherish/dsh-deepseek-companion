@@ -277,4 +277,39 @@ Companion「深度思考」/「智能搜索」控件
 - **不使用 DeepSeek 私有网络 API**、不写 DOM 属性伪造状态、不使用轮询；`token` / `cookie` 不离开 browser context。
 - **定位兜底策略（保守）**：标签唯一命中 → 使用；标签无命中时，仅当**另一开关可明确识别且排除后只剩唯一候选**才兜底；其余情况（多候选 / 无法识别 / 标签多重命中）一律 `available: false`，宁可暂时不可用也不误点未来新增的开关。
 - **page 重建**后两个开关都以新 page 的真实状态为准，不沿用旧 page 的值。
+
+### DeepSeek 搜索引用（Phase 07I）
+
+```
+Search 回答 Markdown（含 [reference:N] / [citation:N]）
+  → Host marker parser（相邻 marker 归为同一组）
+  → 正文完成 + chat.sending=false（citation 不参与这一步）
+  → 后台 best-effort citation hydration
+      → 绑定本轮 assistant 节点的 ElementHandle
+      → 条件等待 badge 数 === group 数且全部拿到 href（8s 上限）
+      → URL 校验（仅 http/https）+ marker → url 冲突检查
+  → ChatMessage.citations（marker / url / domain）
+  → CompanionState → SSE
+  → remark citation renderer（只改普通 text 节点）
+  → Dock / Float / Pop-out
+```
+
+要点：
+
+- **URL 来自最终 DOM 的 `.ds-markdown-cite`**（水合后该元素本身变成 `<a href>`）。不读 DeepSeek 私有 store，不使用 CDP / 网络私有协议，不抓 title / snippet。
+- **citation 是后置 best-effort 增强**：`response.finished()` → 最终正文 flush → `chat.sending=false` → 才开始后台 hydration。正文完成即可继续发送下一条，citation 稍后到位或永远不到位都不影响聊天。
+- **绑定本轮 assistant 节点**：hydration 通过 reader 暴露的 `__replyNode()` 捕获 ElementHandle，因此下一轮发送不会把新回复的 badge 错配到上一轮。
+- **数量不一致时不猜**：group 数必须等于 badge 数；任一 badge 未水合或协议非法（`javascript:` / `data:` / `file:` …）则整次放弃，`citations` 保持 `undefined`，正文继续正常显示。
+- Client 侧只重写**普通 text 节点**：`code` / `inlineCode` 内的 marker 保持字面量；未水合时 `[reference:3]` 显示为 `[3]`（不暴露 DeepSeek 内部语法），水合后变成可点击的小角标。
+- 目前只有 `url` / `domain`，**没有 title / snippet / favicon**。
+- **badge 的真实结构（Phase 07I-1 修正）**：DeepSeek 渲染的是
+  `<a href="真实URL" target="_blank" rel="noreferrer"><span class="ds-markdown-cite">…</span></a>`
+  —— **URL 在 badge 的父级 `<a>` 上**，不是 badge 自身。读取必须走 `closest('a[href]')`。
+- **block 级映射（Phase 07I-1）**：全局"group 数 === badge 数"经常不成立（实测 10 markers / 9 badges、7 / 3、17 / 20），因此改为按 Markdown block 对齐：把源文切成与 DOM 同级的块（`p` / `li` / `blockquote` / `h1-h6` / `td` / `th`），只在**规范化后文本完全相等**时配对，再在该块内要求 group 数 === badge 数。部分成功是常态（实测 6 条真实回答共产出 35 条 citation，含 7 组 / 3 badge 的案例产出 3 条）。块内不做任何模糊匹配。
+- **已知限制（实时场景）**：DeepSeek **只在会话（重新）加载后**才把 badge 包进 `<a href>`。对**刚生成完的当前会话**，即使等待数十秒也读不到 URL（实测 14 个 badge 全部无 href，`citations` 恒为 `undefined`）；而同一个会话在侧边栏重新打开后 14/14 都带 URL。因此：
+  - `scheduleCitationHydration` 的算法与 URL 校验是**正确且已验证**的（在可读到 URL 时会产出 citation）；
+  - 但在**实时聊天**中它拿不到数据，UI 停留在纯文本 `[N]`；
+  - 不采用"主动 reload DeepSeek 页面"来换取 URL（会丢失会话 DOM 并打断用户）。
+  - **结论：inline citation 在实时场景无法可靠实现**；基础设施保留，若 DeepSeek 改变注入时机即可直接生效。
+- token / cookie 不离开 browser context。
 - **Search 结果专用 UI 尚未实现**：搜索回答的来源链接**不在** `props.markdown` 中 —— DeepSeek 只在正文 Markdown 里写入 `[citation:N]` 标记，真实 URL 由渲染层注入（`span.ds-markdown-cite` → `a[href]`）。因此 Companion 目前能完整显示搜索回答的正文结构，但**看不到可点击的来源链接**，且 `[citation:N]` 会以纯文本形式出现。引用 / 来源 UI 记录为后续 Phase。

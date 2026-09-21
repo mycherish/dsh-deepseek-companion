@@ -155,7 +155,8 @@ export function apply(ctx: Context): void {
           // sends, appends assistant, resets sending in `finally`).
           const result = await handleChatMessage(
             store,
-            (text, onDelta, onReasoning) => currentBrowser.sendMessage(text, onDelta, onReasoning),
+            (text, onDelta, onReasoning, onCitations) =>
+              currentBrowser.sendMessage(text, onDelta, onReasoning, onCitations),
             message,
           )
           if (result.status === 500) {

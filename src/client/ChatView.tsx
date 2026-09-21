@@ -1,11 +1,13 @@
-import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { sendChatMessage, setDeepThink, setSearch, showDeepSeekBrowser, subscribeCompanionState } from './api.ts'
+import { remarkCitations } from './remark-citations.ts'
 import type {
   ChatFormat,
   ChatMessage,
   ChatReasoning,
+  Citation,
   ComposerToggleState,
   DeepSeekStatus,
   DeepThinkState,
@@ -195,6 +197,34 @@ const preStyle: CSSProperties = {
   overflowX: 'auto',
 }
 
+// --- Citation badges (Phase 07I) ---------------------------------------------
+// A resolved DeepSeek source marker renders as a small, quiet superscript pill.
+// Nothing more: no card, no tooltip, no favicon.
+
+/** Class the remark plugin puts on a resolved citation anchor. */
+const CITATION_CLASS = 'dsc-citation'
+
+const citationLinkStyle: CSSProperties = {
+  color: 'var(--dsw-alias-label-secondary)',
+  background: 'var(--dsw-alias-interactive-bg-hover)',
+  borderRadius: 3,
+  padding: '0 3px',
+  fontSize: 11,
+  lineHeight: '15px',
+  verticalAlign: 'super',
+  textDecoration: 'none',
+  whiteSpace: 'nowrap',
+}
+
+/**
+ * A citation badge is marked by the remark plugin's class; should that attribute
+ * ever be dropped we still recognise it by its `[N]` label.
+ */
+function isCitationAnchor(className: unknown, children: ReactNode): boolean {
+  if (typeof className === 'string' && className.split(/\s+/).includes(CITATION_CLASS)) return true
+  return typeof children === 'string' && /^\[\d+\]$/.test(children)
+}
+
 const markdownComponents: Components = {
   h1: ({ children }) => <h1 style={headingStyle(17)}>{children}</h1>,
   h2: ({ children }) => <h2 style={headingStyle(15)}>{children}</h2>,
@@ -218,16 +248,25 @@ const markdownComponents: Components = {
       {children}
     </blockquote>
   ),
-  a: ({ href, children }) => (
-    <a
-      href={href}
-      target="_blank"
-      rel="noreferrer"
-      style={{ color: 'var(--dsw-alias-label-primary)', textDecoration: 'underline' }}
-    >
-      {children}
-    </a>
-  ),
+  a: ({ href, children, className }) => {
+    if (isCitationAnchor(className, children)) {
+      return (
+        <a href={href} target="_blank" rel="noreferrer" style={citationLinkStyle}>
+          {children}
+        </a>
+      )
+    }
+    return (
+      <a
+        href={href}
+        target="_blank"
+        rel="noreferrer"
+        style={{ color: 'var(--dsw-alias-label-primary)', textDecoration: 'underline' }}
+      >
+        {children}
+      </a>
+    )
+  },
   strong: ({ children }) => <strong style={{ fontWeight: 600 }}>{children}</strong>,
   em: ({ children }) => <em style={{ fontStyle: 'italic' }}>{children}</em>,
   del: ({ children }) => (
@@ -267,10 +306,19 @@ const markdownComponents: Components = {
   ),
 }
 
-function MarkdownBlock({ content }: { content: string }): ReactNode {
+function MarkdownBlock({ content, citations }: { content: string; citations?: Citation[] }): ReactNode {
+  // marker number → resolved url. Only rebuilt when the citations change, so a
+  // late hydration simply re-renders the same block once (Phase 07I).
+  const urls = useMemo(
+    () => new Map((citations ?? []).map((entry) => [entry.marker, entry.url] as const)),
+    [citations],
+  )
   return (
     <div style={markdownRootStyle}>
-      <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm, [remarkCitations, { urls }] as never]}
+        components={markdownComponents}
+      >
         {content}
       </ReactMarkdown>
     </div>
@@ -484,7 +532,7 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
               {reasoning !== undefined ? <ReasoningBlock reasoning={reasoning} /> : null}
               {message.content !== '' ? (
                 message.role === 'assistant' && message.format === 'markdown' ? (
-                  <MarkdownBlock content={message.content} />
+                  <MarkdownBlock content={message.content} citations={message.citations} />
                 ) : (
                   message.content
                 )

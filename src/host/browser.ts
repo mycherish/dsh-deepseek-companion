@@ -11,16 +11,22 @@
  * clear "Executable doesn't exist" error and the caller maps it to `error`.
  * No automatic browser download, no shell install, no guessing old caches.
  */
-import { chromium, type BrowserContext, type Page } from 'playwright'
+import { chromium, type BrowserContext, type JSHandle, type Page } from 'playwright'
 import type {
   AssistantReply,
   ChatFormat,
+  Citation,
   ComposerModeState,
   ComposerToggleState,
   DeepSeekStatus,
   DeepThinkState,
   SearchState,
 } from '../shared/state.ts'
+import {
+  parseCitationGroups,
+  readDomBlocks,
+  resolveCitationsByBlock,
+} from './citations.ts'
 import { loginStatusFromCurrentUser } from './login.ts'
 import { cleanupReasoningReader, installReasoningReader, readAndCleanupReasoning } from './reasoning.ts'
 import { cleanupReplyReader, installReplyReader, readAndCleanupReply } from './reply.ts'
@@ -83,6 +89,13 @@ const SEARCH_OPTIONS: ComposerToggleOptions = {
  * a fixed sleep; on timeout we still re-read and report the page's truth.
  */
 const TOGGLE_SETTLE_TIMEOUT = 3000
+/**
+ * Upper bound for the out-of-band citation hydration (Phase 07I). DeepSeek
+ * attaches the real source URLs a few seconds after the body finishes; this wait
+ * runs AFTER the reply has been delivered, so a timeout only means "this reply
+ * keeps plain [N] markers".
+ */
+const CITATION_HYDRATION_TIMEOUT = 8000
 
 /** Coerce a value arriving from the page into a trusted `AssistantReply`. */
 function normalizeReply(value: unknown): AssistantReply {
@@ -127,6 +140,12 @@ export interface DeepSeekBrowser {
     text: string,
     onDelta: (reply: AssistantReply) => void,
     onReasoning: (reply: AssistantReply) => void,
+    /**
+     * Optional, best-effort: called LATER (never before `sendMessage` resolves)
+     * when DeepSeek hydrated real URLs onto this reply's citation badges. It may
+     * never be called at all — the reply is already complete either way.
+     */
+    onCitations?: (citations: Citation[]) => void,
   ): Promise<AssistantReply>
   dispose(): Promise<void>
 }
@@ -359,11 +378,102 @@ export async function createDeepSeekBrowser(
   // Single-flight guard: only one in-flight send at a time (no per-message
   // session isolation in this phase).
   let sending = false
+  /** Set by `dispose()`: background work must stop touching the page. */
+  let disposed = false
+
+  /**
+   * Best-effort citation hydration (Phase 07I).
+   *
+   * Runs strictly AFTER the reply has been delivered and `chat.sending` is back
+   * to false: DeepSeek hydrates the real source URLs onto the citation badges a
+   * few seconds after the body stops streaming. Because it is bound to ONE
+   * captured reply node, a following send can never leak its badges in here.
+   *
+   * Every outcome is swallowed — a timeout, a closed page, plugin disposal or a
+   * recycled DOM simply means "this reply keeps its plain [N] markers".
+   */
+  const scheduleCitationHydration = (
+    node: JSHandle,
+    reply: AssistantReply,
+    onCitations: ((citations: Citation[]) => void) | undefined,
+  ): void => {
+    const markdown = reply.format === 'markdown' ? reply.content : ''
+    // A plain answer carries no markers → no task, no waiting, no cost at all.
+    if (onCitations === undefined || parseCitationGroups(markdown).length === 0) {
+      void node.dispose().catch(() => {})
+      return
+    }
+
+    void (async () => {
+      try {
+        // A null node (nothing rendered) means there is nothing to wait for.
+        const usable = await page
+          .evaluate((target: unknown) => target !== null && target !== undefined, node)
+          .catch(() => false)
+        if (!usable || disposed) return
+        // Wait only until the badges exist AND every one of them carries its URL.
+        // The COUNT is deliberately NOT required to match the marker count:
+        // DeepSeek renders a badge only for settled references (7 groups → 3
+        // badges is normal), and the block-level mapping handles the rest.
+        await page.waitForFunction(
+          (target: unknown) => {
+            const container = target as { querySelectorAll?: (selector: string) => ArrayLike<unknown> } | null
+            if (container === null || container === undefined || typeof container.querySelectorAll !== 'function') {
+              return false
+            }
+            const badges = Array.from(container.querySelectorAll('.ds-markdown-cite'))
+            if (badges.length === 0) return false
+            return badges.every((badge) => {
+              const el = badge as {
+                tagName?: string
+                getAttribute?: (name: string) => string | null
+                querySelector?: (selector: string) => unknown
+                closest?: (selector: string) => unknown
+              }
+              // DeepSeek's shape is `<a href><span.ds-markdown-cite>`, so the
+              // anchor is the badge's PARENT; the other two shapes are kept for
+              // robustness across front-end changes.
+              if (el.tagName === 'A' && typeof el.getAttribute === 'function') {
+                const own = el.getAttribute('href')
+                if (typeof own === 'string' && own !== '') return true
+              }
+              if (typeof el.closest === 'function') {
+                const anchor = el.closest('a[href]') as { getAttribute?: (name: string) => string | null } | null
+                const href =
+                  anchor !== null && anchor !== undefined && typeof anchor.getAttribute === 'function'
+                    ? anchor.getAttribute('href')
+                    : null
+                if (typeof href === 'string' && href !== '') return true
+              }
+              if (typeof el.querySelector !== 'function') return false
+              const inner = el.querySelector('a[href]') as { getAttribute?: (name: string) => string | null } | null
+              const nested =
+                inner !== null && inner !== undefined && typeof inner.getAttribute === 'function'
+                  ? inner.getAttribute('href')
+                  : null
+              return typeof nested === 'string' && nested !== ''
+            })
+          },
+          node,
+          { timeout: CITATION_HYDRATION_TIMEOUT },
+        )
+        if (disposed) return
+        const domBlocks = await page.evaluate(readDomBlocks, node)
+        const citations = resolveCitationsByBlock({ markdown, domBlocks })
+        if (citations.length > 0 && !disposed) onCitations(citations)
+      } catch {
+        // Timeout / closed page / disposal / recycled DOM — citations are optional.
+      } finally {
+        await node.dispose().catch(() => {})
+      }
+    })()
+  }
 
   const sendMessage = async (
     text: string,
     onDelta: (reply: AssistantReply) => void,
     onReasoning: (reply: AssistantReply) => void,
+    onCitations?: (citations: Citation[]) => void,
   ): Promise<AssistantReply> => {
     if (sending) throw new Error('a send is already in progress')
     sending = true
@@ -477,6 +587,16 @@ export async function createDeepSeekBrowser(
       await waitForNewNode('__hasNewReply')
       if (modeAtSend.deepThink.enabled) await waitForNewNode('__hasNewReasoning')
 
+      // Capture THIS reply's node before the readers are torn down (they delete
+      // the page globals). The later, out-of-band citation hydration must stay
+      // pinned to this exact reply, never to "whatever is last" (Phase 07I).
+      const replyHandle = await page
+        .evaluateHandle(() => {
+          const w = window as unknown as { __replyNode?: () => unknown }
+          return typeof w.__replyNode === 'function' ? w.__replyNode() : null
+        })
+        .catch(() => null)
+
       // Final reads (each also disconnects its own observer), then force-flush
       // both throttles so neither final value can be dropped.
       const finalReasoning = normalizeReply(await page.evaluate(readAndCleanupReasoning, {}))
@@ -492,6 +612,11 @@ export async function createDeepSeekBrowser(
       replyThrottle.flush()
 
       if (finalReply.content === '') throw new Error('empty reply from DeepSeek')
+
+      // Hand the citation work off BEFORE returning. The reply is already
+      // complete, `sending` flips back to false in `finally`, and the hydration
+      // keeps running on its own — the next send is never blocked by it.
+      if (replyHandle !== null) scheduleCitationHydration(replyHandle, finalReply, onCitations)
       return finalReply
     } finally {
       currentDeltaReceiver = null
@@ -513,6 +638,10 @@ export async function createDeepSeekBrowser(
     getComposerModeState: readComposerMode,
     sendMessage,
     async dispose() {
+      // Stop any in-flight background work before the page goes away.
+      disposed = true
+      currentDeltaReceiver = null
+      currentReasoningReceiver = null
       await context.close().catch(() => {})
     },
   }

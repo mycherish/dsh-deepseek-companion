@@ -95,19 +95,26 @@ export function installReplyReader(payload: { options: ReplyReadOptions; env?: R
   const initialNodes = selectNodes()
   win['__replyBase'] = initialNodes.length > 0 ? initialNodes[initialNodes.length - 1] : null
 
-  const readReply = (): ReplyReadResult => {
+  // The NEW reply node for this send, or null when it has not rendered yet.
+  // Shared by `readReply` / `hasNewReply` and exposed to the Host, which needs a
+  // stable node reference to bind the later citation hydration to this exact
+  // reply even if another send starts in the meantime (Phase 07I).
+  const replyNode = (): unknown => {
     const nodes = selectNodes()
-    // Only the NEW reply (never stale history); '' means "not started yet".
-    if (nodes.length === 0) return { content: '', format: 'text' }
-    const node = nodes[nodes.length - 1] as { textContent?: string | null }
+    if (nodes.length === 0) return null
+    const node = nodes[nodes.length - 1]
     const base = win['__replyBase']
-    if (base !== null && base !== undefined && node === base) {
-      // Still the pre-send reply: nothing new has rendered yet.
-      return { content: '', format: 'text' }
-    }
-    if ((base === null || base === undefined) && nodes.length <= options.startCount) {
-      return { content: '', format: 'text' }
-    }
+    // Still the pre-send reply: nothing new has rendered yet.
+    if (base !== null && base !== undefined && node === base) return null
+    if ((base === null || base === undefined) && nodes.length <= options.startCount) return null
+    return node
+  }
+  win['__replyNode'] = replyNode
+
+  const readReply = (): ReplyReadResult => {
+    const node = replyNode() as { textContent?: string | null } | null
+    // Only the NEW reply (never stale history); '' means "not started yet".
+    if (node === null) return { content: '', format: 'text' }
     const rendered = (node.textContent ?? '').trim()
 
     // Strip Markdown markers + whitespace so raw source and rendered text can be
@@ -154,14 +161,7 @@ export function installReplyReader(payload: { options: ReplyReadOptions; env?: R
   // Condition-wait helper for the Host: true as soon as the NEW reply node
   // exists, regardless of whether its text has been filled in yet. Lets the Host
   // await the render without any fixed sleep.
-  const hasNewReply = (): boolean => {
-    const nodes = selectNodes()
-    if (nodes.length === 0) return false
-    const base = win['__replyBase']
-    if (base !== null && base !== undefined && nodes[nodes.length - 1] === base) return false
-    if ((base === null || base === undefined) && nodes.length <= options.startCount) return false
-    return true
-  }
+  const hasNewReply = (): boolean => replyNode() !== null
   win['__hasNewReply'] = hasNewReply
 
   const observer = new ObserverCtor(() => {
@@ -190,6 +190,7 @@ export function readAndCleanupReply(payload?: { env?: ReplyEnv }): unknown {
   delete win['__readReply']
   delete win['__replyBase']
   delete win['__hasNewReply']
+  delete win['__replyNode']
   return reply
 }
 
@@ -204,4 +205,5 @@ export function cleanupReplyReader(payload?: { env?: ReplyEnv }): void {
   delete win['__readReply']
   delete win['__replyBase']
   delete win['__hasNewReply']
+  delete win['__replyNode']
 }

@@ -10,6 +10,7 @@ import { randomUUID } from 'node:crypto'
 import type {
   ChatFormat,
   ChatMessage,
+  Citation,
   CompanionState,
   DeepSeekStatus,
   DeepThinkState,
@@ -17,6 +18,15 @@ import type {
 } from '../shared/state.ts'
 
 export type StateListener = (state: CompanionState) => void
+
+/** Structural equality for two citation lists (independent of object identity). */
+function sameCitations(a: Citation[], b: Citation[]): boolean {
+  if (a.length !== b.length) return false
+  return a.every((entry, index) => {
+    const other = b[index]!
+    return entry.marker === other.marker && entry.url === other.url && entry.domain === other.domain
+  })
+}
 
 export interface CompanionStateStore {
   getState(): CompanionState
@@ -28,6 +38,7 @@ export interface CompanionStateStore {
   appendChatMessage(role: ChatMessage['role'], content: string, format?: ChatFormat): ChatMessage
   updateChatMessage(id: string, content: string, format?: ChatFormat): void
   updateChatReasoning(id: string, content: string, format: ChatFormat): void
+  updateChatCitations(id: string, citations: Citation[]): void
   setChatSending(sending: boolean): void
   dispose(): void
 }
@@ -137,6 +148,22 @@ export function createCompanionStateStore(): CompanionStateStore {
       if (current !== undefined && current.content === content && current.format === format) return
       const messages = state.chat.messages.slice()
       messages[index] = { ...existing, reasoning: { content, format } }
+      state = { ...state, chat: { ...state.chat, messages } }
+      notify(state)
+    },
+
+    updateChatCitations(id: string, citations: Citation[]) {
+      if (disposed) return
+      // An empty result means "not resolved (yet)" — never a state change.
+      if (citations.length === 0) return
+      const index = state.chat.messages.findIndex((message) => message.id === id)
+      if (index === -1) return
+      const existing = state.chat.messages[index]!
+      const current = existing.citations
+      if (current !== undefined && sameCitations(current, citations)) return
+      // Citations sit BESIDE the reply: content / format / reasoning untouched.
+      const messages = state.chat.messages.slice()
+      messages[index] = { ...existing, citations }
       state = { ...state, chat: { ...state.chat, messages } }
       notify(state)
     },

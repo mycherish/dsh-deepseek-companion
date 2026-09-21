@@ -1,11 +1,11 @@
 /**
- * Host chat send flow (Phase 07C.1 → 07D → 07E).
+ * Host chat send flow (Phase 07C.1 → 07D → 07E → 07I).
  *
  * Extracted from the route handler so the concurrency gate, single-message
  * streaming update (content + format), and finally-reset can be unit-tested
  * without a real browser or connection service.
  */
-import type { AssistantReply } from '../shared/state.ts'
+import type { AssistantReply, Citation } from '../shared/state.ts'
 import type { CompanionStateStore } from './state.ts'
 
 export interface ChatSendResult {
@@ -19,6 +19,7 @@ export async function handleChatMessage(
     message: string,
     onDelta: (reply: AssistantReply) => void,
     onReasoning: (reply: AssistantReply) => void,
+    onCitations: (citations: Citation[]) => void,
   ) => Promise<AssistantReply>,
   message: string,
 ): Promise<ChatSendResult> {
@@ -40,6 +41,10 @@ export async function handleChatMessage(
       message,
       (delta) => store.updateChatMessage(assistant.id, delta.content, delta.format),
       (delta) => store.updateChatReasoning(assistant.id, delta.content, delta.format),
+      // Best-effort and LATE: citations resolve after the reply is complete and
+      // `sending` is already false. Bound to THIS assistant message id, so a
+      // following send can never write its sources here (Phase 07I).
+      (citations) => store.updateChatCitations(assistant.id, citations),
     )
     // Force-write the final reply even if the last delta was throttled/dropped.
     store.updateChatMessage(assistant.id, reply.content, reply.format)

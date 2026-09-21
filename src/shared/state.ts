@@ -49,7 +49,19 @@ export interface ChatReasoning {
   format: ChatFormat
 }
 
-/** A single chat message owned by the Host (Phase 07C.1 / 07E / 07F). */
+/**
+ * One resolved source behind a DeepSeek search answer (Phase 07I). Deliberately
+ * minimal: DeepSeek exposes no stable title/snippet, so only what can actually
+ * be verified is modelled. `marker` is the number used in the raw Markdown
+ * (`[reference:N]` / `[citation:N]`).
+ */
+export interface Citation {
+  marker: number
+  url: string
+  domain: string
+}
+
+/** A single chat message owned by the Host (Phase 07C.1 / 07E / 07F / 07I). */
 export interface ChatMessage {
   id: string
   role: 'user' | 'assistant'
@@ -57,6 +69,12 @@ export interface ChatMessage {
   format: ChatFormat
   /** Only present when DeepSeek produced reasoning for this reply. */
   reasoning?: ChatReasoning
+  /**
+   * Only present when DeepSeek hydrated real URLs onto this reply's citation
+   * badges (Phase 07I). Always a best-effort late addition — absent until the
+   * background hydration succeeds, and absent forever when it does not.
+   */
+  citations?: Citation[]
 }
 
 /**
