@@ -1,6 +1,8 @@
-import { useEffect, useRef, useState, type CSSProperties } from 'react'
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import ReactMarkdown, { type Components } from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import { sendChatMessage, showDeepSeekBrowser, subscribeCompanionState } from './api.ts'
-import type { ChatMessage, DeepSeekStatus } from '../shared/state.ts'
+import type { ChatFormat, ChatMessage, DeepSeekStatus } from '../shared/state.ts'
 
 const rootStyle: CSSProperties = {
   display: 'flex',
@@ -30,14 +32,15 @@ const messagesStyle: CSSProperties = {
   textAlign: 'left',
 }
 
-const messageRowStyle = (role: 'user' | 'assistant'): CSSProperties => ({
+const messageRowStyle = (role: 'user' | 'assistant', format: ChatFormat): CSSProperties => ({
   alignSelf: role === 'user' ? 'flex-end' : 'flex-start',
-  maxWidth: '85%',
+  // Markdown replies can hold tables/code, so they get the full column width.
+  maxWidth: format === 'markdown' ? '100%' : '85%',
   padding: '6px 10px',
   borderRadius: 10,
   background: role === 'user' ? 'var(--dsw-alias-interactive-bg-hover)' : 'transparent',
   color: 'var(--dsw-alias-label-primary)',
-  whiteSpace: 'pre-wrap',
+  whiteSpace: format === 'markdown' ? 'normal' : 'pre-wrap',
   wordBreak: 'break-word',
   fontSize: 13,
   lineHeight: '20px',
@@ -82,10 +85,138 @@ const sendButtonStyle: CSSProperties = {
   fontWeight: 500,
 }
 
+// --- Markdown rendering (Phase 07E) -----------------------------------------
+// Only DSH tokens are used; DeepSeek's private classes/CSS are never copied.
+
+const MONO_FONT = 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace'
+
+const markdownRootStyle: CSSProperties = {
+  fontSize: 13,
+  lineHeight: '21px',
+  color: 'var(--dsw-alias-label-primary)',
+  overflowWrap: 'anywhere',
+}
+
+const headingStyle = (fontSize: number): CSSProperties => ({
+  fontSize,
+  fontWeight: 600,
+  lineHeight: '24px',
+  margin: '12px 0 6px',
+  color: 'var(--dsw-alias-label-primary)',
+})
+
+const listStyle: CSSProperties = { margin: '6px 0', paddingLeft: 20 }
+
+const codeBlockStyle: CSSProperties = {
+  fontFamily: MONO_FONT,
+  fontSize: 12,
+  lineHeight: '18px',
+}
+
+const inlineCodeStyle: CSSProperties = {
+  ...codeBlockStyle,
+  padding: '1px 4px',
+  borderRadius: 4,
+  background: 'var(--dsw-alias-interactive-bg-hover)',
+}
+
+const preStyle: CSSProperties = {
+  margin: '6px 0',
+  padding: 10,
+  borderRadius: 8,
+  background: 'var(--dsw-alias-interactive-bg-hover)',
+  overflowX: 'auto',
+}
+
+const markdownComponents: Components = {
+  h1: ({ children }) => <h1 style={headingStyle(17)}>{children}</h1>,
+  h2: ({ children }) => <h2 style={headingStyle(15)}>{children}</h2>,
+  h3: ({ children }) => <h3 style={headingStyle(14)}>{children}</h3>,
+  h4: ({ children }) => <h4 style={headingStyle(13)}>{children}</h4>,
+  h5: ({ children }) => <h5 style={headingStyle(13)}>{children}</h5>,
+  h6: ({ children }) => <h6 style={headingStyle(13)}>{children}</h6>,
+  p: ({ children }) => <p style={{ margin: '6px 0' }}>{children}</p>,
+  ul: ({ children }) => <ul style={listStyle}>{children}</ul>,
+  ol: ({ children }) => <ol style={listStyle}>{children}</ol>,
+  li: ({ children }) => <li style={{ margin: '2px 0' }}>{children}</li>,
+  blockquote: ({ children }) => (
+    <blockquote
+      style={{
+        margin: '6px 0',
+        paddingLeft: 10,
+        borderLeft: '2px solid var(--dsw-alias-border-l3)',
+        color: 'var(--dsw-alias-label-secondary)',
+      }}
+    >
+      {children}
+    </blockquote>
+  ),
+  a: ({ href, children }) => (
+    <a
+      href={href}
+      target="_blank"
+      rel="noreferrer"
+      style={{ color: 'var(--dsw-alias-label-primary)', textDecoration: 'underline' }}
+    >
+      {children}
+    </a>
+  ),
+  strong: ({ children }) => <strong style={{ fontWeight: 600 }}>{children}</strong>,
+  em: ({ children }) => <em style={{ fontStyle: 'italic' }}>{children}</em>,
+  del: ({ children }) => (
+    <del style={{ textDecoration: 'line-through', color: 'var(--dsw-alias-label-secondary)' }}>{children}</del>
+  ),
+  hr: () => (
+    <hr style={{ border: 'none', borderTop: '1px solid var(--dsw-alias-border-l3)', margin: '10px 0' }} />
+  ),
+  pre: ({ children }) => <pre style={preStyle}>{children}</pre>,
+  code: ({ className, children }) => {
+    const text = typeof children === 'string' ? children : Array.isArray(children) ? children.join('') : ''
+    // A fenced block carries a `language-*` class when a language is given and
+    // always ends with a newline; inline code has neither.
+    const isBlock = /language-/.test(className ?? '') || text.includes('\n')
+    if (isBlock) return <code style={codeBlockStyle}>{children}</code>
+    return <code style={inlineCodeStyle}>{children}</code>
+  },
+  table: ({ children }) => (
+    <div style={{ overflowX: 'auto', margin: '6px 0' }}>
+      <table style={{ borderCollapse: 'collapse', fontSize: 12 }}>{children}</table>
+    </div>
+  ),
+  th: ({ children }) => (
+    <th
+      style={{
+        border: '1px solid var(--dsw-alias-border-l3)',
+        padding: '4px 8px',
+        textAlign: 'left',
+        fontWeight: 600,
+      }}
+    >
+      {children}
+    </th>
+  ),
+  td: ({ children }) => (
+    <td style={{ border: '1px solid var(--dsw-alias-border-l3)', padding: '4px 8px' }}>{children}</td>
+  ),
+}
+
+function MarkdownBlock({ content }: { content: string }): ReactNode {
+  return (
+    <div style={markdownRootStyle}>
+      <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+        {content}
+      </ReactMarkdown>
+    </div>
+  )
+}
+
 /**
- * Minimal shared chat view used by the Dock, Float, and Pop-out (Phase 07C.1).
- * The Host owns the authoritative message list; this view only mirrors it from
- * the realtime state stream, so all three surfaces always show the same history.
+ * Minimal shared chat view used by the Dock, Float, and Pop-out (Phase 07C.1 →
+ * 07E). The Host owns the authoritative message list; this view only mirrors it
+ * from the realtime state stream, so all three surfaces always show the same
+ * history. Assistant messages carrying `format: 'markdown'` (DeepSeek's raw
+ * Markdown) are rendered with react-markdown + remark-gfm — never
+ * `dangerouslySetInnerHTML`, and raw HTML stays disabled.
  */
 export function ChatView({ origin }: { origin: string }): JSX.Element {
   const [status, setStatus] = useState<DeepSeekStatus>('checking')
@@ -177,12 +308,16 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
           // below already covers the in-flight state.
           if (message.role === 'assistant' && message.content === '') return null
           return (
-            <div key={message.id} style={messageRowStyle(message.role)}>
-              {message.content}
+            <div key={message.id} style={messageRowStyle(message.role, message.format)}>
+              {message.role === 'assistant' && message.format === 'markdown' ? (
+                <MarkdownBlock content={message.content} />
+              ) : (
+                message.content
+              )}
             </div>
           )
         })}
-        {busy ? <div style={messageRowStyle('assistant')}>正在回复…</div> : null}
+        {busy ? <div style={messageRowStyle('assistant', 'text')}>正在回复…</div> : null}
       </div>
       {error !== null ? <div style={errorStyle}>{error}</div> : null}
       <div style={inputRowStyle}>

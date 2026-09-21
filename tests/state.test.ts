@@ -177,3 +177,35 @@ test('updateChatMessage 找不到 id 时安全 no-op', () => {
 
   assert.deepEqual(store.getState().chat.messages, before)
 })
+
+test('updateChatMessage 可以同时更新 content 与 format', () => {
+  const store = createCompanionStateStore()
+  const assistant = store.appendChatMessage('assistant', '')
+
+  store.updateChatMessage(assistant.id, '# Go 语言', 'markdown')
+
+  const message = store.getState().chat.messages[0]!
+  assert.equal(message.content, '# Go 语言')
+  assert.equal(message.format, 'markdown')
+})
+
+test('updateChatMessage 仅 format 变化也会 notify（text → markdown）', () => {
+  const store = createCompanionStateStore()
+  const assistant = store.appendChatMessage('assistant', 'Go 语言')
+  const seen: string[] = []
+  store.subscribe((state) => seen.push(state.chat.messages[0]!.format))
+
+  // Same text, only the format flips — this must still notify.
+  store.updateChatMessage(assistant.id, 'Go 语言', 'markdown')
+
+  assert.deepEqual(seen, ['text', 'markdown'])
+})
+
+test('appendChatMessage：默认 format 为 text，可显式指定 markdown', () => {
+  const store = createCompanionStateStore()
+  const user = store.appendChatMessage('user', '你好')
+  const assistant = store.appendChatMessage('assistant', '# 标题', 'markdown')
+
+  assert.equal(user.format, 'text')
+  assert.equal(assistant.format, 'markdown')
+})

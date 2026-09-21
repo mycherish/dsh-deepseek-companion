@@ -9,11 +9,28 @@
 /** DeepSeek web session login state (Phase 07A). */
 export type DeepSeekStatus = 'checking' | 'logged_in' | 'logged_out' | 'error'
 
-/** A single chat message owned by the Host (Phase 07C.1). */
+/**
+ * How a message's `content` must be rendered (Phase 07E). `markdown` means the
+ * content is DeepSeek's raw Markdown source; `text` is plain rendered text.
+ */
+export type ChatFormat = 'text' | 'markdown'
+
+/** A single chat message owned by the Host (Phase 07C.1 / 07E). */
 export interface ChatMessage {
   id: string
   role: 'user' | 'assistant'
   content: string
+  format: ChatFormat
+}
+
+/**
+ * One assistant reply read from the DeepSeek page (Phase 07E). This is the only
+ * shape that crosses the browser-context boundary — never HTML, never a React
+ * object, never a token.
+ */
+export interface AssistantReply {
+  content: string
+  format: ChatFormat
 }
 
 export interface CompanionState {

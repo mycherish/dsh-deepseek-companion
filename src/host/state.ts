@@ -7,7 +7,7 @@
  * updates independently of `revision`. Every change notifies all listeners.
  */
 import { randomUUID } from 'node:crypto'
-import type { ChatMessage, CompanionState, DeepSeekStatus } from '../shared/state.ts'
+import type { ChatFormat, ChatMessage, CompanionState, DeepSeekStatus } from '../shared/state.ts'
 
 export type StateListener = (state: CompanionState) => void
 
@@ -16,8 +16,8 @@ export interface CompanionStateStore {
   subscribe(listener: StateListener): () => void
   bumpRevision(): void
   setDeepSeekStatus(status: DeepSeekStatus): void
-  appendChatMessage(role: ChatMessage['role'], content: string): ChatMessage
-  updateChatMessage(id: string, content: string): void
+  appendChatMessage(role: ChatMessage['role'], content: string, format?: ChatFormat): ChatMessage
+  updateChatMessage(id: string, content: string, format?: ChatFormat): void
   setChatSending(sending: boolean): void
   dispose(): void
 }
@@ -71,22 +71,25 @@ export function createCompanionStateStore(): CompanionStateStore {
       notify(state)
     },
 
-    appendChatMessage(role: ChatMessage['role'], content: string): ChatMessage {
-      const message: ChatMessage = { id: randomUUID(), role, content }
+    appendChatMessage(role: ChatMessage['role'], content: string, format: ChatFormat = 'text'): ChatMessage {
+      const message: ChatMessage = { id: randomUUID(), role, content, format }
       if (disposed) return message
       state = { ...state, chat: { ...state.chat, messages: [...state.chat.messages, message] } }
       notify(state)
       return message
     },
 
-    updateChatMessage(id: string, content: string) {
+    updateChatMessage(id: string, content: string, format?: ChatFormat) {
       if (disposed) return
       const index = state.chat.messages.findIndex((message) => message.id === id)
       if (index === -1) return
       const existing = state.chat.messages[index]!
-      if (existing.content === content) return
+      const nextFormat = format ?? existing.format
+      // No notify unless something actually changed (content OR format — a
+      // streaming reply may switch text -> markdown with the same text prefix).
+      if (existing.content === content && existing.format === nextFormat) return
       const messages = state.chat.messages.slice()
-      messages[index] = { ...existing, content }
+      messages[index] = { ...existing, content, format: nextFormat }
       state = { ...state, chat: { ...state.chat, messages } }
       notify(state)
     },

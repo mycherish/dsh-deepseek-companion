@@ -12,8 +12,9 @@
  * No automatic browser download, no shell install, no guessing old caches.
  */
 import { chromium, type BrowserContext, type Page } from 'playwright'
-import type { DeepSeekStatus } from '../shared/state.ts'
+import type { AssistantReply, ChatFormat, DeepSeekStatus } from '../shared/state.ts'
 import { loginStatusFromCurrentUser } from './login.ts'
+import { cleanupReplyReader, installReplyReader, readAndCleanupReply } from './reply.ts'
 import { createThrottle } from './throttle.ts'
 
 const DEEPSEEK_URL = 'https://chat.deepseek.com'
@@ -29,6 +30,20 @@ const SEND_BUTTON_SELECTOR = '.ds-button--primary'
 const REPLY_SELECTOR = '.ds-assistant-message-main-content'
 /** Fallback when the semantic class is absent (older/renamed DOM). */
 const REPLY_FALLBACK_SELECTOR = '.ds-markdown'
+/**
+ * How many `fiber.return` hops to scan for the raw Markdown prop. DeepSeek's
+ * fiber layout is private, so we scan a bounded chain instead of hard-coding a
+ * depth (Phase 07E).
+ */
+const MAX_FIBER_SCAN = 10
+
+/** Coerce a value arriving from the page into a trusted `AssistantReply`. */
+function normalizeReply(value: unknown): AssistantReply {
+  const raw: { content?: unknown; format?: unknown } =
+    value !== null && typeof value === 'object' ? (value as { content?: unknown; format?: unknown }) : {}
+  const format: ChatFormat = raw.format === 'markdown' ? 'markdown' : 'text'
+  return { content: typeof raw.content === 'string' ? raw.content : '', format }
+}
 
 export interface DeepSeekBrowser {
   /** Run one initial check now (then re-checks automatically on navigation). */
@@ -36,11 +51,13 @@ export interface DeepSeekBrowser {
   /** Focus the live DeepSeek page, reopening the sign-in page if it was closed. */
   showLogin(): Promise<void>
   /**
-   * Send one message and resolve with the final complete reply text. `onDelta`
-   * fires with the growing reply text while DeepSeek is still generating (pure
-   * text snapshots — no token or cookie ever leaves the page context).
+   * Send one message and resolve with the final complete reply. `onDelta` fires
+   * with the growing reply while DeepSeek is still generating — the raw Markdown
+   * DeepSeek keeps in its React props when available, otherwise the rendered
+   * plain text. Only `{ content, format }` ever leaves the page context; no
+   * token, cookie, HTML or React object crosses the boundary.
    */
-  sendMessage(text: string, onDelta: (text: string) => void): Promise<string>
+  sendMessage(text: string, onDelta: (reply: AssistantReply) => void): Promise<AssistantReply>
   dispose(): Promise<void>
 }
 
@@ -130,10 +147,10 @@ export async function createDeepSeekBrowser(
   // recreated after close) automatically has `window.__onReplyDelta`; the
   // context re-injects it on every document load, so one install survives
   // navigation and there is never a duplicate registration across sends.
-  let currentDeltaReceiver: ((text: string) => void) | null = null
+  let currentDeltaReceiver: ((reply: AssistantReply) => void) | null = null
 
-  await context.exposeFunction('__onReplyDelta', (text: string) => {
-    currentDeltaReceiver?.(text)
+  await context.exposeFunction('__onReplyDelta', (reply: unknown) => {
+    currentDeltaReceiver?.(normalizeReply(reply))
   })
 
   const check = async (): Promise<DeepSeekStatus> => {
@@ -167,26 +184,22 @@ export async function createDeepSeekBrowser(
   // session isolation in this phase).
   let sending = false
 
-  const sendMessage = async (text: string, onDelta: (text: string) => void): Promise<string> => {
+  const sendMessage = async (
+    text: string,
+    onDelta: (reply: AssistantReply) => void,
+  ): Promise<AssistantReply> => {
     if (sending) throw new Error('a send is already in progress')
     sending = true
 
-    // Light throttle: emit at most ~every 100ms, always with the latest text.
-    const throttle = createThrottle(onDelta, 100)
-    currentDeltaReceiver = (snapshot) => throttle.push(snapshot)
+    // Light throttle: emit at most ~every 100ms, always with the latest reply.
+    const throttle = createThrottle<AssistantReply>(
+      onDelta,
+      100,
+      (a, b) => a.content === b.content && a.format === b.format,
+    )
+    currentDeltaReceiver = (reply) => throttle.push(reply)
 
-    const cleanupObserver = (): Promise<void> =>
-      page
-        .evaluate(() => {
-          const w = window as unknown as {
-            __replyObserver?: { disconnect(): void }
-            __readCurrentReply?: () => string
-          }
-          w.__replyObserver?.disconnect()
-          delete w.__replyObserver
-          delete w.__readCurrentReply
-        })
-        .catch(() => {})
+    const cleanupObserver = (): Promise<void> => page.evaluate(cleanupReplyReader, {}).catch(() => {})
 
     try {
       // Fail fast when logged out; the token check happens inside the page and
@@ -196,34 +209,27 @@ export async function createDeepSeekBrowser(
         throw new Error(status === 'logged_out' ? 'not logged in' : 'login state unknown')
       }
 
-      // Install the DOM observer BEFORE sending, capturing the current reply
-      // count so we only read the NEW assistant reply (never stale history).
-      await page.evaluate(
+      // Capture how many replies already exist so the reader only ever looks at
+      // the NEW one (never stale history).
+      const startCount = await page.evaluate(
         ({ selector, fallback }) => {
-          const w = window as unknown as {
-            __onReplyDelta?: (text: string) => void
-            __replyObserver?: MutationObserver
-            __readCurrentReply?: () => string
-          }
-          const selectNodes = (): NodeListOf<Element> => {
-            const nodes = document.querySelectorAll(selector)
-            return nodes.length > 0 ? nodes : document.querySelectorAll(fallback)
-          }
-          const startCount = selectNodes().length
-          const readCurrent = (): string => {
-            const nodes = selectNodes()
-            if (nodes.length <= startCount) return ''
-            return (nodes[nodes.length - 1]!.textContent ?? '').trim()
-          }
-          const observer = new MutationObserver(() => {
-            w.__onReplyDelta?.(readCurrent())
-          })
-          observer.observe(document.body, { childList: true, subtree: true, characterData: true })
-          w.__replyObserver = observer
-          w.__readCurrentReply = readCurrent
+          const nodes = document.querySelectorAll(selector)
+          return (nodes.length > 0 ? nodes : document.querySelectorAll(fallback)).length
         },
         { selector: REPLY_SELECTOR, fallback: REPLY_FALLBACK_SELECTOR },
       )
+
+      // Install the DOM observer BEFORE sending. The reader prefers DeepSeek's
+      // raw Markdown (React props) and falls back to rendered text, so a DeepSeek
+      // front-end change cannot break chat.
+      await page.evaluate(installReplyReader, {
+        options: {
+          selector: REPLY_SELECTOR,
+          fallback: REPLY_FALLBACK_SELECTOR,
+          startCount,
+          maxScan: MAX_FIBER_SCAN,
+        },
+      })
 
       // Wait for the completion POST before clicking, then wait for its SSE
       // stream to finish — the reliable "reply complete" signal (no polling).
@@ -237,26 +243,15 @@ export async function createDeepSeekBrowser(
       await response.finished()
 
       // Final read (also disconnects the observer), then force-flush so the
-      // final text can never be dropped by the throttle.
-      const finalText = await page.evaluate(() => {
-        const w = window as unknown as {
-          __replyObserver?: { disconnect(): void }
-          __readCurrentReply?: () => string
-        }
-        const text = typeof w.__readCurrentReply === 'function' ? w.__readCurrentReply() : ''
-        w.__replyObserver?.disconnect()
-        delete w.__replyObserver
-        delete w.__readCurrentReply
-        return text
-      })
+      // final reply can never be dropped by the throttle. This is the value the
+      // assistant message ends up with.
+      const finalReply = normalizeReply(await page.evaluate(readAndCleanupReply, {}))
 
-      // Force-flush the final text (bypasses any pending throttle timer so the
-      // last chunk can never be dropped).
-      throttle.push(finalText)
+      throttle.push(finalReply)
       throttle.flush()
 
-      if (finalText === '') throw new Error('empty reply from DeepSeek')
-      return finalText
+      if (finalReply.content === '') throw new Error('empty reply from DeepSeek')
+      return finalReply
     } finally {
       currentDeltaReceiver = null
       throttle.dispose()
