@@ -1,8 +1,16 @@
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { sendChatMessage, setDeepThink, showDeepSeekBrowser, subscribeCompanionState } from './api.ts'
-import type { ChatFormat, ChatMessage, ChatReasoning, DeepSeekStatus, DeepThinkState } from '../shared/state.ts'
+import { sendChatMessage, setDeepThink, setSearch, showDeepSeekBrowser, subscribeCompanionState } from './api.ts'
+import type {
+  ChatFormat,
+  ChatMessage,
+  ChatReasoning,
+  ComposerToggleState,
+  DeepSeekStatus,
+  DeepThinkState,
+  SearchState,
+} from '../shared/state.ts'
 
 const rootStyle: CSSProperties = {
   display: 'flex',
@@ -85,8 +93,9 @@ const sendButtonStyle: CSSProperties = {
   fontWeight: 500,
 }
 
-// --- Deep Think toggle (Phase 07G) -------------------------------------------
-// A quiet pill above the composer; it never competes with the send button.
+// --- Composer switches: Deep Think (07G) + Search (07H) ----------------------
+// Quiet pills above the composer. They share one visual language and never
+// compete with the send button.
 
 const controlsRowStyle: CSSProperties = {
   display: 'flex',
@@ -96,7 +105,7 @@ const controlsRowStyle: CSSProperties = {
   flexWrap: 'wrap',
 }
 
-const deepThinkPillStyle = (enabled: boolean, disabled: boolean): CSSProperties => ({
+const togglePillStyle = (enabled: boolean, disabled: boolean): CSSProperties => ({
   padding: '3px 10px',
   borderRadius: 999,
   border: `1px solid ${enabled ? 'var(--dsw-alias-label-primary)' : 'var(--dsw-alias-border-l3)'}`,
@@ -109,10 +118,38 @@ const deepThinkPillStyle = (enabled: boolean, disabled: boolean): CSSProperties 
   fontFamily: 'inherit',
 })
 
-const deepThinkHintStyle: CSSProperties = {
+const toggleHintStyle: CSSProperties = {
   color: 'var(--dsw-alias-label-secondary)',
   fontSize: 11,
   lineHeight: '18px',
+}
+
+/** One DeepSeek composer switch, mirrored from the Host (never optimistic). */
+function ComposerTogglePill({
+  label,
+  state,
+  disabled,
+  title,
+  onToggle,
+}: {
+  label: string
+  state: ComposerToggleState
+  disabled: boolean
+  title: string
+  onToggle: (next: boolean) => void
+}): ReactNode {
+  return (
+    <button
+      type="button"
+      style={togglePillStyle(state.enabled, disabled)}
+      disabled={disabled}
+      aria-pressed={state.enabled}
+      title={title}
+      onClick={() => onToggle(!state.enabled)}
+    >
+      {label}
+    </button>
+  )
 }
 
 // --- Markdown rendering (Phase 07E) -----------------------------------------
@@ -309,9 +346,12 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
   const [input, setInput] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  // Deep Think mirror: the Host owns the truth; this copy only reflects pushes.
+  // Composer-switch mirrors: the Host owns the truth; these copies only reflect
+  // pushes (Search joined Deep Think in Phase 07H).
   const [deepThink, setDeepThinkState] = useState<DeepThinkState>({ available: false, enabled: false })
   const [togglingDeepThink, setTogglingDeepThink] = useState(false)
+  const [search, setSearchState] = useState<SearchState>({ available: false, enabled: false })
+  const [togglingSearch, setTogglingSearch] = useState(false)
   const listRef = useRef<HTMLDivElement>(null)
 
   useEffect(
@@ -321,6 +361,7 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
         setMessages(state.chat.messages)
         setHostSending(state.chat.sending)
         setDeepThinkState(state.deepseek.deepThink)
+        setSearchState(state.deepseek.search)
       }),
     [origin],
   )
@@ -352,22 +393,44 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
     }
   }
 
-  // Deep Think is disabled while a reply streams (the mode must not change
-  // mid-generation) and when DeepSeek exposes no toggle at all.
-  const deepThinkDisabled = busy || togglingDeepThink || !deepThink.available
+  // A switch is disabled while a reply streams (the composer mode must not
+  // change mid-generation) and when DeepSeek exposes no such switch at all.
+  const toggleDisabled = (state: ComposerToggleState, toggling: boolean): boolean =>
+    busy || toggling || !state.available
 
-  const toggleDeepThink = async (next: boolean): Promise<void> => {
-    if (deepThinkDisabled) return
-    setTogglingDeepThink(true)
+  /**
+   * Shared flow for both composer switches: the Host clicks the real DeepSeek
+   * toggle and returns the state it read back; the SSE push carries the same
+   * value, so nothing here is optimistic.
+   */
+  const toggleMode = async (mode: 'deepThink' | 'search', next: boolean): Promise<void> => {
+    const target =
+      mode === 'deepThink'
+        ? {
+            apply: setDeepThink,
+            mirror: setDeepThinkState,
+            setToggling: setTogglingDeepThink,
+            label: '深度思考',
+            state: deepThink,
+            toggling: togglingDeepThink,
+          }
+        : {
+            apply: setSearch,
+            mirror: setSearchState,
+            setToggling: setTogglingSearch,
+            label: '智能搜索',
+            state: search,
+            toggling: togglingSearch,
+          }
+    if (toggleDisabled(target.state, target.toggling)) return
+    target.setToggling(true)
     setError(null)
     try {
-      // The Host clicks the real DeepSeek toggle and returns the state it read
-      // back; the SSE push carries the same value, so nothing is optimistic.
-      setDeepThinkState(await setDeepThink(origin, next))
+      target.mirror(await target.apply(origin, next))
     } catch (e) {
-      setError(e instanceof Error ? e.message : '深度思考切换失败')
+      setError(e instanceof Error ? e.message : `${target.label}切换失败`)
     } finally {
-      setTogglingDeepThink(false)
+      target.setToggling(false)
     }
   }
 
@@ -433,21 +496,21 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
       </div>
       {error !== null ? <div style={errorStyle}>{error}</div> : null}
       <div style={controlsRowStyle}>
-        <button
-          type="button"
-          style={deepThinkPillStyle(deepThink.enabled, deepThinkDisabled)}
-          disabled={deepThinkDisabled}
-          aria-pressed={deepThink.enabled}
-          title={
-            deepThink.available
-              ? '控制 DeepSeek 网页的「深度思考」开关'
-              : 'DeepSeek 页面当前没有该开关'
-          }
-          onClick={() => void toggleDeepThink(!deepThink.enabled)}
-        >
-          深度思考
-        </button>
-        {deepThink.available ? null : <span style={deepThinkHintStyle}>不可用</span>}
+        <ComposerTogglePill
+          label="深度思考"
+          state={deepThink}
+          disabled={toggleDisabled(deepThink, togglingDeepThink)}
+          title={deepThink.available ? '控制 DeepSeek 网页的「深度思考」开关' : 'DeepSeek 页面当前没有该开关'}
+          onToggle={(next) => void toggleMode('deepThink', next)}
+        />
+        <ComposerTogglePill
+          label="智能搜索"
+          state={search}
+          disabled={toggleDisabled(search, togglingSearch)}
+          title={search.available ? '控制 DeepSeek 网页的「智能搜索」开关' : 'DeepSeek 页面当前没有该开关'}
+          onToggle={(next) => void toggleMode('search', next)}
+        />
+        {deepThink.available || search.available ? null : <span style={toggleHintStyle}>开关不可用</span>}
       </div>
       <div style={inputRowStyle}>
         <textarea

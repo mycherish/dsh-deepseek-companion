@@ -5,7 +5,7 @@
  * copy of the state shape. `origin` is the parent DSH page origin (the pop-out
  * is `about:blank`, so it must not rely on its own relative URL).
  */
-import type { CompanionState, DeepThinkState } from '../shared/state.ts'
+import type { CompanionState, DeepThinkState, SearchState } from '../shared/state.ts'
 
 export type { CompanionState }
 
@@ -19,6 +19,8 @@ const SHOW_PATH = '/api/deepseek-companion/browser/show'
 const CHAT_PATH = '/api/deepseek-companion/chat'
 /** POST route to flip DeepSeek's Deep Think toggle (Phase 07G). */
 const DEEP_THINK_PATH = '/api/deepseek-companion/deep-think'
+/** POST route to flip DeepSeek's web-search toggle (Phase 07H). */
+const SEARCH_PATH = '/api/deepseek-companion/search'
 
 /**
  * Ask the Host to switch DeepSeek's Deep Think toggle and resolve with the REAL
@@ -26,6 +28,26 @@ const DEEP_THINK_PATH = '/api/deepseek-companion/deep-think'
  */
 export async function setDeepThink(origin: string, enabled: boolean): Promise<DeepThinkState> {
   const response = await fetch(`${origin}${DEEP_THINK_PATH}`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enabled }),
+  })
+  const body = (await response.json().catch(() => null)) as
+    | { available?: unknown; enabled?: unknown; error?: unknown }
+    | null
+  if (!response.ok) {
+    throw new Error(typeof body?.error === 'string' ? body.error : `HTTP ${response.status}`)
+  }
+  return { available: body?.available === true, enabled: body?.enabled === true }
+}
+
+/**
+ * Ask the Host to switch DeepSeek's web-search toggle and resolve with the REAL
+ * state it read back from the page (the Client never keeps its own truth).
+ */
+export async function setSearch(origin: string, enabled: boolean): Promise<SearchState> {
+  const response = await fetch(`${origin}${SEARCH_PATH}`, {
     method: 'POST',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },

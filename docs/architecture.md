@@ -250,8 +250,31 @@ Companion「深度思考」控件
 - **Host state 始终反映 DeepSeek 页面的真实状态**：切换后必须重新读取；若控件不存在（`available: false`）或点击无效，写回的仍是页面真实值，Client 不做长期 optimistic 保留。
 - **不使用 DeepSeek 私有网络 API** 控制开关，**不写 DOM 属性伪造状态**，只点击真实 UI。
 - **不使用轮询**：只在「初始化 / page load / showLogin 新建 page / 切换成功后 / 每次发送前」这几处重新读取。用户在 DeepSeek 窗口里手动切换的开关，会在**下一次发送前**被重新同步；两次发送之间的手动改动不会实时反映（无 observer，属已知限制）。
-- **定位方式**：语义 class `.ds-toggle-button` + `aria-pressed`（状态）；Deep Think 与 Search 之间只能靠标签多语言集合区分、Search 显式排除，最后按顺序兜底（两者其余属性完全相同）。
+- **定位方式**：语义 class `.ds-toggle-button` + `aria-pressed`（状态）；Deep Think 与 Search 其余属性完全相同，只能靠标签多语言集合区分，兜底策略保守（Phase 07H 收紧，详见下文「智能搜索开关」）。
 - **page 重建**：新 page 重新读取真实状态，不沿用旧 page 的 `enabled`。
 - **生成过程中禁止切换**（Host 返回 409，Client 禁用控件），避免中途改变模式。
 - **reasoning 读取继续沿用 Phase 07F**，本阶段未改动其链路。
 - **token / cookie 不离开 browser context**：Host 只读写开关状态与 `{ content, format }` 类的最小数据。
+
+### Companion composer controls：Deep Think + 智能搜索（Phase 07H）
+
+```
+Companion「深度思考」/「智能搜索」控件
+  → POST /api/deepseek-companion/deep-think | /search { enabled }
+  → Host 校验/转发 → Playwright 点击 DeepSeek 页面真实 UI 控件
+  → 成对重新读取 composer 两个开关的真实状态（绝不做 optimistic）
+  → CompanionState.deepseek.deepThink / .search
+  → SSE
+  → Dock / Float / Pop-out
+```
+
+要点：
+
+- **共用一套 toggle 逻辑**（`src/host/toggle.ts`，Phase 07H 从 07G 抽出）：定位、读取、点击、Host 请求流程只有一份；`deep-think.ts` / `search.ts` 只各自提供标签规则与镜像字段。
+- **四种组合实测全部允许**（OFF/OFF、ON/OFF、OFF/ON、ON/ON）；DeepSeek 当前不会因为开启一个而自动关闭另一个。但 Host **不假设**这一点。
+- **任一切换后成对同步**：`browser.setDeepThinkEnabled()` / `setSearchEnabled()` 先点击目标开关，再 `syncComposerMode()` 一次读取两个并写入 Host，因此页面若发生联动（现在或将来）也不会留下过期状态。发送消息前也成对重新读取。
+- **不使用固定 sleep**：点击后用 Playwright 条件等待（`page.waitForFunction`，3s 上限）确认目标开关的 `aria-pressed` / selected class 达到期望值。`click` 动作会把被点击元素记录到页面全局 `__composerToggleTarget`，所以定位规则不在等待逻辑里重复；超时不致命，之后照常重新读取页面真实状态。
+- **不使用 DeepSeek 私有网络 API**、不写 DOM 属性伪造状态、不使用轮询；`token` / `cookie` 不离开 browser context。
+- **定位兜底策略（保守）**：标签唯一命中 → 使用；标签无命中时，仅当**另一开关可明确识别且排除后只剩唯一候选**才兜底；其余情况（多候选 / 无法识别 / 标签多重命中）一律 `available: false`，宁可暂时不可用也不误点未来新增的开关。
+- **page 重建**后两个开关都以新 page 的真实状态为准，不沿用旧 page 的值。
+- **Search 结果专用 UI 尚未实现**：搜索回答的来源链接**不在** `props.markdown` 中 —— DeepSeek 只在正文 Markdown 里写入 `[citation:N]` 标记，真实 URL 由渲染层注入（`span.ds-markdown-cite` → `a[href]`）。因此 Companion 目前能完整显示搜索回答的正文结构，但**看不到可点击的来源链接**，且 `[citation:N]` 会以纯文本形式出现。引用 / 来源 UI 记录为后续 Phase。

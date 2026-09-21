@@ -10,14 +10,27 @@
 export type DeepSeekStatus = 'checking' | 'logged_in' | 'logged_out' | 'error'
 
 /**
- * DeepSeek's "Deep Think" toggle state (Phase 07G). The Host mirrors the REAL
- * state of the DeepSeek page — it is never optimistically pinned by the Client.
+ * State of one DeepSeek composer switch (Phase 07G / 07H). The Host mirrors the
+ * REAL state of the DeepSeek page — it is never optimistically pinned by the
+ * Client.
  */
-export interface DeepThinkState {
-  /** Whether the toggle exists in the page (false when logged out / UI changed). */
+export interface ComposerToggleState {
+  /** Whether the switch exists in the page (false when logged out / UI changed). */
   available: boolean
-  /** Whether Deep Think is currently ON in the real DeepSeek page. */
+  /** Whether the switch is currently ON in the real DeepSeek page. */
   enabled: boolean
+}
+
+/** DeepSeek's "Deep Think" toggle mirror (Phase 07G). */
+export type DeepThinkState = ComposerToggleState
+
+/** DeepSeek's web-search ("智能搜索") toggle mirror (Phase 07H). */
+export type SearchState = ComposerToggleState
+
+/** Both composer switches at once, as read from the same page load (Phase 07H). */
+export interface ComposerModeState {
+  deepThink: DeepThinkState
+  search: SearchState
 }
 
 /**
@@ -63,6 +76,8 @@ export interface CompanionState {
   deepseek: {
     status: DeepSeekStatus
     deepThink: DeepThinkState
+    /** Phase 07H: both switches are re-read together after any change. */
+    search: SearchState
   }
   chat: {
     messages: ChatMessage[]

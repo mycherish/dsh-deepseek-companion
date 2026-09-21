@@ -12,17 +12,26 @@
  * No automatic browser download, no shell install, no guessing old caches.
  */
 import { chromium, type BrowserContext, type Page } from 'playwright'
-import type { AssistantReply, ChatFormat, DeepSeekStatus, DeepThinkState } from '../shared/state.ts'
-import {
-  deepThinkInPage,
-  needsDeepThinkClick,
-  normalizeDeepThinkState,
-  type DeepThinkOptions,
-} from './deep-think.ts'
+import type {
+  AssistantReply,
+  ChatFormat,
+  ComposerModeState,
+  ComposerToggleState,
+  DeepSeekStatus,
+  DeepThinkState,
+  SearchState,
+} from '../shared/state.ts'
 import { loginStatusFromCurrentUser } from './login.ts'
 import { cleanupReasoningReader, installReasoningReader, readAndCleanupReasoning } from './reasoning.ts'
 import { cleanupReplyReader, installReplyReader, readAndCleanupReply } from './reply.ts'
 import { createThrottle } from './throttle.ts'
+import {
+  composerToggleInPage,
+  needsToggleClick,
+  normalizeToggleState,
+  TOGGLE_TARGET_KEY,
+  type ComposerToggleOptions,
+} from './toggle.ts'
 
 const DEEPSEEK_URL = 'https://chat.deepseek.com'
 /** DeepSeek's authoritative "current user" endpoint. */
@@ -52,16 +61,28 @@ const REASONING_SELECTOR = '.ds-think-content'
  */
 const NEW_NODE_TIMEOUT = 5000
 /**
- * How to find the Deep Think toggle (Phase 07G). DeepSeek's two composer toggles
- * (Deep Think / Search) share every stable attribute, so the label set does the
- * disambiguation and Search is explicitly excluded.
+ * Composer switches (Phase 07G / 07H). DeepSeek's two toggles share every
+ * stable attribute, so each one's label set does the disambiguation and the
+ * other one is explicitly excluded. See `./toggle.ts` for the rules.
  */
-const DEEP_THINK_OPTIONS: DeepThinkOptions = {
+const DEEP_THINK_OPTIONS: ComposerToggleOptions = {
   toggleSelector: '.ds-toggle-button',
   selectedClass: 'ds-toggle-button--selected',
   labels: ['深度思考', 'deepthink', 'deep think', 'deep thinking', 'thinking'],
   exclusions: ['智能搜索', 'search'],
 }
+const SEARCH_OPTIONS: ComposerToggleOptions = {
+  toggleSelector: '.ds-toggle-button',
+  selectedClass: 'ds-toggle-button--selected',
+  labels: ['智能搜索', 'search', '联网搜索'],
+  exclusions: ['深度思考', 'deepthink', 'deep think', 'deep thinking', 'thinking'],
+}
+/**
+ * How long to let the SPA commit a composer-switch click before re-reading.
+ * A CONDITION wait (the clicked switch must report the requested state), never
+ * a fixed sleep; on timeout we still re-read and report the page's truth.
+ */
+const TOGGLE_SETTLE_TIMEOUT = 3000
 
 /** Coerce a value arriving from the page into a trusted `AssistantReply`. */
 function normalizeReply(value: unknown): AssistantReply {
@@ -83,6 +104,16 @@ export interface DeepSeekBrowser {
    * the returned state is always the page's truth (never optimistic).
    */
   setDeepThinkEnabled(enabled: boolean): Promise<DeepThinkState>
+  /** Read DeepSeek's REAL web-search toggle state (Phase 07H). */
+  getSearchState(): Promise<SearchState>
+  /** Click the real web-search toggle toward `enabled` and re-read the page. */
+  setSearchEnabled(enabled: boolean): Promise<SearchState>
+  /**
+   * Read BOTH composer switches from the same page state (Phase 07H). Used
+   * before every send and after every switch, so a link between them (present or
+   * future) is always reflected in the Host mirror.
+   */
+  getComposerModeState(): Promise<ComposerModeState>
   /**
    * Send one message and resolve with the final complete reply. `onDelta` fires
    * with the growing reply while DeepSeek is still generating — the raw Markdown
@@ -137,6 +168,7 @@ export async function createDeepSeekBrowser(
   profileDir: string,
   onStatus: (status: DeepSeekStatus) => void,
   onDeepThink?: (state: DeepThinkState) => void,
+  onSearch?: (state: SearchState) => void,
 ): Promise<DeepSeekBrowser> {
   // Playwright resolves its own matched Chromium via `chromium.executablePath()`;
   // a missing browser surfaces as a clear launch error (mapped to `error`).
@@ -164,24 +196,78 @@ export async function createDeepSeekBrowser(
     }
   }
 
-  // Deep Think toggle (Phase 07G). The Host mirrors the page's REAL state: the
-  // toggle is only ever changed by clicking the real DeepSeek UI, and every read
-  // is a fresh read of the page (never cached, never optimistic). No polling —
-  // we re-read at the few moments where the state can actually change.
-  const readDeepThink = async (): Promise<DeepThinkState> => {
+  // Composer switches — Deep Think (Phase 07G) and Search (Phase 07H). The Host
+  // mirrors the page's REAL state: a switch is only ever changed by clicking the
+  // real DeepSeek UI, and every read is a fresh read of the page (never cached,
+  // never optimistic). No polling — we re-read at the few moments where the
+  // state can actually change.
+  const readToggle = async (options: ComposerToggleOptions): Promise<ComposerToggleState> => {
     try {
-      return normalizeDeepThinkState(
-        await page.evaluate(deepThinkInPage, { options: DEEP_THINK_OPTIONS, action: 'read' as const }),
-      )
+      return normalizeToggleState(await page.evaluate(composerToggleInPage, { options, action: 'read' as const }))
     } catch {
       return { available: false, enabled: false }
     }
   }
 
-  const syncDeepThink = async (): Promise<DeepThinkState> => {
-    const state = await readDeepThink()
-    onDeepThink?.(state)
-    return state
+  /**
+   * Click the real switch toward `enabled`, then wait for the page to report the
+   * requested state. Already in the requested state → no click at all; switch
+   * missing → the page state (`available: false`) is returned untouched. The
+   * result is always the page's truth, so a failed click simply reports what is
+   * really there.
+   */
+  const setToggle = async (options: ComposerToggleOptions, enabled: boolean): Promise<ComposerToggleState> => {
+    const before = await readToggle(options)
+    if (!needsToggleClick(before, enabled)) return before
+    try {
+      await page.evaluate(composerToggleInPage, { options, action: 'click' as const })
+    } catch {
+      // ignored — the re-read below reports the page's real state
+    }
+    // Condition wait, owned and bounded by Playwright: the switch we just
+    // clicked must report the requested state. Never a fixed sleep — the `click`
+    // action records the element on the page global, so the locating rules are
+    // not duplicated here. A timeout is not fatal: we re-read below.
+    await page
+      .waitForFunction(
+        (payload: { key: string; enabled: boolean; selectedClass: string }) => {
+          const el = (window as unknown as Record<string, unknown>)[payload.key]
+          if (el === null || el === undefined) return false
+          const node = el as { getAttribute?: (name: string) => string | null; className?: unknown }
+          const pressed = typeof node.getAttribute === 'function' ? node.getAttribute('aria-pressed') : null
+          if (pressed !== null) return pressed === (payload.enabled ? 'true' : 'false')
+          const on = typeof node.className === 'string' && node.className.includes(payload.selectedClass)
+          return on === payload.enabled
+        },
+        { key: TOGGLE_TARGET_KEY, enabled, selectedClass: options.selectedClass },
+        { timeout: TOGGLE_SETTLE_TIMEOUT },
+      )
+      .catch(() => {
+        // fall through — the re-read below reports the page's real state
+      })
+    const after = await readToggle(options)
+    await page
+      .evaluate((key: string) => {
+        delete (window as unknown as Record<string, unknown>)[key]
+      }, TOGGLE_TARGET_KEY)
+      .catch(() => {})
+    return after
+  }
+
+  const readComposerMode = async (): Promise<ComposerModeState> => {
+    const [deepThink, search] = await Promise.all([readToggle(DEEP_THINK_OPTIONS), readToggle(SEARCH_OPTIONS)])
+    return { deepThink, search }
+  }
+
+  /**
+   * Re-read BOTH switches and mirror them. DeepSeek may link the two (now or
+   * later), so the Host never updates one without the other.
+   */
+  const syncComposerMode = async (): Promise<ComposerModeState> => {
+    const mode = await readComposerMode()
+    onDeepThink?.(mode.deepThink)
+    onSearch?.(mode.search)
+    return mode
   }
 
   // Wire the detection triggers to a page. Re-run after a full navigation
@@ -193,8 +279,8 @@ export async function createDeepSeekBrowser(
   const attachListeners = (target: Page): void => {
     target.on('load', () => {
       void runDetect()
-      // A full load can rebuild the composer: mirror the toggle's real state.
-      void syncDeepThink()
+      // A full load can rebuild the composer: mirror both switches' real state.
+      void syncComposerMode()
     })
     target.on('response', (response) => {
       if (!response.url().includes(CURRENT_USER_PATH)) return
@@ -226,8 +312,8 @@ export async function createDeepSeekBrowser(
       await page.goto(DEEPSEEK_URL, { waitUntil: 'domcontentloaded', timeout: 30000 })
       await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {})
       const status = await runDetect()
-      // Initial sync: mirror the composer's real Deep Think state.
-      await syncDeepThink()
+      // Initial sync: mirror the composer's real switch states.
+      await syncComposerMode()
       return status
     } catch {
       onStatus('error')
@@ -249,28 +335,25 @@ export async function createDeepSeekBrowser(
     }
     await page.goto(`${DEEPSEEK_URL}/sign_in`, { waitUntil: 'domcontentloaded', timeout: 30000 })
     await page.bringToFront()
-    // Never carry the previous page's toggle state over: report what the new
+    // Never carry the previous page's switch states over: report what the new
     // page actually shows (the sign-in route has no composer → unavailable).
-    await syncDeepThink()
+    await syncComposerMode()
   }
 
   /**
-   * Click the real Deep Think toggle toward `enabled`, then re-read the page.
-   * Already in the requested state → no click at all; toggle missing → the page
-   * state (`available: false`) is returned untouched. The result is always the
-   * page's truth, so a failed click simply reports what is really there.
+   * Flip one switch, then mirror BOTH. DeepSeek currently keeps Deep Think and
+   * Search independent (all four combinations verified in Phase 07H), but the
+   * Host never assumes it: after any change it re-reads the page and reports the
+   * truth for both.
    */
   const setDeepThinkEnabled = async (enabled: boolean): Promise<DeepThinkState> => {
-    const before = await readDeepThink()
-    if (!needsDeepThinkClick(before, enabled)) return before
-    try {
-      await page.evaluate(deepThinkInPage, { options: DEEP_THINK_OPTIONS, action: 'click' as const })
-    } catch {
-      // ignored — the re-read below reports the page's real state
-    }
-    // Give the SPA a beat to flip the toggle, then re-read.
-    await page.waitForTimeout(400)
-    return readDeepThink()
+    await setToggle(DEEP_THINK_OPTIONS, enabled)
+    return (await syncComposerMode()).deepThink
+  }
+
+  const setSearchEnabled = async (enabled: boolean): Promise<SearchState> => {
+    await setToggle(SEARCH_OPTIONS, enabled)
+    return (await syncComposerMode()).search
   }
 
   // Single-flight guard: only one in-flight send at a time (no per-message
@@ -336,10 +419,10 @@ export async function createDeepSeekBrowser(
         throw new Error(status === 'logged_out' ? 'not logged in' : 'login state unknown')
       }
 
-      // The user may have flipped Deep Think inside the DeepSeek window itself,
-      // so re-read the toggle's truth before every send (no polling). The result
-      // also tells us whether this send may produce reasoning at all.
-      const deepThinkAtSend = await syncDeepThink()
+      // The user may have flipped EITHER switch inside the DeepSeek window
+      // itself, so re-read both before every send (no polling). Deep Think also
+      // tells us whether this send may produce reasoning at all.
+      const modeAtSend = await syncComposerMode()
 
       // Capture how many replies / reasoning blocks already exist so each reader
       // only ever looks at the NEW one (never stale history).
@@ -392,7 +475,7 @@ export async function createDeepSeekBrowser(
       // to exist. Reasoning is only awaited when Deep Think was ON for this send,
       // so a normal reply never blocks waiting for a reasoning node.
       await waitForNewNode('__hasNewReply')
-      if (deepThinkAtSend.enabled) await waitForNewNode('__hasNewReasoning')
+      if (modeAtSend.deepThink.enabled) await waitForNewNode('__hasNewReasoning')
 
       // Final reads (each also disconnects its own observer), then force-flush
       // both throttles so neither final value can be dropped.
@@ -423,8 +506,11 @@ export async function createDeepSeekBrowser(
   return {
     check,
     showLogin,
-    getDeepThinkState: readDeepThink,
+    getDeepThinkState: () => readToggle(DEEP_THINK_OPTIONS),
     setDeepThinkEnabled,
+    getSearchState: () => readToggle(SEARCH_OPTIONS),
+    setSearchEnabled,
+    getComposerModeState: readComposerMode,
     sendMessage,
     async dispose() {
       await context.close().catch(() => {})

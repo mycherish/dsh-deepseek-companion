@@ -4,6 +4,7 @@ import { createDeepSeekBrowser, type DeepSeekBrowser } from './host/browser.ts'
 import { handleChatMessage } from './host/chat.ts'
 import { handleDeepThinkRequest } from './host/deep-think.ts'
 import { browserProfileDir } from './host/paths.ts'
+import { handleSearchRequest } from './host/search.ts'
 import { createCompanionStateStore, type CompanionStateStore } from './host/state.ts'
 import type { CompanionState } from './shared/state.ts'
 
@@ -23,6 +24,8 @@ const SHOW_PATH = '/api/deepseek-companion/browser/show'
 const CHAT_PATH = '/api/deepseek-companion/chat'
 /** POST route to flip DeepSeek's Deep Think toggle (Phase 07G). */
 const DEEP_THINK_PATH = '/api/deepseek-companion/deep-think'
+/** POST route to flip DeepSeek's web-search toggle (Phase 07H). */
+const SEARCH_PATH = '/api/deepseek-companion/search'
 
 /**
  * DeepSeek Web Companion host half.
@@ -74,9 +77,13 @@ export function apply(ctx: Context): void {
       (status) => {
         if (!disposed) store.setDeepSeekStatus(status)
       },
-      // Deep Think state is only ever mirrored from the real page (Phase 07G).
+      // Composer switches are only ever mirrored from the real page
+      // (Deep Think: Phase 07G, Search: Phase 07H).
       (state) => {
         if (!disposed) store.setDeepThinkState(state)
+      },
+      (state) => {
+        if (!disposed) store.setSearchState(state)
       },
     )
       .then((created) => {
@@ -181,6 +188,28 @@ export function apply(ctx: Context): void {
         },
       }),
     'deepseek-companion: deep think route',
+  )
+
+  // Web-search control (Phase 07H): same contract as Deep Think — flips the REAL
+  // DeepSeek composer toggle and reports the page's true state back. Both
+  // switches are re-read after any change, so a page-side link between them can
+  // never leave the Host mirror stale.
+  ctx.effect(
+    () =>
+      ctx.connection.fetch.register({
+        path: SEARCH_PATH,
+        methods: ['POST'],
+        requestBody: 'buffered',
+        fetch: async (request) => {
+          const body: unknown = await request.json().catch(() => null)
+          const result = await handleSearchRequest(store, browser, body)
+          if (result.status === 500) {
+            console.warn('[dsh-deepseek-companion] failed to set Search', result.body.error)
+          }
+          return Response.json(result.body, { status: result.status })
+        },
+      }),
+    'deepseek-companion: search route',
   )
 
   ctx.effect(() => () => store.dispose(), 'deepseek-companion: state store')

@@ -7,7 +7,14 @@
  * updates independently of `revision`. Every change notifies all listeners.
  */
 import { randomUUID } from 'node:crypto'
-import type { ChatFormat, ChatMessage, CompanionState, DeepSeekStatus, DeepThinkState } from '../shared/state.ts'
+import type {
+  ChatFormat,
+  ChatMessage,
+  CompanionState,
+  DeepSeekStatus,
+  DeepThinkState,
+  SearchState,
+} from '../shared/state.ts'
 
 export type StateListener = (state: CompanionState) => void
 
@@ -17,6 +24,7 @@ export interface CompanionStateStore {
   bumpRevision(): void
   setDeepSeekStatus(status: DeepSeekStatus): void
   setDeepThinkState(state: DeepThinkState): void
+  setSearchState(state: SearchState): void
   appendChatMessage(role: ChatMessage['role'], content: string, format?: ChatFormat): ChatMessage
   updateChatMessage(id: string, content: string, format?: ChatFormat): void
   updateChatReasoning(id: string, content: string, format: ChatFormat): void
@@ -29,7 +37,11 @@ export function createCompanionStateStore(): CompanionStateStore {
     status: 'ready',
     revision: 1,
     instanceId: randomUUID(),
-    deepseek: { status: 'checking', deepThink: { available: false, enabled: false } },
+    deepseek: {
+      status: 'checking',
+      deepThink: { available: false, enabled: false },
+      search: { available: false, enabled: false },
+    },
     chat: { messages: [], sending: false },
   }
   const listeners = new Set<StateListener>()
@@ -71,6 +83,14 @@ export function createCompanionStateStore(): CompanionStateStore {
       const current = state.deepseek.deepThink
       if (current.available === next.available && current.enabled === next.enabled) return
       state = { ...state, deepseek: { ...state.deepseek, deepThink: next } }
+      notify(state)
+    },
+
+    setSearchState(next: SearchState) {
+      if (disposed) return
+      const current = state.deepseek.search
+      if (current.available === next.available && current.enabled === next.enabled) return
+      state = { ...state, deepseek: { ...state.deepseek, search: next } }
       notify(state)
     },
 
