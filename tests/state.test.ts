@@ -209,3 +209,58 @@ test('appendChatMessage：默认 format 为 text，可显式指定 markdown', ()
   assert.equal(user.format, 'text')
   assert.equal(assistant.format, 'markdown')
 })
+
+test('A: assistant 可以同时保存正文与 reasoning（两个独立字段）', () => {
+  const store = createCompanionStateStore()
+  const assistant = store.appendChatMessage('assistant', '正文内容', 'markdown')
+
+  store.updateChatReasoning(assistant.id, '思考内容', 'text')
+
+  const message = store.getState().chat.messages[0]!
+  assert.equal(message.content, '正文内容')
+  assert.equal(message.format, 'markdown')
+  assert.deepEqual(message.reasoning, { content: '思考内容', format: 'text' })
+})
+
+test('B: updateChatReasoning 不改变正文 content / format', () => {
+  const store = createCompanionStateStore()
+  const assistant = store.appendChatMessage('assistant', '正文', 'markdown')
+  const before = store.getState().chat.messages[0]!
+
+  store.updateChatReasoning(assistant.id, '思考', 'text')
+
+  const after = store.getState().chat.messages[0]!
+  assert.equal(after.content, before.content)
+  assert.equal(after.format, before.format)
+})
+
+test('B: updateChatReasoning 相同值不重复 notify', () => {
+  const store = createCompanionStateStore()
+  const assistant = store.appendChatMessage('assistant', '正文')
+  const seen: string[] = []
+  store.subscribe((state) => seen.push(state.chat.messages[0]!.reasoning?.content ?? ''))
+
+  store.updateChatReasoning(assistant.id, '思考', 'text')
+  store.updateChatReasoning(assistant.id, '思考', 'text') // 重复，不应通知
+
+  assert.deepEqual(seen, ['', '思考'])
+})
+
+test('B: updateChatReasoning 找不到 id 时安全 no-op', () => {
+  const store = createCompanionStateStore()
+  store.appendChatMessage('assistant', '正文')
+  const before = store.getState().chat.messages
+
+  store.updateChatReasoning('nonexistent-id', '思考', 'text')
+
+  assert.deepEqual(store.getState().chat.messages, before)
+})
+
+test('B: updateChatReasoning 空内容不创建空 reasoning（Deep Think 未开启）', () => {
+  const store = createCompanionStateStore()
+  const assistant = store.appendChatMessage('assistant', '正文')
+
+  store.updateChatReasoning(assistant.id, '', 'text')
+
+  assert.equal(store.getState().chat.messages[0]!.reasoning, undefined)
+})

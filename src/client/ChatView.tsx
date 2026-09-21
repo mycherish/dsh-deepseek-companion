@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { sendChatMessage, showDeepSeekBrowser, subscribeCompanionState } from './api.ts'
-import type { ChatFormat, ChatMessage, DeepSeekStatus } from '../shared/state.ts'
+import { sendChatMessage, setDeepThink, showDeepSeekBrowser, subscribeCompanionState } from './api.ts'
+import type { ChatFormat, ChatMessage, ChatReasoning, DeepSeekStatus, DeepThinkState } from '../shared/state.ts'
 
 const rootStyle: CSSProperties = {
   display: 'flex',
@@ -83,6 +83,36 @@ const sendButtonStyle: CSSProperties = {
   cursor: 'pointer',
   fontSize: 13,
   fontWeight: 500,
+}
+
+// --- Deep Think toggle (Phase 07G) -------------------------------------------
+// A quiet pill above the composer; it never competes with the send button.
+
+const controlsRowStyle: CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 6,
+  flexShrink: 0,
+  flexWrap: 'wrap',
+}
+
+const deepThinkPillStyle = (enabled: boolean, disabled: boolean): CSSProperties => ({
+  padding: '3px 10px',
+  borderRadius: 999,
+  border: `1px solid ${enabled ? 'var(--dsw-alias-label-primary)' : 'var(--dsw-alias-border-l3)'}`,
+  background: enabled ? 'var(--dsw-alias-interactive-bg-hover)' : 'transparent',
+  color: enabled ? 'var(--dsw-alias-label-primary)' : 'var(--dsw-alias-label-secondary)',
+  cursor: disabled ? 'not-allowed' : 'pointer',
+  opacity: disabled ? 0.5 : 1,
+  fontSize: 12,
+  lineHeight: '18px',
+  fontFamily: 'inherit',
+})
+
+const deepThinkHintStyle: CSSProperties = {
+  color: 'var(--dsw-alias-label-secondary)',
+  fontSize: 11,
+  lineHeight: '18px',
 }
 
 // --- Markdown rendering (Phase 07E) -----------------------------------------
@@ -210,6 +240,60 @@ function MarkdownBlock({ content }: { content: string }): ReactNode {
   )
 }
 
+// --- Reasoning display (Phase 07F) -------------------------------------------
+// "Deep Think" output, shown ABOVE the answer with a weaker visual hierarchy.
+
+const reasoningBoxStyle: CSSProperties = {
+  marginBottom: 6,
+  paddingLeft: 8,
+  borderLeft: '2px solid var(--dsw-alias-border-l3)',
+}
+
+const reasoningSummaryStyle: CSSProperties = {
+  cursor: 'pointer',
+  userSelect: 'none',
+  color: 'var(--dsw-alias-label-secondary)',
+  fontSize: 12,
+  lineHeight: '18px',
+}
+
+const reasoningBodyStyle: CSSProperties = {
+  marginTop: 4,
+  maxHeight: 220,
+  overflowY: 'auto',
+  overflowWrap: 'anywhere',
+  color: 'var(--dsw-alias-label-secondary)',
+  fontSize: 12,
+  lineHeight: '18px',
+}
+
+const reasoningTextStyle: CSSProperties = {
+  ...reasoningBodyStyle,
+  whiteSpace: 'pre-wrap',
+}
+
+function ReasoningBlock({ reasoning }: { reasoning: ChatReasoning }): ReactNode {
+  // Starts expanded so the thinking can be watched as it streams in; once the
+  // user toggles it we simply follow their choice (no timers, no state machine).
+  const [open, setOpen] = useState(true)
+  return (
+    <details
+      open={open}
+      onToggle={(event) => setOpen((event.currentTarget as HTMLDetailsElement).open)}
+      style={reasoningBoxStyle}
+    >
+      <summary style={reasoningSummaryStyle}>思考过程</summary>
+      {reasoning.format === 'markdown' ? (
+        <div style={reasoningBodyStyle}>
+          <MarkdownBlock content={reasoning.content} />
+        </div>
+      ) : (
+        <div style={reasoningTextStyle}>{reasoning.content}</div>
+      )}
+    </details>
+  )
+}
+
 /**
  * Minimal shared chat view used by the Dock, Float, and Pop-out (Phase 07C.1 →
  * 07E). The Host owns the authoritative message list; this view only mirrors it
@@ -225,6 +309,9 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
   const [input, setInput] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // Deep Think mirror: the Host owns the truth; this copy only reflects pushes.
+  const [deepThink, setDeepThinkState] = useState<DeepThinkState>({ available: false, enabled: false })
+  const [togglingDeepThink, setTogglingDeepThink] = useState(false)
   const listRef = useRef<HTMLDivElement>(null)
 
   useEffect(
@@ -233,6 +320,7 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
         setStatus(state.deepseek.status)
         setMessages(state.chat.messages)
         setHostSending(state.chat.sending)
+        setDeepThinkState(state.deepseek.deepThink)
       }),
     [origin],
   )
@@ -261,6 +349,25 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
       setError(e instanceof Error ? e.message : '发送失败')
     } finally {
       setSubmitting(false)
+    }
+  }
+
+  // Deep Think is disabled while a reply streams (the mode must not change
+  // mid-generation) and when DeepSeek exposes no toggle at all.
+  const deepThinkDisabled = busy || togglingDeepThink || !deepThink.available
+
+  const toggleDeepThink = async (next: boolean): Promise<void> => {
+    if (deepThinkDisabled) return
+    setTogglingDeepThink(true)
+    setError(null)
+    try {
+      // The Host clicks the real DeepSeek toggle and returns the state it read
+      // back; the SSE push carries the same value, so nothing is optimistic.
+      setDeepThinkState(await setDeepThink(origin, next))
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '深度思考切换失败')
+    } finally {
+      setTogglingDeepThink(false)
     }
   }
 
@@ -302,24 +409,46 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
       <div ref={listRef} style={messagesStyle}>
         {messages.length === 0 ? <div style={hintStyle}>输入消息开始对话</div> : null}
         {messages.map((message) => {
-          // An empty assistant message only exists transiently while the reply
-          // is streaming (or right after a pre-send failure); it would render
-          // as a stray blank bubble, so skip it — the "replying…" placeholder
-          // below already covers the in-flight state.
-          if (message.role === 'assistant' && message.content === '') return null
+          const reasoning = message.role === 'assistant' ? message.reasoning : undefined
+          // An assistant message with neither a body nor reasoning only exists
+          // transiently while streaming (or right after a pre-send failure); it
+          // would render as a stray blank bubble, so skip it — the "replying…"
+          // placeholder below already covers the in-flight state.
+          if (message.role === 'assistant' && message.content === '' && reasoning === undefined) return null
           return (
             <div key={message.id} style={messageRowStyle(message.role, message.format)}>
-              {message.role === 'assistant' && message.format === 'markdown' ? (
-                <MarkdownBlock content={message.content} />
-              ) : (
-                message.content
-              )}
+              {/* Thinking always sits ABOVE the answer. */}
+              {reasoning !== undefined ? <ReasoningBlock reasoning={reasoning} /> : null}
+              {message.content !== '' ? (
+                message.role === 'assistant' && message.format === 'markdown' ? (
+                  <MarkdownBlock content={message.content} />
+                ) : (
+                  message.content
+                )
+              ) : null}
             </div>
           )
         })}
         {busy ? <div style={messageRowStyle('assistant', 'text')}>正在回复…</div> : null}
       </div>
       {error !== null ? <div style={errorStyle}>{error}</div> : null}
+      <div style={controlsRowStyle}>
+        <button
+          type="button"
+          style={deepThinkPillStyle(deepThink.enabled, deepThinkDisabled)}
+          disabled={deepThinkDisabled}
+          aria-pressed={deepThink.enabled}
+          title={
+            deepThink.available
+              ? '控制 DeepSeek 网页的「深度思考」开关'
+              : 'DeepSeek 页面当前没有该开关'
+          }
+          onClick={() => void toggleDeepThink(!deepThink.enabled)}
+        >
+          深度思考
+        </button>
+        {deepThink.available ? null : <span style={deepThinkHintStyle}>不可用</span>}
+      </div>
       <div style={inputRowStyle}>
         <textarea
           style={inputStyle}

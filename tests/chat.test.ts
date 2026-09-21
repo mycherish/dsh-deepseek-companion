@@ -124,6 +124,60 @@ test('并发保护：发送进行中第二条被 409 拒绝，且其 user messag
   assert.equal(store.getState().chat.sending, false)
 })
 
+test('D: 流式 reasoning 始终更新同一个 assistant message，messages 数量不增长', async () => {
+  const store = createCompanionStateStore()
+  const result = await handleChatMessage(
+    store,
+    async (_message, onDelta, onReasoning) => {
+      onReasoning(reply('思考'))
+      onReasoning(reply('思考一步'))
+      onReasoning(reply('思考一步两步'))
+      onDelta(reply('# 正文', 'markdown'))
+      return reply('# 正文', 'markdown')
+    },
+    'hi',
+  )
+
+  assert.equal(result.status, 200)
+  const messages = store.getState().chat.messages
+  assert.equal(messages.length, 2)
+  assert.equal(messages[1]!.reasoning?.content, '思考一步两步')
+  assert.equal(messages[1]!.content, '# 正文')
+})
+
+test('E: reasoning 更新不改正文，正文更新不改 reasoning', async () => {
+  const store = createCompanionStateStore()
+  const assistant = store.appendChatMessage('assistant', '正文 A', 'markdown')
+  store.updateChatReasoning(assistant.id, '思考 A', 'text')
+
+  store.updateChatMessage(assistant.id, '正文 B', 'markdown')
+
+  const message = store.getState().chat.messages[0]!
+  assert.equal(message.content, '正文 B')
+  assert.equal(message.format, 'markdown')
+  assert.equal(message.reasoning?.content, '思考 A')
+})
+
+test('F: Deep Think 未开启（无 reasoning）时正文完整成功，reasoning 保持 undefined', async () => {
+  const store = createCompanionStateStore()
+  const result = await handleChatMessage(
+    store,
+    async (_message, onDelta) => {
+      // No onReasoning call at all — Deep Think produced nothing.
+      onDelta(reply('正文', 'markdown'))
+      return reply('正文', 'markdown')
+    },
+    'hi',
+  )
+
+  assert.equal(result.status, 200)
+  const message = store.getState().chat.messages[1]!
+  assert.equal(message.content, '正文')
+  assert.equal(message.format, 'markdown')
+  assert.equal(message.reasoning, undefined)
+  assert.equal(store.getState().chat.sending, false)
+})
+
 test('sendMessage 抛错：保留 user 与部分 assistant 文本，sending 恢复 false', async () => {
   const store = createCompanionStateStore()
   const result = await handleChatMessage(

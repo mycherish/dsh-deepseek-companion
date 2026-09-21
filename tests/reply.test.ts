@@ -166,6 +166,31 @@ test('startCount：只读取发送后新增的回复，历史回复不参与', (
   assert.deepEqual(h.deltas[1], { content: '**新回复**', format: 'markdown' })
 })
 
+test('fallback 不会读到 reasoning 容器内的节点（excludeWithin）', () => {
+  const fallback: FakeNode[] = [
+    // A `.ds-markdown` that lives INSIDE the reasoning container.
+    { textContent: '思考内容', closest: (selector: string) => (selector === '.think' ? {} : null) },
+  ]
+  const h = makeHarness([], fallback)
+  installReplyReader({ options: { ...readOptions(), excludeWithin: '.think' }, env: h.env })
+
+  // The real reply node appears (outside any reasoning container) afterwards.
+  fallback.push({ textContent: '正文', closest: () => null, __reactFiber$k: fiberChain(0, { markdown: '# 正文' }) })
+  h.emit()
+
+  assert.deepEqual(h.deltas[0], { content: '# 正文', format: 'markdown' })
+})
+
+test('excludeWithin 过滤掉全部候选时安全返回空', () => {
+  const fallback: FakeNode[] = [{ textContent: '思考内容', closest: (selector: string) => (selector === '.think' ? {} : null) }]
+  const h = makeHarness([], fallback)
+  installReplyReader({ options: { ...readOptions(), excludeWithin: '.think' }, env: h.env })
+
+  h.emit()
+
+  assert.deepEqual(h.deltas[0], { content: '', format: 'text' })
+})
+
 test('主选择器无匹配时使用 fallback 选择器', () => {
   const fallback: FakeNode[] = []
   const h = makeHarness([], fallback)
@@ -206,4 +231,42 @@ test('缺少浏览器环境时安全 no-op（不抛错）', () => {
   installReplyReader({ options: readOptions(), env: empty })
   assert.equal(readAndCleanupReply({ env: empty }), null)
   cleanupReplyReader({ env: empty })
+})
+
+test('__hasNewReply：正文还没写进来也算“新节点已出现”（供 Host 条件等待）', () => {
+  const h = makeHarness()
+  h.replies.push({ textContent: '历史回复' })
+  installReplyReader({ options: readOptions(1, 10), env: h.env })
+
+  const probe = h.env.window['__hasNewReply'] as () => boolean
+  assert.equal(probe(), false) // 仍是发送前的那条
+
+  h.replies.push({ textContent: '' }) // 新节点出现，但内容为空
+  assert.equal(probe(), true)
+
+  h.replies[h.replies.length - 1]!.textContent = '新回复'
+  assert.equal(probe(), true)
+})
+
+test('__hasNewReply：首次对话（发送前无回复）新节点出现即为 true', () => {
+  const h = makeHarness()
+  installReplyReader({ options: readOptions(0, 10), env: h.env })
+
+  const probe = h.env.window['__hasNewReply'] as () => boolean
+  assert.equal(probe(), false) // 还没有任何节点
+  h.replies.push({ textContent: '' })
+  assert.equal(probe(), true)
+})
+
+test('__hasNewReply：cleanup / readAndCleanup 都会移除探针', () => {
+  const a = makeHarness()
+  installReplyReader({ options: readOptions(), env: a.env })
+  assert.equal(typeof a.env.window['__hasNewReply'], 'function')
+  cleanupReplyReader({ env: a.env })
+  assert.equal('__hasNewReply' in a.env.window, false)
+
+  const b = makeHarness()
+  installReplyReader({ options: readOptions(), env: b.env })
+  readAndCleanupReply({ env: b.env })
+  assert.equal('__hasNewReply' in b.env.window, false)
 })

@@ -179,42 +179,79 @@ Companion 支持三种界面形态，三者**复用同一份 Host State**（都�
 - 登录态：全新未登录 Profile → `logged_out`（`users/current` 返回 `40002 Missing Token`）；已登录 → `logged_in`（`users/current` 返回 `code:0` + 用户 id）。判定以服务端为准，显著降低误判风险。
 - 未做：自动登录、发送消息、聊天、历史、Deep Think、Search、Handoff。浏览器 Profile 数据（含 Cookie）不进 Git。
 
-## DeepSeek 文本聊天（Phase 07C / 07C.1 / 07D / 07E）
+## DeepSeek 文本聊天（Phase 07C / 07C.1 / 07D / 07E / 07F / 07G）
 
 ### 现状
 
-- **发送链路**：Client `ChatView` → `POST /api/deepseek-companion/chat`（`src/host/chat.ts` 的 `handleChatMessage`）→ `browser.sendMessage()`。
-- **消息结构**：`ChatMessage { id, role, content, format }`（`format: 'text' | 'markdown'`），Host 统一维护 `chat.messages` + `chat.sending`；并发由 `chat.sending` 单飞门控制（busy → 409）。
+- **发送链路**：Client `ChatView` → `POST /api/deepseek-companion/chat`（`src/host/chat.ts` 的 `handleChatMessage`）→ `browser.sendMessage(text, onDelta, onReasoning)`。
+- **消息结构**：`ChatMessage { id, role, content, format, reasoning? }`（`format: 'text' | 'markdown'`，`reasoning: { content, format }`），Host 统一维护 `chat.messages` + `chat.sending`；并发由 `chat.sending` 单飞门控制（busy → 409）。
+- **Deep Think 状态**：`CompanionState.deepseek.deepThink = { available, enabled }`，由 Host 从 DeepSeek 页面读取后写入（见下文 07G 小节）。
 
-### 流式回复 + Markdown（Phase 07D 流式 / 07E Markdown）
+### 流式回复 + Markdown + reasoning（Phase 07D / 07E / 07F）
 
-正式链路：
+两条**互相独立**的链路（各有自己的 reader、bridge、throttle、Host 字段）：
 
 ```
-DeepSeek assistant DOM（.ds-assistant-message-main-content，fallback .ds-markdown）
-  → React fiber props.markdown（原始 Markdown）
-  → fallback：DOM textContent（纯文本）
-  → window.__onReplyDelta（context.exposeFunction 桥接，一次性注册，所有 page 自动拥有）
-  → Host throttle（~100ms 合并，createThrottle）
-  → updateChatMessage(assistantId, content, format)（同一条 assistant 持续覆盖，不新增消息）
-  → CompanionState（chat.messages / chat.sending）
-  → SSE（/api/deepseek-companion/state/stream）
-  → react-markdown + remark-gfm（format === 'markdown'）
-  → Dock / Float / Pop-out（三者读同一份 Host 消息）
+RESPONSE（正文）
+  DeepSeek assistant DOM（.ds-assistant-message-main-content，fallback .ds-markdown）
+    → React fiber props.markdown（原始 Markdown）
+    → fallback：DOM textContent（纯文本）
+    → window.__onReplyDelta（context.exposeFunction 桥接，一次性注册，所有 page 自动拥有）
+    → reply throttle（~100ms 合并，createThrottle）
+    → updateChatMessage(assistantId, content, format)
+    ↘
+      CompanionState（chat.messages / chat.sending）
+        → SSE（/api/deepseek-companion/state/stream）
+        → react-markdown + remark-gfm（format === 'markdown'）
+        → Dock / Float / Pop-out（三者读同一份 Host 消息）
+    ↗
+THINK（Deep Think 思考过程）
+  DeepSeek reasoning DOM（.ds-think-content）
+    → fiber 上无原始 Markdown prop → DOM textContent（纯文本）
+    → window.__onReasoningDelta（独立 bridge，同样一次性注册）
+    → reasoning throttle（独立，~100ms）
+    → updateChatReasoning(assistantId, content, format)
 ```
 
-来源与降级（`src/host/reply.ts`）：
+来源与降级：
 
-- **Markdown 来源是 DeepSeek 的 React props**：从 assistant 节点沿 `fiber.return` 有界扫描（最多 10 层），先认 `memoizedProps.markdown`；其次认 `memoizedProps.content`——**仅当**它的可见文本与当前渲染文本匹配时才采用。
-- **React fiber 属于 DeepSeek 私有实现**，所以始终保留 `textContent` 纯文本 fallback（找不到时 `format = 'text'`）；DeepSeek 前端升级不会让聊天挂掉。
+- **正文 Markdown 来源是 DeepSeek 的 React props**（`src/host/reply.ts`）：从 assistant 节点沿 `fiber.return` 有界扫描（最多 10 层），先认 `memoizedProps.markdown`；其次认 `memoizedProps.content`——**仅当**它的可见文本与当前渲染文本匹配时才采用。
+- **reasoning 来源是 `.ds-think-content` 的文本**（`src/host/reasoning.ts`）：Phase 07F 实测其 fiber 链上没有 reasoning 原文 prop，且思考文本不含 Markdown 语法，因此 `format = 'text'`；reader 仍会先探测常见 reasoning prop 名，若将来 DeepSeek 暴露原文则自动升级为 Markdown。
+- **两者都是 DeepSeek 私有实现**，所以始终保留 `textContent` fallback，DeepSeek 前端升级不会让聊天挂掉。
+- **正文 fallback 必须排除 reasoning 子树**（`excludeWithin`）：DeepSeek 的思考内容同样通过 `.ds-markdown` 渲染，否则正文 reader 会把思考文本当成回答。
 
 要点：
 
-- 发送前 `appendChatMessage('assistant', '')` 创建空 assistant，后续所有 delta 都 `updateChatMessage` 到同一个 id，消息数量不随 chunk 增长；`format` 允许流式中由 `text` 切到 `markdown`，最终以原始 Markdown 为准。
-- **不使用 `innerHTML` / `dangerouslySetInnerHTML`**：原始 Markdown 交给 `react-markdown` + `remark-gfm` 渲染，raw HTML 保持关闭（不安装 `rehype-raw`）。
-- **`response.finished()`（completion POST 的 SSE 结束）是回复完成主信号**；结束后再读一次最终值（React props 优先）并强制 flush，最终内容不因 throttle 丢失。
-- **token/cookie 不离开 browser context**：reader 在页面上下文读取，只向 Host 传 `{ content, format }`（不含 HTML / React 对象）。
-- **错误处理**：发送失败保留 user 与已收到的部分 assistant 内容，`finally` 恢复 `chat.sending = false` 并清理 observer / throttle。
-- ChatView 不渲染 `content === ''` 的空 assistant 气泡（流式中的空 assistant 由「正在回复…」占位覆盖）。
-- **reasoning 仍未实现**：已确认 DeepSeek 的 `THINK` fragment（网络）与 `.ds-think-content`（DOM）与正文分离，留待后续 Phase。
+- 发送前 `appendChatMessage('assistant', '')` 创建空 assistant，后续所有 delta 都写到**同一个 id**，消息数量不随 chunk 增长；正文 `format` 允许流式中由 `text` 切到 `markdown`。
+- **reasoning 与正文严格独立**：两个字段、两个 bridge、两个 throttle，互不覆盖；`reasoning` 只在 DeepSeek 真的产生思考时出现（否则保持 `undefined`，不创建空 UI）。
+- **不使用 `innerHTML` / `dangerouslySetInnerHTML`**：Markdown 交给 `react-markdown` + `remark-gfm` 渲染，raw HTML 保持关闭（不安装 `rehype-raw`）。
+- **`response.finished()`（completion POST 的 SSE 结束）是整条回复完成主信号**；结束后分别最后读取一次 reasoning 与正文并强制 flush。
+- **Deep Think 开关仍由 DeepSeek 网页控制，Companion 只读取，不主动开启/关闭**；不使用网络 SSE / CDP 私有协议。
+- **token/cookie 不离开 browser context**：两个 reader 都在页面上下文读取，只向 Host 传 `{ content, format }`（不含 HTML / React 对象）。
+- **错误处理**：发送失败保留 user 与已收到的部分内容，`finally` 恢复 `chat.sending = false` 并清理两个 observer / throttle。
+- UI：思考过程以 `<details><summary>思考过程</summary>` 折叠区显示在正式回答**上方**，默认展开、视觉层级弱于正文（`--dsw-alias-label-secondary`）。
+- ChatView 不渲染既无正文也无 reasoning 的空 assistant 气泡。
 - **构建注意**：Markdown 生态（`vfile` → `unified`）会经 Node `imports` 条件引入 `node:path` / `node:process` / `node:url`；DSH client module loader 没有 `node:*` 表，所以 `tsdown.client.config.ts` 把它们 alias 到 `src/client/shims/*` 浏览器 shim，否则插件整体加载失败。
+
+### Deep Think 开关（Phase 07G）
+
+```
+Companion「深度思考」控件
+  → POST /api/deepseek-companion/deep-think { enabled }
+  → Host 校验/转发 → Playwright 点击 DeepSeek 页面真实 UI 控件
+  → 重新读取页面真实状态（绝不做 optimistic）
+  → CompanionState.deepseek.deepThink
+  → SSE
+  → Dock / Float / Pop-out
+```
+
+要点：
+
+- **Host state 始终反映 DeepSeek 页面的真实状态**：切换后必须重新读取；若控件不存在（`available: false`）或点击无效，写回的仍是页面真实值，Client 不做长期 optimistic 保留。
+- **不使用 DeepSeek 私有网络 API** 控制开关，**不写 DOM 属性伪造状态**，只点击真实 UI。
+- **不使用轮询**：只在「初始化 / page load / showLogin 新建 page / 切换成功后 / 每次发送前」这几处重新读取。用户在 DeepSeek 窗口里手动切换的开关，会在**下一次发送前**被重新同步；两次发送之间的手动改动不会实时反映（无 observer，属已知限制）。
+- **定位方式**：语义 class `.ds-toggle-button` + `aria-pressed`（状态）；Deep Think 与 Search 之间只能靠标签多语言集合区分、Search 显式排除，最后按顺序兜底（两者其余属性完全相同）。
+- **page 重建**：新 page 重新读取真实状态，不沿用旧 page 的 `enabled`。
+- **生成过程中禁止切换**（Host 返回 409，Client 禁用控件），避免中途改变模式。
+- **reasoning 读取继续沿用 Phase 07F**，本阶段未改动其链路。
+- **token / cookie 不离开 browser context**：Host 只读写开关状态与 `{ content, format }` 类的最小数据。

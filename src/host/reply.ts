@@ -39,6 +39,13 @@ export interface ReplyReadOptions {
   selector: string
   /** Selector used when the primary one matches nothing. */
   fallback: string
+  /**
+   * A container whose descendants must never satisfy `fallback` (Phase 07F).
+   * DeepSeek renders reasoning through its own `.ds-markdown`, so without this
+   * the reply reader would read the thinking text as the answer whenever the
+   * primary selector is not present yet.
+   */
+  excludeWithin?: string
   /** How many replies existed before the send began (only newer ones are read). */
   startCount: number
   /** How many `fiber.return` hops to scan for the raw Markdown prop. */
@@ -66,14 +73,41 @@ export function installReplyReader(payload: { options: ReplyReadOptions; env?: R
   const ObserverCtor = env.MutationObserver
   if (doc === undefined || win === undefined || ObserverCtor === undefined) return
 
-  const readReply = (): ReplyReadResult => {
-    const select = (selector: string): unknown[] => Array.from(doc.querySelectorAll(selector))
-    const primary = select(options.selector)
-    const nodes = primary.length > 0 ? primary : select(options.fallback)
-    // Only the NEW reply (never stale history); '' means "not started yet".
-    if (nodes.length <= options.startCount) return { content: '', format: 'text' }
+  const selectNodes = (): unknown[] => {
+    const primary = Array.from(doc.querySelectorAll(options.selector))
+    if (primary.length > 0) return primary
+    let nodes = Array.from(doc.querySelectorAll(options.fallback))
+    const exclude = options.excludeWithin
+    if (exclude !== undefined && exclude !== '') {
+      // Never let the reasoning subtree satisfy the reply fallback.
+      nodes = nodes.filter((node) => {
+        const el = node as { closest?: unknown }
+        if (typeof el.closest !== 'function') return true
+        return (el.closest as (selector: string) => unknown)(exclude) === null
+      })
+    }
+    return nodes
+  }
 
+  // Remember the last node that existed BEFORE this send. DeepSeek recycles old
+  // messages out of the DOM, so comparing counts breaks on later turns; node
+  // identity does not.
+  const initialNodes = selectNodes()
+  win['__replyBase'] = initialNodes.length > 0 ? initialNodes[initialNodes.length - 1] : null
+
+  const readReply = (): ReplyReadResult => {
+    const nodes = selectNodes()
+    // Only the NEW reply (never stale history); '' means "not started yet".
+    if (nodes.length === 0) return { content: '', format: 'text' }
     const node = nodes[nodes.length - 1] as { textContent?: string | null }
+    const base = win['__replyBase']
+    if (base !== null && base !== undefined && node === base) {
+      // Still the pre-send reply: nothing new has rendered yet.
+      return { content: '', format: 'text' }
+    }
+    if ((base === null || base === undefined) && nodes.length <= options.startCount) {
+      return { content: '', format: 'text' }
+    }
     const rendered = (node.textContent ?? '').trim()
 
     // Strip Markdown markers + whitespace so raw source and rendered text can be
@@ -117,6 +151,19 @@ export function installReplyReader(payload: { options: ReplyReadOptions; env?: R
     return { content: rendered, format: 'text' }
   }
 
+  // Condition-wait helper for the Host: true as soon as the NEW reply node
+  // exists, regardless of whether its text has been filled in yet. Lets the Host
+  // await the render without any fixed sleep.
+  const hasNewReply = (): boolean => {
+    const nodes = selectNodes()
+    if (nodes.length === 0) return false
+    const base = win['__replyBase']
+    if (base !== null && base !== undefined && nodes[nodes.length - 1] === base) return false
+    if ((base === null || base === undefined) && nodes.length <= options.startCount) return false
+    return true
+  }
+  win['__hasNewReply'] = hasNewReply
+
   const observer = new ObserverCtor(() => {
     const onDelta = win['__onReplyDelta']
     if (typeof onDelta === 'function') (onDelta as (reply: ReplyReadResult) => void)(readReply())
@@ -141,6 +188,8 @@ export function readAndCleanupReply(payload?: { env?: ReplyEnv }): unknown {
   if (observer !== undefined && typeof observer.disconnect === 'function') observer.disconnect()
   delete win['__replyObserver']
   delete win['__readReply']
+  delete win['__replyBase']
+  delete win['__hasNewReply']
   return reply
 }
 
@@ -153,4 +202,6 @@ export function cleanupReplyReader(payload?: { env?: ReplyEnv }): void {
   if (observer !== undefined && typeof observer.disconnect === 'function') observer.disconnect()
   delete win['__replyObserver']
   delete win['__readReply']
+  delete win['__replyBase']
+  delete win['__hasNewReply']
 }

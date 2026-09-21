@@ -2,6 +2,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-client-connection'
 import { createDeepSeekBrowser, type DeepSeekBrowser } from './host/browser.ts'
 import { handleChatMessage } from './host/chat.ts'
+import { handleDeepThinkRequest } from './host/deep-think.ts'
 import { browserProfileDir } from './host/paths.ts'
 import { createCompanionStateStore, type CompanionStateStore } from './host/state.ts'
 import type { CompanionState } from './shared/state.ts'
@@ -20,6 +21,8 @@ const STREAM_PATH = '/api/deepseek-companion/state/stream'
 const SHOW_PATH = '/api/deepseek-companion/browser/show'
 /** POST route to send one chat message and await the final reply (Phase 07C). */
 const CHAT_PATH = '/api/deepseek-companion/chat'
+/** POST route to flip DeepSeek's Deep Think toggle (Phase 07G). */
+const DEEP_THINK_PATH = '/api/deepseek-companion/deep-think'
 
 /**
  * DeepSeek Web Companion host half.
@@ -66,9 +69,16 @@ export function apply(ctx: Context): void {
   ctx.effect(() => {
     let disposed = false
 
-    void createDeepSeekBrowser(browserProfileDirForCtx, (status) => {
-      if (!disposed) store.setDeepSeekStatus(status)
-    })
+    void createDeepSeekBrowser(
+      browserProfileDirForCtx,
+      (status) => {
+        if (!disposed) store.setDeepSeekStatus(status)
+      },
+      // Deep Think state is only ever mirrored from the real page (Phase 07G).
+      (state) => {
+        if (!disposed) store.setDeepThinkState(state)
+      },
+    )
       .then((created) => {
         if (disposed) {
           void created.dispose()
@@ -136,7 +146,11 @@ export function apply(ctx: Context): void {
           const currentBrowser = browser
           // Delegate to the tested send flow (claims the slot, appends user,
           // sends, appends assistant, resets sending in `finally`).
-          const result = await handleChatMessage(store, (text, onDelta) => currentBrowser.sendMessage(text, onDelta), message)
+          const result = await handleChatMessage(
+            store,
+            (text, onDelta, onReasoning) => currentBrowser.sendMessage(text, onDelta, onReasoning),
+            message,
+          )
           if (result.status === 500) {
             console.warn('[dsh-deepseek-companion] failed to send chat message', result.body.error)
           }
@@ -144,6 +158,29 @@ export function apply(ctx: Context): void {
         },
       }),
     'deepseek-companion: chat route',
+  )
+
+  // Deep Think control (Phase 07G): flips the REAL DeepSeek composer toggle and
+  // reports the page's true state back. Never optimistic — on failure the real
+  // state is still read and written to the store.
+  ctx.effect(
+    () =>
+      ctx.connection.fetch.register({
+        path: DEEP_THINK_PATH,
+        methods: ['POST'],
+        requestBody: 'buffered',
+        fetch: async (request) => {
+          // Delegate to the tested flow: validates the body, refuses while busy,
+          // clicks the real toggle and always writes back the page's real state.
+          const body: unknown = await request.json().catch(() => null)
+          const result = await handleDeepThinkRequest(store, browser, body)
+          if (result.status === 500) {
+            console.warn('[dsh-deepseek-companion] failed to set Deep Think', result.body.error)
+          }
+          return Response.json(result.body, { status: result.status })
+        },
+      }),
+    'deepseek-companion: deep think route',
   )
 
   ctx.effect(() => () => store.dispose(), 'deepseek-companion: state store')

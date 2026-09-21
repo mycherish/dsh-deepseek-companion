@@ -12,8 +12,15 @@
  * No automatic browser download, no shell install, no guessing old caches.
  */
 import { chromium, type BrowserContext, type Page } from 'playwright'
-import type { AssistantReply, ChatFormat, DeepSeekStatus } from '../shared/state.ts'
+import type { AssistantReply, ChatFormat, DeepSeekStatus, DeepThinkState } from '../shared/state.ts'
+import {
+  deepThinkInPage,
+  needsDeepThinkClick,
+  normalizeDeepThinkState,
+  type DeepThinkOptions,
+} from './deep-think.ts'
 import { loginStatusFromCurrentUser } from './login.ts'
+import { cleanupReasoningReader, installReasoningReader, readAndCleanupReasoning } from './reasoning.ts'
 import { cleanupReplyReader, installReplyReader, readAndCleanupReply } from './reply.ts'
 import { createThrottle } from './throttle.ts'
 
@@ -36,6 +43,25 @@ const REPLY_FALLBACK_SELECTOR = '.ds-markdown'
  * depth (Phase 07E).
  */
 const MAX_FIBER_SCAN = 10
+/** DeepSeek's reasoning ("Deep Think") container (Phase 07F). */
+const REASONING_SELECTOR = '.ds-think-content'
+/**
+ * How long to wait for the NEW reply/reasoning node to appear after the
+ * completion stream ended (Phase 07G hardening). This is a CONDITION wait, not
+ * a fixed sleep; on timeout we simply read whatever the DOM currently holds.
+ */
+const NEW_NODE_TIMEOUT = 5000
+/**
+ * How to find the Deep Think toggle (Phase 07G). DeepSeek's two composer toggles
+ * (Deep Think / Search) share every stable attribute, so the label set does the
+ * disambiguation and Search is explicitly excluded.
+ */
+const DEEP_THINK_OPTIONS: DeepThinkOptions = {
+  toggleSelector: '.ds-toggle-button',
+  selectedClass: 'ds-toggle-button--selected',
+  labels: ['深度思考', 'deepthink', 'deep think', 'deep thinking', 'thinking'],
+  exclusions: ['智能搜索', 'search'],
+}
 
 /** Coerce a value arriving from the page into a trusted `AssistantReply`. */
 function normalizeReply(value: unknown): AssistantReply {
@@ -50,14 +76,27 @@ export interface DeepSeekBrowser {
   check(): Promise<DeepSeekStatus>
   /** Focus the live DeepSeek page, reopening the sign-in page if it was closed. */
   showLogin(): Promise<void>
+  /** Read DeepSeek's REAL Deep Think toggle state (Phase 07G). */
+  getDeepThinkState(): Promise<DeepThinkState>
+  /**
+   * Click the real Deep Think toggle toward `enabled`, then re-read the page so
+   * the returned state is always the page's truth (never optimistic).
+   */
+  setDeepThinkEnabled(enabled: boolean): Promise<DeepThinkState>
   /**
    * Send one message and resolve with the final complete reply. `onDelta` fires
    * with the growing reply while DeepSeek is still generating — the raw Markdown
    * DeepSeek keeps in its React props when available, otherwise the rendered
-   * plain text. Only `{ content, format }` ever leaves the page context; no
-   * token, cookie, HTML or React object crosses the boundary.
+   * plain text. `onReasoning` fires independently with DeepSeek's "Deep Think"
+   * text and is simply never called when Deep Think produced none. Only
+   * `{ content, format }` ever leaves the page context; no token, cookie, HTML
+   * or React object crosses the boundary.
    */
-  sendMessage(text: string, onDelta: (reply: AssistantReply) => void): Promise<AssistantReply>
+  sendMessage(
+    text: string,
+    onDelta: (reply: AssistantReply) => void,
+    onReasoning: (reply: AssistantReply) => void,
+  ): Promise<AssistantReply>
   dispose(): Promise<void>
 }
 
@@ -97,6 +136,7 @@ async function detectStatus(page: Page): Promise<DeepSeekStatus> {
 export async function createDeepSeekBrowser(
   profileDir: string,
   onStatus: (status: DeepSeekStatus) => void,
+  onDeepThink?: (state: DeepThinkState) => void,
 ): Promise<DeepSeekBrowser> {
   // Playwright resolves its own matched Chromium via `chromium.executablePath()`;
   // a missing browser surfaces as a clear launch error (mapped to `error`).
@@ -124,6 +164,26 @@ export async function createDeepSeekBrowser(
     }
   }
 
+  // Deep Think toggle (Phase 07G). The Host mirrors the page's REAL state: the
+  // toggle is only ever changed by clicking the real DeepSeek UI, and every read
+  // is a fresh read of the page (never cached, never optimistic). No polling —
+  // we re-read at the few moments where the state can actually change.
+  const readDeepThink = async (): Promise<DeepThinkState> => {
+    try {
+      return normalizeDeepThinkState(
+        await page.evaluate(deepThinkInPage, { options: DEEP_THINK_OPTIONS, action: 'read' as const }),
+      )
+    } catch {
+      return { available: false, enabled: false }
+    }
+  }
+
+  const syncDeepThink = async (): Promise<DeepThinkState> => {
+    const state = await readDeepThink()
+    onDeepThink?.(state)
+    return state
+  }
+
   // Wire the detection triggers to a page. Re-run after a full navigation
   // (login OAuth redirects across pages fire `load`) and after the SPA
   // re-fetches `/users/current` (in-app login/logout use history.pushState and
@@ -133,6 +193,8 @@ export async function createDeepSeekBrowser(
   const attachListeners = (target: Page): void => {
     target.on('load', () => {
       void runDetect()
+      // A full load can rebuild the composer: mirror the toggle's real state.
+      void syncDeepThink()
     })
     target.on('response', (response) => {
       if (!response.url().includes(CURRENT_USER_PATH)) return
@@ -148,16 +210,25 @@ export async function createDeepSeekBrowser(
   // context re-injects it on every document load, so one install survives
   // navigation and there is never a duplicate registration across sends.
   let currentDeltaReceiver: ((reply: AssistantReply) => void) | null = null
+  let currentReasoningReceiver: ((reply: AssistantReply) => void) | null = null
 
   await context.exposeFunction('__onReplyDelta', (reply: unknown) => {
     currentDeltaReceiver?.(normalizeReply(reply))
+  })
+  // Separate bridge for reasoning: one registration on the context, so every
+  // page (current and future) has it and sends never re-register.
+  await context.exposeFunction('__onReasoningDelta', (reply: unknown) => {
+    currentReasoningReceiver?.(normalizeReply(reply))
   })
 
   const check = async (): Promise<DeepSeekStatus> => {
     try {
       await page.goto(DEEPSEEK_URL, { waitUntil: 'domcontentloaded', timeout: 30000 })
       await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {})
-      return await runDetect()
+      const status = await runDetect()
+      // Initial sync: mirror the composer's real Deep Think state.
+      await syncDeepThink()
+      return status
     } catch {
       onStatus('error')
       return 'error'
@@ -178,6 +249,28 @@ export async function createDeepSeekBrowser(
     }
     await page.goto(`${DEEPSEEK_URL}/sign_in`, { waitUntil: 'domcontentloaded', timeout: 30000 })
     await page.bringToFront()
+    // Never carry the previous page's toggle state over: report what the new
+    // page actually shows (the sign-in route has no composer → unavailable).
+    await syncDeepThink()
+  }
+
+  /**
+   * Click the real Deep Think toggle toward `enabled`, then re-read the page.
+   * Already in the requested state → no click at all; toggle missing → the page
+   * state (`available: false`) is returned untouched. The result is always the
+   * page's truth, so a failed click simply reports what is really there.
+   */
+  const setDeepThinkEnabled = async (enabled: boolean): Promise<DeepThinkState> => {
+    const before = await readDeepThink()
+    if (!needsDeepThinkClick(before, enabled)) return before
+    try {
+      await page.evaluate(deepThinkInPage, { options: DEEP_THINK_OPTIONS, action: 'click' as const })
+    } catch {
+      // ignored — the re-read below reports the page's real state
+    }
+    // Give the SPA a beat to flip the toggle, then re-read.
+    await page.waitForTimeout(400)
+    return readDeepThink()
   }
 
   // Single-flight guard: only one in-flight send at a time (no per-message
@@ -187,19 +280,53 @@ export async function createDeepSeekBrowser(
   const sendMessage = async (
     text: string,
     onDelta: (reply: AssistantReply) => void,
+    onReasoning: (reply: AssistantReply) => void,
   ): Promise<AssistantReply> => {
     if (sending) throw new Error('a send is already in progress')
     sending = true
 
-    // Light throttle: emit at most ~every 100ms, always with the latest reply.
-    const throttle = createThrottle<AssistantReply>(
+    // Body and reasoning get their OWN throttle, so the two streams can never
+    // overwrite each other. Both coalesce to ~one emit per 100ms.
+    const replyThrottle = createThrottle<AssistantReply>(
       onDelta,
       100,
       (a, b) => a.content === b.content && a.format === b.format,
     )
-    currentDeltaReceiver = (reply) => throttle.push(reply)
+    const reasoningThrottle = createThrottle<AssistantReply>(
+      onReasoning,
+      100,
+      (a, b) => a.content === b.content && a.format === b.format,
+    )
+    currentDeltaReceiver = (reply) => replyThrottle.push(reply)
+    currentReasoningReceiver = (reply) => reasoningThrottle.push(reply)
 
-    const cleanupObserver = (): Promise<void> => page.evaluate(cleanupReplyReader, {}).catch(() => {})
+    const cleanupObservers = (): Promise<void> =>
+      Promise.all([
+        page.evaluate(cleanupReplyReader, {}).catch(() => {}),
+        page.evaluate(cleanupReasoningReader, {}).catch(() => {}),
+      ]).then(() => undefined)
+
+    /**
+     * Wait (bounded) until the reader installed for this send reports that the
+     * NEW node exists. The readers expose `__hasNewReply` / `__hasNewReasoning`,
+     * which compare against the pre-send node identity — no fixed sleep, no
+     * polling loop of our own, and no dependency on the text being non-empty.
+     */
+    const waitForNewNode = async (flag: string): Promise<void> => {
+      await page
+        .waitForFunction(
+          (name: string) => {
+            const w = window as unknown as Record<string, unknown>
+            const probe = w[name]
+            return typeof probe === 'function' ? (probe as () => boolean)() === true : false
+          },
+          flag,
+          { timeout: NEW_NODE_TIMEOUT },
+        )
+        .catch(() => {
+          // Timeout is not fatal — fall through and read what is there.
+        })
+    }
 
     try {
       // Fail fast when logged out; the token check happens inside the page and
@@ -209,24 +336,43 @@ export async function createDeepSeekBrowser(
         throw new Error(status === 'logged_out' ? 'not logged in' : 'login state unknown')
       }
 
-      // Capture how many replies already exist so the reader only ever looks at
-      // the NEW one (never stale history).
-      const startCount = await page.evaluate(
-        ({ selector, fallback }) => {
-          const nodes = document.querySelectorAll(selector)
-          return (nodes.length > 0 ? nodes : document.querySelectorAll(fallback)).length
+      // The user may have flipped Deep Think inside the DeepSeek window itself,
+      // so re-read the toggle's truth before every send (no polling). The result
+      // also tells us whether this send may produce reasoning at all.
+      const deepThinkAtSend = await syncDeepThink()
+
+      // Capture how many replies / reasoning blocks already exist so each reader
+      // only ever looks at the NEW one (never stale history).
+      const counts = await page.evaluate(
+        ({ selector, fallback, reasoning }) => {
+          const replies = document.querySelectorAll(selector)
+          return {
+            replies: (replies.length > 0 ? replies : document.querySelectorAll(fallback)).length,
+            reasoning: document.querySelectorAll(reasoning).length,
+          }
         },
-        { selector: REPLY_SELECTOR, fallback: REPLY_FALLBACK_SELECTOR },
+        { selector: REPLY_SELECTOR, fallback: REPLY_FALLBACK_SELECTOR, reasoning: REASONING_SELECTOR },
       )
 
-      // Install the DOM observer BEFORE sending. The reader prefers DeepSeek's
-      // raw Markdown (React props) and falls back to rendered text, so a DeepSeek
-      // front-end change cannot break chat.
+      // Install BOTH DOM observers BEFORE sending, independently: the reply
+      // reader prefers DeepSeek's raw Markdown (React props) and falls back to
+      // rendered text; the reasoning reader reads `.ds-think-content` and stays
+      // completely silent when Deep Think produced none. Neither can break chat.
       await page.evaluate(installReplyReader, {
         options: {
           selector: REPLY_SELECTOR,
           fallback: REPLY_FALLBACK_SELECTOR,
-          startCount,
+          // Reasoning renders through its own `.ds-markdown` too — keep the
+          // reply fallback from reading thinking text as the answer.
+          excludeWithin: REASONING_SELECTOR,
+          startCount: counts.replies,
+          maxScan: MAX_FIBER_SCAN,
+        },
+      })
+      await page.evaluate(installReasoningReader, {
+        options: {
+          selector: REASONING_SELECTOR,
+          startCount: counts.reasoning,
           maxScan: MAX_FIBER_SCAN,
         },
       })
@@ -242,20 +388,34 @@ export async function createDeepSeekBrowser(
       const response = await completionPromise
       await response.finished()
 
-      // Final read (also disconnects the observer), then force-flush so the
-      // final reply can never be dropped by the throttle. This is the value the
-      // assistant message ends up with.
+      // Condition waits (never a fixed sleep): the final read needs the NEW node
+      // to exist. Reasoning is only awaited when Deep Think was ON for this send,
+      // so a normal reply never blocks waiting for a reasoning node.
+      await waitForNewNode('__hasNewReply')
+      if (deepThinkAtSend.enabled) await waitForNewNode('__hasNewReasoning')
+
+      // Final reads (each also disconnects its own observer), then force-flush
+      // both throttles so neither final value can be dropped.
+      const finalReasoning = normalizeReply(await page.evaluate(readAndCleanupReasoning, {}))
       const finalReply = normalizeReply(await page.evaluate(readAndCleanupReply, {}))
 
-      throttle.push(finalReply)
-      throttle.flush()
+      // Reasoning is optional: an empty result means Deep Think produced none, so
+      // nothing is emitted and the reply path is completely unaffected.
+      if (finalReasoning.content !== '') {
+        reasoningThrottle.push(finalReasoning)
+        reasoningThrottle.flush()
+      }
+      replyThrottle.push(finalReply)
+      replyThrottle.flush()
 
       if (finalReply.content === '') throw new Error('empty reply from DeepSeek')
       return finalReply
     } finally {
       currentDeltaReceiver = null
-      throttle.dispose()
-      await cleanupObserver()
+      currentReasoningReceiver = null
+      replyThrottle.dispose()
+      reasoningThrottle.dispose()
+      await cleanupObservers()
       sending = false
     }
   }
@@ -263,6 +423,8 @@ export async function createDeepSeekBrowser(
   return {
     check,
     showLogin,
+    getDeepThinkState: readDeepThink,
+    setDeepThinkEnabled,
     sendMessage,
     async dispose() {
       await context.close().catch(() => {})

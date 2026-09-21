@@ -15,7 +15,11 @@ export interface ChatSendResult {
 
 export async function handleChatMessage(
   store: CompanionStateStore,
-  send: (message: string, onDelta: (reply: AssistantReply) => void) => Promise<AssistantReply>,
+  send: (
+    message: string,
+    onDelta: (reply: AssistantReply) => void,
+    onReasoning: (reply: AssistantReply) => void,
+  ) => Promise<AssistantReply>,
   message: string,
 ): Promise<ChatSendResult> {
   // Concurrency gate: atomically claim the send slot before touching messages,
@@ -30,8 +34,12 @@ export async function handleChatMessage(
   // may switch text -> markdown once DeepSeek's raw Markdown becomes available.
   const assistant = store.appendChatMessage('assistant', '')
   try {
-    const reply = await send(message, (delta) =>
-      store.updateChatMessage(assistant.id, delta.content, delta.format),
+    // Body and reasoning stay on two independent channels: each callback only
+    // ever writes its own field on the SAME assistant message.
+    const reply = await send(
+      message,
+      (delta) => store.updateChatMessage(assistant.id, delta.content, delta.format),
+      (delta) => store.updateChatReasoning(assistant.id, delta.content, delta.format),
     )
     // Force-write the final reply even if the last delta was throttled/dropped.
     store.updateChatMessage(assistant.id, reply.content, reply.format)
