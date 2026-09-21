@@ -47,7 +47,10 @@ export async function handleChatMessage(
       (citations) => store.updateChatCitations(assistant.id, citations),
     )
     // Force-write the final reply even if the last delta was throttled/dropped.
-    store.updateChatMessage(assistant.id, reply.content, reply.format)
+    // An EMPTY final reply is not written: that is what a user-requested stop can
+    // produce, and the partial content already streamed must be kept rather than
+    // wiped (Phase 07J). Reasoning follows the same rule in `sendMessage`.
+    if (reply.content !== '') store.updateChatMessage(assistant.id, reply.content, reply.format)
     return { status: 200, body: { reply: reply.content } }
   } catch (error) {
     // Keep the user message and any partial assistant text; never fabricate a

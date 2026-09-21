@@ -30,6 +30,7 @@ import {
 import { loginStatusFromCurrentUser } from './login.ts'
 import { cleanupReasoningReader, installReasoningReader, readAndCleanupReasoning } from './reasoning.ts'
 import { cleanupReplyReader, installReplyReader, readAndCleanupReply } from './reply.ts'
+import { decideStopAction, emptyReplyError } from './stop.ts'
 import { createThrottle } from './throttle.ts'
 import {
   composerToggleInPage,
@@ -48,6 +49,20 @@ const COMPLETION_PATH = '/chat/completion'
 const INPUT_SELECTOR = 'textarea'
 /** The send button (DeepSeek's `ds-button--primary`). */
 const SEND_BUTTON_SELECTOR = '.ds-button--primary'
+/**
+ * DeepSeek has no separate stop button: while a reply streams the SAME primary
+ * composer button turns into the stop control (circular icon button, square
+ * "stop" glyph instead of the send arrow). The glyph is the only streaming
+ * signal that does not depend on the composer's text content, so it is what we
+ * wait on to confirm the stop landed.
+ */
+const STOP_GLYPH_PREFIX = 'M2 4.88'
+/**
+ * How long to let the SPA leave the streaming state after a stop click. A
+ * CONDITION wait (bounded), never a fixed sleep; on timeout we simply report
+ * what the page shows.
+ */
+const STOP_SETTLE_TIMEOUT = 5000
 /** Primary assistant reply container (semantic class, Phase 07D-0). */
 const REPLY_SELECTOR = '.ds-assistant-message-main-content'
 /** Fallback when the semantic class is absent (older/renamed DOM). */
@@ -127,6 +142,14 @@ export interface DeepSeekBrowser {
    * future) is always reflected in the Host mirror.
    */
   getComposerModeState(): Promise<ComposerModeState>
+  /**
+   * Stop the in-flight generation by clicking DeepSeek's REAL stop control.
+   * Resolves `true` when a stop was requested (or had already been requested for
+   * this send — the call is idempotent), `false` when there was nothing to stop
+   * or the control was missing. The partial reply/reasoning already received is
+   * kept — see `sendMessage`.
+   */
+  stopGeneration(): Promise<boolean>
   /**
    * Send one message and resolve with the final complete reply. `onDelta` fires
    * with the growing reply while DeepSeek is still generating — the raw Markdown
@@ -378,6 +401,12 @@ export async function createDeepSeekBrowser(
   // Single-flight guard: only one in-flight send at a time (no per-message
   // session isolation in this phase).
   let sending = false
+  /**
+   * Set when the user asked to stop THIS send (Phase 07J). DeepSeek ends the
+   * completion normally in that case, so the only thing it changes is that an
+   * empty final reply is expected rather than an error.
+   */
+  let stopRequested = false
   /** Set by `dispose()`: background work must stop touching the page. */
   let disposed = false
 
@@ -477,6 +506,7 @@ export async function createDeepSeekBrowser(
   ): Promise<AssistantReply> => {
     if (sending) throw new Error('a send is already in progress')
     sending = true
+    stopRequested = false
 
     // Body and reasoning get their OWN throttle, so the two streams can never
     // overwrite each other. Both coalesce to ~one emit per 100ms.
@@ -611,7 +641,11 @@ export async function createDeepSeekBrowser(
       replyThrottle.push(finalReply)
       replyThrottle.flush()
 
-      if (finalReply.content === '') throw new Error('empty reply from DeepSeek')
+      // An empty reply is only an error when nobody asked to stop: a stop that
+      // arrived before the first token is a NORMAL outcome, and whatever partial
+      // reply/reasoning already streamed has been flushed above and is kept.
+      const emptyError = emptyReplyError(stopRequested)
+      if (emptyError !== null) throw new Error(emptyError)
 
       // Hand the citation work off BEFORE returning. The reply is already
       // complete, `sending` flips back to false in `finally`, and the hydration
@@ -625,7 +659,69 @@ export async function createDeepSeekBrowser(
       reasoningThrottle.dispose()
       await cleanupObservers()
       sending = false
+      // Reset together with `sending`, AFTER the empty-reply check above: a stop
+      // belongs to exactly one send, so it must never leak into the next round
+      // (a later, genuinely empty reply has to fail again).
+      stopRequested = false
     }
+  }
+
+  /**
+   * Stop the in-flight generation by clicking the REAL DeepSeek stop control
+   * (Phase 07J).
+   *
+   * DeepSeek does not render a separate stop button: while a reply streams the
+   * primary composer button BECOMES the stop control. Clicking it ends the
+   * completion normally — the response still finishes with HTTP 200 — so
+   * `sendMessage` flushes whatever partial reply/reasoning arrived and reports no
+   * error. No private endpoint, no DOM mutation, no React state change.
+   *
+   * The `sending` guard matters: outside a streaming window the same button is
+   * the send button, so clicking it then would send a new message instead. The
+   * `stopRequested` check makes the call IDEMPOTENT per send: Dock / Float /
+   * Pop-out can each ask to stop at the same time, and after the first stop the
+   * shared button may already be back to "send" while this Host is still
+   * finishing the send — a second click would SEND instead of stopping.
+   */
+  const stopGeneration = async (): Promise<boolean> => {
+    const action = decideStopAction({ sending, stopRequested })
+    // Nothing is streaming → there is nothing to stop.
+    if (action === 'idle') return false
+    // This send was already stopped (another surface won the race): report the
+    // stop as satisfied WITHOUT a second DOM click on the shared button.
+    if (action === 'already') return true
+    stopRequested = true
+    const clicked = await page
+      .evaluate((selector: string) => {
+        const el = document.querySelector(selector)
+        if (el === null) return false
+        ;(el as HTMLElement).click()
+        return true
+      }, SEND_BUTTON_SELECTOR)
+      .catch(() => false)
+    if (!clicked) {
+      // The control was missing → nothing was stopped; do not mask a real error.
+      stopRequested = false
+      return false
+    }
+    // Bounded condition wait (never a fixed sleep): the primary button must stop
+    // showing the streaming "stop" glyph. A timeout is not fatal — the completion
+    // stream still settles and `sendMessage` still returns.
+    await page
+      .waitForFunction(
+        (payload: { selector: string; glyph: string }) => {
+          const el = document.querySelector(payload.selector)
+          if (el === null) return true
+          const path = el.querySelector('svg path')?.getAttribute('d') ?? ''
+          return path === '' || !path.startsWith(payload.glyph)
+        },
+        { selector: SEND_BUTTON_SELECTOR, glyph: STOP_GLYPH_PREFIX },
+        { timeout: STOP_SETTLE_TIMEOUT },
+      )
+      .catch(() => {
+        // fall through — the Host only reports that a stop was requested
+      })
+    return true
   }
 
   return {
@@ -637,6 +733,7 @@ export async function createDeepSeekBrowser(
     setSearchEnabled,
     getComposerModeState: readComposerMode,
     sendMessage,
+    stopGeneration,
     async dispose() {
       // Stop any in-flight background work before the page goes away.
       disposed = true

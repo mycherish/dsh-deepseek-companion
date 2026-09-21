@@ -62,6 +62,26 @@ export async function setSearch(origin: string, enabled: boolean): Promise<Searc
   return { available: body?.available === true, enabled: body?.enabled === true }
 }
 
+/** POST route that stops the in-flight DeepSeek generation (Phase 07J). */
+const STOP_PATH = '/api/deepseek-companion/chat/stop'
+
+/**
+ * Ask the Host to stop the current generation. Resolves `true` when a stop was
+ * actually requested of the DeepSeek page; the partial reply stays in the Host
+ * state and `chat.sending` flips back to false through the normal send flow.
+ */
+export async function stopChatMessage(origin: string): Promise<boolean> {
+  const response = await fetch(`${origin}${STOP_PATH}`, {
+    method: 'POST',
+    credentials: 'include',
+  })
+  const body = (await response.json().catch(() => null)) as { stopped?: unknown; error?: unknown } | null
+  if (!response.ok) {
+    throw new Error(typeof body?.error === 'string' ? body.error : `HTTP ${response.status}`)
+  }
+  return body?.stopped === true
+}
+
 /** Ask the Host to focus (or reopen) the DeepSeek login page. */
 export async function showDeepSeekBrowser(origin: string): Promise<void> {
   const response = await fetch(`${origin}${SHOW_PATH}`, {

@@ -1,7 +1,14 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { sendChatMessage, setDeepThink, setSearch, showDeepSeekBrowser, subscribeCompanionState } from './api.ts'
+import {
+  sendChatMessage,
+  setDeepThink,
+  setSearch,
+  showDeepSeekBrowser,
+  stopChatMessage,
+  subscribeCompanionState,
+} from './api.ts'
 import { remarkCitations } from './remark-citations.ts'
 import type {
   ChatFormat,
@@ -89,6 +96,22 @@ const sendButtonStyle: CSSProperties = {
   border: 'none',
   borderRadius: 8,
   background: 'var(--dsw-alias-interactive-bg-hover)',
+  color: 'var(--dsw-alias-label-primary)',
+  cursor: 'pointer',
+  fontSize: 13,
+  fontWeight: 500,
+}
+
+/**
+ * While a reply streams the same slot becomes the stop control (Phase 07J).
+ * Bordered rather than filled, so it is clearly actionable without competing
+ * with the composer.
+ */
+const stopButtonStyle: CSSProperties = {
+  padding: '7px 14px',
+  border: '1px solid var(--dsw-alias-label-primary)',
+  borderRadius: 8,
+  background: 'transparent',
   color: 'var(--dsw-alias-label-primary)',
   cursor: 'pointer',
   fontSize: 13,
@@ -393,6 +416,8 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
   const [hostSending, setHostSending] = useState(false)
   const [input, setInput] = useState('')
   const [submitting, setSubmitting] = useState(false)
+  /** Guards against double-clicking the stop control (Phase 07J). */
+  const [stopping, setStopping] = useState(false)
   const [error, setError] = useState<string | null>(null)
   // Composer-switch mirrors: the Host owns the truth; these copies only reflect
   // pushes (Search joined Deep Think in Phase 07H).
@@ -438,6 +463,24 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
       setError(e instanceof Error ? e.message : '发送失败')
     } finally {
       setSubmitting(false)
+    }
+  }
+
+  /**
+   * Ask the Host to stop the current generation. `chat.sending` stays owned by
+   * the Host: it flips to false when the send flow returns, and that push turns
+   * this button back into 「发送」 on every surface at once.
+   */
+  const stop = async (): Promise<void> => {
+    if (stopping || !busy) return
+    setStopping(true)
+    setError(null)
+    try {
+      await stopChatMessage(origin)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '停止失败')
+    } finally {
+      setStopping(false)
     }
   }
 
@@ -573,8 +616,16 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
             }
           }}
         />
-        <button type="button" style={sendButtonStyle} onClick={() => void send()} disabled={busy}>
-          {busy ? '发送中' : '发送'}
+        {/* One slot, two roles: while a reply streams this is the stop control
+            (Phase 07J). Both roles read `chat.sending` from the Host, so Dock /
+            Float / Pop-out always agree. */}
+        <button
+          type="button"
+          style={busy ? stopButtonStyle : sendButtonStyle}
+          onClick={() => (busy ? void stop() : void send())}
+          disabled={busy ? stopping : submitting || status !== 'logged_in'}
+        >
+          {busy ? (stopping ? '停止中' : '停止') : '发送'}
         </button>
       </div>
     </div>

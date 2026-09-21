@@ -313,3 +313,29 @@ Search 回答 Markdown（含 [reference:N] / [citation:N]）
   - **结论：inline citation 在实时场景无法可靠实现**；基础设施保留，若 DeepSeek 改变注入时机即可直接生效。
 - token / cookie 不离开 browser context。
 - **Search 结果专用 UI 尚未实现**：搜索回答的来源链接**不在** `props.markdown` 中 —— DeepSeek 只在正文 Markdown 里写入 `[citation:N]` 标记，真实 URL 由渲染层注入（`span.ds-markdown-cite` → `a[href]`）。因此 Companion 目前能完整显示搜索回答的正文结构，但**看不到可点击的来源链接**，且 `[citation:N]` 会以纯文本形式出现。引用 / 来源 UI 记录为后续 Phase。
+
+### DeepSeek 停止生成（Phase 07J）
+
+```
+Companion「停止」
+  → POST /api/deepseek-companion/chat/stop
+  → Host 校验（browser 就绪 / chat.sending === true）
+  → Playwright 点击 DeepSeek 真实 Stop 控件
+      （生成期间 .ds-button--primary 本身就是 Stop）
+  → 当前生成结束（completion 正常收尾，HTTP 200）
+  → flush 已收到的部分正文 / reasoning
+  → chat.sending = false
+  → SSE
+  → Dock / Float / Pop-out 同步回「发送」
+```
+
+要点：
+
+- **没有独立的 Stop 按钮**：DeepSeek 在生成期间把输入区主按钮（`.ds-button--primary`）变成停止控件 —— 同一个元素、圆形图标按钮，图标从"发送箭头"换成"方块 stop"。Host 点击的就是它；不调用任何私有 Stop API，不改 DOM 属性 / React state，不使用固定 sleep。
+- **`sending` guard 是前提**：不在生成中时同一个按钮是"发送"，所以 Host 只在自己正在流式时允许停止（`chat.sending === false` → 409；browser 未就绪 → 503）。
+- **停止是正常收尾**：实测 completion 响应仍以 **HTTP 200** 结束，`response.finished()` 正常 resolve，因此**不需要把中止当异常**处理。
+- **部分内容保留**：`sendMessage` 照常 flush 已收到的正文与 reasoning；**空的最终回复不会覆盖已流式内容**（`handleChatMessage` 只在非空时写入）。停止早于第一个 token 时，assistant 消息保持为空且**不报聊天错误**（`stopRequested` 标记）。
+- **Client 不维护本地 sending**：按钮的"发送 / 停止"完全由 Host 的 `chat.sending` 驱动，三个界面天然一致；停止请求自身有防重复点击。
+- **停止是幂等的（`stopRequested`）**：一次发送最多点击一次 Stop。发送与停止共用 `.ds-button--primary`，第一次停止后按钮可能**先恢复为"发送"**而 Host 的 `sending` 仍为 true —— 此时若 Dock / Float / Pop-out 再各自请求停止，第二次点击就会变成**发出新消息**。幂等判定因此放在 **Host**（不依赖 Client 的防重复点击，因为各界面看不到彼此的请求）：`sending === false` → 无生成可停；`stopRequested === true` → 直接回报"已请求"，**零点击**。该标记在**新一轮 `sendMessage` 开始前**与**该轮的 `finally`** 中都复位，所以上一轮 Stop 绝不会让下一轮真正的空回复被误判为合法。
+- **citation（07I）链路不变**：停止后的部分回答若没有 citation，正常降级为纯文本 `[N]`。
+- token / cookie 不离开 browser context。

@@ -5,6 +5,7 @@ import { handleChatMessage } from './host/chat.ts'
 import { handleDeepThinkRequest } from './host/deep-think.ts'
 import { browserProfileDir } from './host/paths.ts'
 import { handleSearchRequest } from './host/search.ts'
+import { handleStopRequest } from './host/stop.ts'
 import { createCompanionStateStore, type CompanionStateStore } from './host/state.ts'
 import type { CompanionState } from './shared/state.ts'
 
@@ -26,6 +27,8 @@ const CHAT_PATH = '/api/deepseek-companion/chat'
 const DEEP_THINK_PATH = '/api/deepseek-companion/deep-think'
 /** POST route to flip DeepSeek's web-search toggle (Phase 07H). */
 const SEARCH_PATH = '/api/deepseek-companion/search'
+/** POST route to stop the in-flight DeepSeek generation (Phase 07J). */
+const STOP_PATH = '/api/deepseek-companion/chat/stop'
 
 /**
  * DeepSeek Web Companion host half.
@@ -211,6 +214,28 @@ export function apply(ctx: Context): void {
         },
       }),
     'deepseek-companion: search route',
+  )
+
+  // Stop the in-flight generation (Phase 07J). Clicks DeepSeek's REAL stop
+  // control; whatever partial reply/reasoning already streamed is kept by the
+  // send flow, so no "stopped" assistant message is ever fabricated.
+  ctx.effect(
+    () =>
+      ctx.connection.fetch.register({
+        path: STOP_PATH,
+        methods: ['POST'],
+        // The stop request carries no payload, but the route table requires the
+        // field; a buffered body is simply ignored.
+        requestBody: 'buffered',
+        fetch: async () => {
+          const result = await handleStopRequest(store, browser)
+          if (result.status !== 200) {
+            console.warn('[dsh-deepseek-companion] stop request not applied:', result.status, result.body.error)
+          }
+          return Response.json(result.body, { status: result.status })
+        },
+      }),
+    'deepseek-companion: stop route',
   )
 
   ctx.effect(() => () => store.dispose(), 'deepseek-companion: state store')
