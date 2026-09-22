@@ -10,6 +10,7 @@ import {
   subscribeCompanionState,
 } from './api.ts'
 import { remarkCitations } from './remark-citations.ts'
+import { STOP_PHASE_LABEL, initialStopUiState, reduceStopUi, stopPhase } from './stop-state.ts'
 import type {
   ChatFormat,
   ChatMessage,
@@ -413,11 +414,14 @@ function ReasoningBlock({ reasoning }: { reasoning: ChatReasoning }): ReactNode 
 export function ChatView({ origin }: { origin: string }): JSX.Element {
   const [status, setStatus] = useState<DeepSeekStatus>('checking')
   const [messages, setMessages] = useState<ChatMessage[]>([])
-  const [hostSending, setHostSending] = useState(false)
+  /**
+   * Send/stop slot state (Phase 07J). `sending` is the Host's authoritative
+   * `chat.sending`, folded in by the reducer below; `stopping` is the local flag
+   * that keeps 停止中… on screen until that authoritative end actually arrives.
+   */
+  const [stopUi, setStopUi] = useState(initialStopUiState)
   const [input, setInput] = useState('')
   const [submitting, setSubmitting] = useState(false)
-  /** Guards against double-clicking the stop control (Phase 07J). */
-  const [stopping, setStopping] = useState(false)
   const [error, setError] = useState<string | null>(null)
   // Composer-switch mirrors: the Host owns the truth; these copies only reflect
   // pushes (Search joined Deep Think in Phase 07H).
@@ -432,17 +436,22 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
       subscribeCompanionState(origin, (state) => {
         setStatus(state.deepseek.status)
         setMessages(state.chat.messages)
-        setHostSending(state.chat.sending)
         setDeepThinkState(state.deepseek.deepThink)
         setSearchState(state.deepseek.search)
+        // The reducer is the ONLY place that folds the Host's authoritative
+        // `chat.sending` into the slot state — and the only thing that can clear
+        // 停止中… once a stop was requested (Phase 07J).
+        setStopUi((ui) => reduceStopUi(ui, { type: 'host-sending', sending: state.chat.sending }))
       }),
     [origin],
   )
 
-  // `hostSending` is the authoritative send state; `submitting` only covers the
-  // short local window before the Host's first SSE push lands, so the button
+  // `stopUi.sending` is the authoritative send state; `submitting` only covers
+  // the short local window before the Host's first SSE push lands, so the button
   // stays disabled between the click and that push.
-  const busy = submitting || hostSending
+  const stopping = stopUi.stopping
+  const busy = submitting || stopUi.sending
+  const phase = stopPhase({ sending: busy, stopping })
 
   // Keep the newest message in view.
   useEffect(() => {
@@ -473,14 +482,19 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
    */
   const stop = async (): Promise<void> => {
     if (stopping || !busy) return
-    setStopping(true)
+    setStopUi((ui) => reduceStopUi(ui, { type: 'click' }))
     setError(null)
     try {
-      await stopChatMessage(origin)
+      const stopped = await stopChatMessage(origin)
+      // A SUCCESS deliberately keeps 停止中… : the Host is still finishing the
+      // send (`chat.sending === true`), and the SSE push that reports it is over
+      // is what clears the flag. A `stopped: false` answer stopped nothing, so it
+      // must clear right away rather than sit on 停止中… .
+      setStopUi((ui) => reduceStopUi(ui, { type: stopped ? 'request-succeeded' : 'request-refused' }))
     } catch (e) {
+      // A failed request stopped nothing → clear the flag so the user can retry.
+      setStopUi((ui) => reduceStopUi(ui, { type: 'request-failed' }))
       setError(e instanceof Error ? e.message : '停止失败')
-    } finally {
-      setStopping(false)
     }
   }
 
@@ -625,7 +639,7 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
           onClick={() => (busy ? void stop() : void send())}
           disabled={busy ? stopping : submitting || status !== 'logged_in'}
         >
-          {busy ? (stopping ? '停止中' : '停止') : '发送'}
+          {STOP_PHASE_LABEL[busy ? phase : 'send']}
         </button>
       </div>
     </div>
