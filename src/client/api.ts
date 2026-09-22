@@ -65,6 +65,26 @@ export async function setSearch(origin: string, enabled: boolean): Promise<Searc
 /** POST route that stops the in-flight DeepSeek generation (Phase 07J). */
 const STOP_PATH = '/api/deepseek-companion/chat/stop'
 
+/** POST route that starts a new DeepSeek chat (Phase 07L). */
+const NEW_CHAT_PATH = '/api/deepseek-companion/chat/new'
+
+/**
+ * Ask the Host to start a new DeepSeek conversation. The Host clicks the real
+ * DeepSeek control, confirms the switch, THEN clears the shared transcript — so
+ * this view never clears anything locally: the SSE push does it, on every
+ * surface at once.
+ */
+export async function startNewChat(origin: string): Promise<void> {
+  const response = await fetch(`${origin}${NEW_CHAT_PATH}`, {
+    method: 'POST',
+    credentials: 'include',
+  })
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as { error?: unknown } | null
+    throw new Error(typeof body?.error === 'string' ? body.error : `HTTP ${response.status}`)
+  }
+}
+
 /**
  * Ask the Host to stop the current generation. Resolves `true` when a stop was
  * actually requested of the DeepSeek page; the partial reply stays in the Host

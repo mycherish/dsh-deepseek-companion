@@ -13,6 +13,16 @@ export interface ChatSendResult {
   body: { reply?: string; error?: string }
 }
 
+/**
+ * Optional Host-side exclusion a send must respect (Phase 07L): while a
+ * new-chat page switch is in flight the page belongs to that switch, so a send
+ * is refused instead of racing it. Defined here (not imported from the new-chat
+ * module) because a send only needs this one read.
+ */
+export interface ChatSendBlocker {
+  inProgress(): boolean
+}
+
 export async function handleChatMessage(
   store: CompanionStateStore,
   send: (
@@ -22,7 +32,14 @@ export async function handleChatMessage(
     onCitations: (citations: Citation[]) => void,
   ) => Promise<AssistantReply>,
   message: string,
+  /** A new-chat switch owns the page right now → refuse without touching it. */
+  newChatGuard?: ChatSendBlocker,
 ): Promise<ChatSendResult> {
+  // A new-chat switch owns the page — never start a send against it, and never
+  // append a user message that could not be sent.
+  if (newChatGuard?.inProgress() === true) {
+    return { status: 409, body: { error: 'new chat in progress' } }
+  }
   // Concurrency gate: atomically claim the send slot before touching messages,
   // so a busy second request is rejected without a stray user message.
   if (store.getState().chat.sending) {

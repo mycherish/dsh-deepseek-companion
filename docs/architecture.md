@@ -339,3 +339,32 @@ Companion「停止」
 - **停止是幂等的（`stopRequested`）**：一次发送最多点击一次 Stop。发送与停止共用 `.ds-button--primary`，第一次停止后按钮可能**先恢复为"发送"**而 Host 的 `sending` 仍为 true —— 此时若 Dock / Float / Pop-out 再各自请求停止，第二次点击就会变成**发出新消息**。幂等判定因此放在 **Host**（不依赖 Client 的防重复点击，因为各界面看不到彼此的请求）：`sending === false` → 无生成可停；`stopRequested === true` → 直接回报"已请求"，**零点击**。该标记在**新一轮 `sendMessage` 开始前**与**该轮的 `finally`** 中都复位，所以上一轮 Stop 绝不会让下一轮真正的空回复被误判为合法。
 - **citation（07I）链路不变**：停止后的部分回答若没有 citation，正常降级为纯文本 `[N]`。
 - token / cookie 不离开 browser context。
+
+### DeepSeek 新建会话（Phase 07L）
+
+```
+Companion「新建聊天」
+  → POST /api/deepseek-companion/chat/new
+  → Host 校验（browser 未就绪 → 503 / chat.sending === true → 409）
+  → Playwright 点击 DeepSeek 侧边栏真实 New chat 控件（语义标签定位，绝不用 hash class）
+  → 有界条件等待确认：location.pathname === '/' 且消息 DOM（.ds-message）已清空
+  → 重新读取 composer 两个开关的真实状态（新会话沿用页面开关）
+  → 页面确认成功后才 store.clearChatMessages()
+  → SSE
+  → Dock / Float / Pop-out 三界面同时清空（Host 是唯一权威状态）
+```
+
+要点：
+
+- **定位规则（保守，纯标准 DOM）**：候选 = 元素自身直接文本 / `aria-label` / `title` **精确等于**语义标签（`New chat` / `开启新对话` / `新对话` 等多语言集合）；点击目标 = 候选向上最近的**标准**可点击元素（`button` / `a` / `role=button|menuitem|link`）；链上没有标准控件时（实测 DeepSeek 的控件是纯 `div` 容器），点击**文本候选元素本身**，由原生 click 冒泡交给页面处理器。**不依赖 React 私有字段**（`__reactProps$` / fiber）、不用 hash class、不写 DOM 属性。**多候选（ambiguous）或无候选（missing）一律安全失败**（不改页面、不清 Host）；历史会话链接（`href` 含 `/chat/s/`）即使标题同名也永不当作控件。不使用 DeepSeek 私有网络 API、不用固定 sleep。
+- **Host 并发 guard（07L 收尾）**：一个页面被所有 route 共享，互斥因此放在 Host（`createNewChatGuard()`，`index.ts` 的 `apply` 作用域，**不进 `CompanionState`**——它不是任何界面要渲染的状态）。`handleNewChatRequest` 在触碰页面前**同步原子** `tryClaim()`（无 await 间隙，两个并发请求不可能同时成功），`finally` 释放。期间：发送消息 → 409 `new chat in progress`（`handleChatMessage` 的 `newChatGuard` 参数；`sendMessage` 零调用、不追加任何消息）；再次 new chat → 409 `new chat already in progress`。`chat.sending === true` 时 new chat 仍 409（既有语义不变）。Client 的 `startingNew` 只是本地防抖（三个界面互相看不见），真正的仲裁始终在 Host。
+- **只有页面确认成功才清 Host**（先页面后 Host）：`browser.newChat()` 在点击后必须等到「空态 pathname + 无消息 DOM」才 resolve，否则抛错 → Host 返回 500 且 `chat.messages` 完全不动。绝不允许「先清 Companion 再点页面」。
+- **page 复用**：不新建 tab、不 `goto`，就在当前页面上点击——与用户手动点 New chat 完全一致（07L-0 实测：点击零网络请求，纯 SPA 状态切换；首个 completion 发出时才 `POST /chat_session/create` 生成会话）。
+- **toggle 状态保留**：DeepSeek 的 Deep Think / Search 开关是**页面级全局状态**，新会话原样继承（07L-0 实测 DT+Search 组合跨新建保留）。`newChat()` 成功后重新读取页面真实值写回 Host 镜像，不沿用旧镜像、不做 optimistic。
+- **conversation id**：空态 `pathname = /`；**首条消息发出后才变为 `/a/chat/s/<uuid>`**（同一 id 也可从侧栏选中条目 href / 消息节点 fiber `memoizedProps.sessionId` 读到）。本阶段**不引入 `conversationId` state**，仅在此记录。
+- **本阶段不做**：历史会话列表、多会话管理、会话切换/删除。
+- **旧 citation 迟到不污染新会话**：citation hydration 绑定旧 assistant message id，`clearChatMessages()` 之后该 id 已不存在，`updateChatCitations` 自然 no-op。
+- **UI**：ChatView 控件行进输入区上方右侧新增「新建聊天」轻按钮；`chat.sending === true` 时禁用（Host 层同时 409 双保险），本地 `startingNew` 防重复点击；Client **不维护本地 messages**，清空只由 Host 推送到三个界面。
+- **实机验证（真实页面 + 真实产品代码）**：多轮消息（4 条）→ 新建 → Host 200 + messages 0（页面清空由 `newChat()` 的确认条件保证）；toggle 组合跨新建保持一致；新会话首条发送 200 且 reply/reasoning 均流式（deltas 3 / reasoningDeltas 7）、可 Stop；生成中新建 → 409 且既有生成不受影响（Stop 后正常收尾）。
+- **实机验证（07L 收尾）**：并发两次 new chat（模拟两个界面）→ 一个 200、另一个 409（`new chat already in progress`），真实控件只点击一次；切换期间发送 → 409（`new chat in progress`）且不产生任何消息；切换结束后发送 200；toggle 组合保留；共享 transcript 清空（三界面同一份状态）。标准 DOM 定位（无 React 私有依赖）在真实页面连续两轮点击均成功触发切换（`pathname = /` 且消息 DOM 清零）——真实候选链为 `SPAN → DIV`，全链无 `button`/`a`/`role`，走的是文本候选 + 原生 click 冒泡路径。
+- token / cookie 不离开 browser context。

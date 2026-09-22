@@ -28,6 +28,13 @@ import {
   resolveCitationsByBlock,
 } from './citations.ts'
 import { loginStatusFromCurrentUser } from './login.ts'
+import {
+  newChatInPage,
+  newChatReadyInPage,
+  normalizeNewChatOutcome,
+  type NewChatConfirmOptions,
+  type NewChatOptions,
+} from './new-chat.ts'
 import { cleanupReasoningReader, installReasoningReader, readAndCleanupReasoning } from './reasoning.ts'
 import { cleanupReplyReader, installReplyReader, readAndCleanupReply } from './reply.ts'
 import { decideStopAction, emptyReplyError } from './stop.ts'
@@ -111,6 +118,30 @@ const TOGGLE_SETTLE_TIMEOUT = 3000
  * keeps plain [N] markers".
  */
 const CITATION_HYDRATION_TIMEOUT = 8000
+/**
+ * DeepSeek's sidebar "new chat" control (Phase 07L). Located by its SEMANTIC
+ * label — the English UI renders "New chat", Chinese builds use one of the
+ * 新对话 variants — never by a hash class or by position. `/chat/s/` marks a
+ * conversation-history link, which must never be mistaken for the control.
+ */
+const NEW_CHAT_OPTIONS: NewChatOptions = {
+  labels: ['New chat', '开启新对话', '新对话', '新建对话', '开始新对话', 'New conversation'],
+  maxAscend: 5,
+  historyHrefMarker: '/chat/s/',
+}
+/** Message container: a freshly started chat keeps none of them. */
+const MESSAGE_SELECTOR = '.ds-message'
+/** Pathname of the empty-chat state; the conversation id is minted on first send. */
+const NEW_CHAT_EMPTY_PATH = '/'
+/**
+ * How long to let the SPA commit the new chat before declaring failure. A
+ * CONDITION wait (bounded), never a fixed sleep.
+ */
+const NEW_CHAT_CONFIRM_TIMEOUT = 5000
+const NEW_CHAT_CONFIRM_OPTIONS: NewChatConfirmOptions = {
+  messageSelector: MESSAGE_SELECTOR,
+  emptyPath: NEW_CHAT_EMPTY_PATH,
+}
 
 /** Coerce a value arriving from the page into a trusted `AssistantReply`. */
 function normalizeReply(value: unknown): AssistantReply {
@@ -150,6 +181,15 @@ export interface DeepSeekBrowser {
    * kept — see `sendMessage`.
    */
   stopGeneration(): Promise<boolean>
+  /**
+   * Start a NEW DeepSeek conversation by clicking the REAL sidebar control, then
+   * confirm the SPA actually switched (empty-chat pathname + no message DOM
+   * left) and re-mirror the composer switches. Resolves only on that
+   * confirmation; throws when the control is missing/ambiguous or the switch
+   * never happened, so the Host can never clear its transcript while the page
+   * still shows the old conversation. The page is reused — no new tab.
+   */
+  newChat(): Promise<void>
   /**
    * Send one message and resolve with the final complete reply. `onDelta` fires
    * with the growing reply while DeepSeek is still generating — the raw Markdown
@@ -725,6 +765,33 @@ export async function createDeepSeekBrowser(
     return true
   }
 
+  /**
+   * Start a NEW DeepSeek conversation by clicking the REAL "New chat" control
+   * (Phase 07L).
+   *
+   * The control is located by its semantic label and never by a hash class;
+   * a missing or ambiguous label leaves the page untouched and FAILS the call
+   * (Companion must never clear its transcript without a real new conversation
+   * behind it). A click alone proves nothing either: the SPA must also land on
+   * the empty-chat pathname with no message container left. Only then is the
+   * switch confirmed. DeepSeek's composer switches are GLOBAL and persist
+   * across chats, so their real values are re-read instead of assuming.
+   */
+  const newChat = async (): Promise<void> => {
+    const outcome = normalizeNewChatOutcome(await page.evaluate(newChatInPage, { options: NEW_CHAT_OPTIONS }))
+    if (outcome === 'missing') throw new Error('new chat control not found')
+    if (outcome === 'ambiguous') throw new Error('new chat control is ambiguous')
+    // Bounded condition wait (never a fixed sleep): the SPA must actually be on
+    // the empty chat with every old message gone.
+    const ready = await page
+      .waitForFunction(newChatReadyInPage, { options: NEW_CHAT_CONFIRM_OPTIONS }, { timeout: NEW_CHAT_CONFIRM_TIMEOUT })
+      .then(() => true)
+      .catch(() => false)
+    if (!ready) throw new Error('new chat did not open')
+    // The new chat inherited the page's composer switches — mirror the truth.
+    await syncComposerMode()
+  }
+
   return {
     check,
     showLogin,
@@ -735,6 +802,7 @@ export async function createDeepSeekBrowser(
     getComposerModeState: readComposerMode,
     sendMessage,
     stopGeneration,
+    newChat,
     async dispose() {
       // Stop any in-flight background work before the page goes away.
       disposed = true

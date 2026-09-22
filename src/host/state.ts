@@ -40,6 +40,8 @@ export interface CompanionStateStore {
   updateChatReasoning(id: string, content: string, format: ChatFormat): void
   updateChatCitations(id: string, citations: Citation[]): void
   setChatSending(sending: boolean): void
+  /** Drop every chat message (new DeepSeek conversation, Phase 07L). */
+  clearChatMessages(): void
   dispose(): void
 }
 
@@ -172,6 +174,16 @@ export function createCompanionStateStore(): CompanionStateStore {
       if (disposed) return
       if (state.chat.sending === sending) return
       state = { ...state, chat: { ...state.chat, sending } }
+      notify(state)
+    },
+
+    clearChatMessages() {
+      if (disposed) return
+      // Already empty → nothing to change, nothing to notify. Everything else
+      // (`sending`, the composer switches, `deepseek.status`) is left alone:
+      // this is a new conversation, not a reset of the Host.
+      if (state.chat.messages.length === 0) return
+      state = { ...state, chat: { ...state.chat, messages: [] } }
       notify(state)
     },
 

@@ -3,6 +3,7 @@ import type {} from '@deepseek-ai/dsh-client-connection'
 import { createDeepSeekBrowser, type DeepSeekBrowser } from './host/browser.ts'
 import { handleChatMessage } from './host/chat.ts'
 import { handleDeepThinkRequest } from './host/deep-think.ts'
+import { createNewChatGuard, handleNewChatRequest } from './host/new-chat.ts'
 import { browserProfileDir } from './host/paths.ts'
 import { handleSearchRequest } from './host/search.ts'
 import { handleStopRequest } from './host/stop.ts'
@@ -29,6 +30,8 @@ const DEEP_THINK_PATH = '/api/deepseek-companion/deep-think'
 const SEARCH_PATH = '/api/deepseek-companion/search'
 /** POST route to stop the in-flight DeepSeek generation (Phase 07J). */
 const STOP_PATH = '/api/deepseek-companion/chat/stop'
+/** POST route to start a new DeepSeek chat and reset the transcript (Phase 07L). */
+const NEW_CHAT_PATH = '/api/deepseek-companion/chat/new'
 
 /**
  * DeepSeek Web Companion host half.
@@ -71,6 +74,11 @@ export function apply(ctx: Context): void {
   // route below can reach it. Closing a dock/float/pop-out never closes it;
   // only plugin dispose does.
   let browser: DeepSeekBrowser | null = null
+
+  // One page is shared by every route, so the Host arbitrates its use: while a
+  // new-chat switch is in flight, sends are refused and a second new chat is
+  // refused (Phase 07L). Bookkeeping only — no view renders it.
+  const newChatGuard = createNewChatGuard()
 
   ctx.effect(() => {
     let disposed = false
@@ -161,6 +169,8 @@ export function apply(ctx: Context): void {
             (text, onDelta, onReasoning, onCitations) =>
               currentBrowser.sendMessage(text, onDelta, onReasoning, onCitations),
             message,
+            // Refused while a new-chat page switch owns the page (409).
+            newChatGuard,
           )
           if (result.status === 500) {
             console.warn('[dsh-deepseek-companion] failed to send chat message', result.body.error)
@@ -236,6 +246,29 @@ export function apply(ctx: Context): void {
         },
       }),
     'deepseek-companion: stop route',
+  )
+
+  // New chat (Phase 07L): clicks DeepSeek's REAL sidebar control and only clears
+  // the Host transcript once the page confirms the switch (page first, Host
+  // second). Nothing here is optimistic — a failed page switch leaves every
+  // Companion surface showing the conversation it still has.
+  ctx.effect(
+    () =>
+      ctx.connection.fetch.register({
+        path: NEW_CHAT_PATH,
+        methods: ['POST'],
+        // The request carries no payload, but the route table requires the
+        // field; a buffered body is simply ignored.
+        requestBody: 'buffered',
+        fetch: async () => {
+          const result = await handleNewChatRequest(store, browser, newChatGuard)
+          if (result.status !== 200) {
+            console.warn('[dsh-deepseek-companion] new chat request not applied:', result.status, result.body.error)
+          }
+          return Response.json(result.body, { status: result.status })
+        },
+      }),
+    'deepseek-companion: chat new route',
   )
 
   ctx.effect(() => () => store.dispose(), 'deepseek-companion: state store')

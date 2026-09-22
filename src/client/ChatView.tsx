@@ -6,6 +6,7 @@ import {
   setDeepThink,
   setSearch,
   showDeepSeekBrowser,
+  startNewChat,
   stopChatMessage,
   subscribeCompanionState,
 } from './api.ts'
@@ -149,6 +150,25 @@ const toggleHintStyle: CSSProperties = {
   fontSize: 11,
   lineHeight: '18px',
 }
+
+/**
+ * 「新建聊天」(Phase 07L): a quiet pill on the far right of the controls row —
+ * near the composer, without competing with it. It only asks the Host; the
+ * transcript is cleared by the Host's push, never locally.
+ */
+const newChatButtonStyle = (disabled: boolean): CSSProperties => ({
+  marginLeft: 'auto',
+  padding: '3px 10px',
+  borderRadius: 999,
+  border: '1px solid var(--dsw-alias-border-l3)',
+  background: 'transparent',
+  color: disabled ? 'var(--dsw-alias-label-secondary)' : 'var(--dsw-alias-label-primary)',
+  cursor: disabled ? 'not-allowed' : 'pointer',
+  opacity: disabled ? 0.5 : 1,
+  fontSize: 12,
+  lineHeight: '18px',
+  fontFamily: 'inherit',
+})
 
 /** One DeepSeek composer switch, mirrored from the Host (never optimistic). */
 function ComposerTogglePill({
@@ -429,6 +449,8 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
   const [togglingDeepThink, setTogglingDeepThink] = useState(false)
   const [search, setSearchState] = useState<SearchState>({ available: false, enabled: false })
   const [togglingSearch, setTogglingSearch] = useState(false)
+  /** Local in-flight flag for 新建聊天 — blocks a second click until the Host answers (Phase 07L). */
+  const [startingNew, setStartingNew] = useState(false)
   const listRef = useRef<HTMLDivElement>(null)
 
   useEffect(
@@ -502,6 +524,25 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
   // change mid-generation) and when DeepSeek exposes no such switch at all.
   const toggleDisabled = (state: ComposerToggleState, toggling: boolean): boolean =>
     busy || toggling || !state.available
+
+  /**
+   * Ask the Host to start a new DeepSeek chat (Phase 07L). Nothing is cleared
+   * here: the Host clicks the real DeepSeek control, confirms the switch and
+   * then clears the shared transcript — that push empties all three surfaces.
+   * `startingNew` only blocks a second click until the Host answers.
+   */
+  const startNew = async (): Promise<void> => {
+    if (busy || startingNew) return
+    setStartingNew(true)
+    setError(null)
+    try {
+      await startNewChat(origin)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '新建聊天失败')
+    } finally {
+      setStartingNew(false)
+    }
+  }
 
   /**
    * Shared flow for both composer switches: the Host clicks the real DeepSeek
@@ -616,6 +657,17 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
           onToggle={(next) => void toggleMode('search', next)}
         />
         {deepThink.available || search.available ? null : <span style={toggleHintStyle}>开关不可用</span>}
+        {/* New chat (Phase 07L): disabled while a reply streams, so a
+            generation is never yanked out from under the page. */}
+        <button
+          type="button"
+          style={newChatButtonStyle(busy || startingNew)}
+          disabled={busy || startingNew}
+          title="开始新的 DeepSeek 会话（清空当前聊天）"
+          onClick={() => void startNew()}
+        >
+          {startingNew ? '新建中…' : '新建聊天'}
+        </button>
       </div>
       <div style={inputRowStyle}>
         <textarea
