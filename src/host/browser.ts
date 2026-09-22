@@ -15,6 +15,8 @@ import { chromium, type BrowserContext, type JSHandle, type Page } from 'playwri
 import type {
   AssistantReply,
   ChatFormat,
+  ChatMessageInput,
+  ChatSessionSummary,
   Citation,
   ComposerModeState,
   ComposerToggleState,
@@ -26,8 +28,33 @@ import {
   parseCitationGroups,
   readDomBlocks,
   resolveCitationsByBlock,
+  type DomBlock,
 } from './citations.ts'
 import { loginStatusFromCurrentUser } from './login.ts'
+import {
+  buildTranscript,
+  classifyDuringSend,
+  conversationIdFromPath,
+  needsSwitchChat,
+  normalizeSessionsResult,
+  normalizeSwitchOutcome,
+  normalizeTranscript,
+  readSessionsInPage,
+  readTranscriptInPage,
+  sameLocation,
+  scrollMessagesInPage,
+  sessionLocationFromPath,
+  switchChatInPage,
+  switchChatReadyInPage,
+  toSessionSummaries,
+  transcriptNeedsBlocks,
+  type ScrollMessagesOptions,
+  type SendSessionState,
+  type SessionLinkOptions,
+  type SessionLocation,
+  type SwitchChatOptions,
+  type TranscriptOptions,
+} from './sessions.ts'
 import {
   newChatInPage,
   newChatReadyInPage,
@@ -142,6 +169,44 @@ const NEW_CHAT_CONFIRM_OPTIONS: NewChatConfirmOptions = {
   messageSelector: MESSAGE_SELECTOR,
   emptyPath: NEW_CHAT_EMPTY_PATH,
 }
+/**
+ * Sidebar history entries (Phase 08): plain anchors whose OWN href carries the
+ * conversation id. The id is compared as a string — never interpolated into a
+ * selector — and the title is never used as a key.
+ */
+const SESSION_LINK_SELECTOR = 'a[href*="/a/chat/s/"]'
+const SESSION_HREF_MARKER = '/a/chat/s/'
+const SESSION_OPTIONS: SessionLinkOptions = {
+  linkSelector: SESSION_LINK_SELECTOR,
+  hrefMarker: SESSION_HREF_MARKER,
+}
+/**
+ * How long to let the SPA commit a history switch before declaring failure. A
+ * CONDITION wait (bounded), never a fixed sleep.
+ */
+const SWITCH_CONFIRM_TIMEOUT = 8000
+/**
+ * After the switch is confirmed the SPA may still be filling the DOM in
+ * (history fetch → render), so the message count must stop moving before the
+ * transcript is read. Same bounded-condition style, no fixed sleep.
+ */
+const SWITCH_STABLE_TIMEOUT = 4000
+const SWITCH_STABLE_INTERVAL = 350
+const TRANSCRIPT_OPTIONS: TranscriptOptions = {
+  messageSelector: MESSAGE_SELECTOR,
+  replySelector: REPLY_SELECTOR,
+  replyFallback: REPLY_FALLBACK_SELECTOR,
+  reasoningSelector: REASONING_SELECTOR,
+  maxFiberScan: MAX_FIBER_SCAN,
+}
+/** How to find the chat's real scroller when filling the virtual list. */
+const SCROLL_OPTIONS: ScrollMessagesOptions = { messageSelector: MESSAGE_SELECTOR }
+/**
+ * Bounded rounds used to make the virtual list render the whole history. One
+ * round is enough today (verified 5 → 16 nodes); the loop only exists so a
+ * future step-wise renderer still converges.
+ */
+const HISTORY_FILL_ROUNDS = 3
 
 /** Coerce a value arriving from the page into a trusted `AssistantReply`. */
 function normalizeReply(value: unknown): AssistantReply {
@@ -190,6 +255,28 @@ export interface DeepSeekBrowser {
    * still shows the old conversation. The page is reused — no new tab.
    */
   newChat(): Promise<void>
+  /**
+   * Read the sidebar's history entries (Phase 08). Read-only projection:
+   * `{ id, title, active }`, where `active` is computed from the page's own
+   * pathname — never from a styling class.
+   */
+  listSessions(): Promise<ChatSessionSummary[]>
+  /**
+   * Open a history conversation by id (Phase 08). When that conversation is
+   * already on screen this resolves WITHOUT clicking. Otherwise exactly one
+   * native click lands on the matching sidebar link, and the call only resolves
+   * after a bounded confirmation (pathname is that id AND the previous message
+   * DOM is gone). Throws when the entry is missing/duplicated or the switch
+   * never completed — the Host transcript is then left untouched.
+   */
+  switchChat(conversationId: string): Promise<void>
+  /**
+   * Rebuild the transcript the page is currently showing (Phase 08): DOM order,
+   * roles decided by structure, assistant content from the raw Markdown props
+   * (rendered-text fallback), reasoning from its own container, citations via
+   * the strict block rule. Only plain data leaves the page.
+   */
+  readTranscript(): Promise<ChatMessageInput[]>
   /**
    * Send one message and resolve with the final complete reply. `onDelta` fires
    * with the growing reply while DeepSeek is still generating — the raw Markdown
@@ -251,6 +338,12 @@ export async function createDeepSeekBrowser(
   onStatus: (status: DeepSeekStatus) => void,
   onDeepThink?: (state: DeepThinkState) => void,
   onSearch?: (state: SearchState) => void,
+  /**
+   * Every main-frame navigation inside DeepSeek, as a three-state location
+   * (Phase 08.1). `createdBySend` marks the session DeepSeek created for the
+   * in-flight send — the Host records it and never re-reads that transcript.
+   */
+  onSessionLocation?: (location: SessionLocation, info: { createdBySend: boolean }) => void,
 ): Promise<DeepSeekBrowser> {
   // Playwright resolves its own matched Chromium via `chromium.executablePath()`;
   // a missing browser surfaces as a clear launch error (mapped to `error`).
@@ -414,6 +507,8 @@ export async function createDeepSeekBrowser(
     if (page.isClosed()) {
       page = await context.newPage()
       attachListeners(page)
+      // A recreated page needs its own session watcher (Phase 08.1).
+      attachSessionWatcher(page)
     }
     await page.goto(`${DEEPSEEK_URL}/sign_in`, { waitUntil: 'domcontentloaded', timeout: 30000 })
     await page.bringToFront()
@@ -447,8 +542,66 @@ export async function createDeepSeekBrowser(
    * empty final reply is expected rather than an error.
    */
   let stopRequested = false
+  /**
+   * Set when the page moved to ANOTHER conversation while this send was
+   * streaming (Phase 08.1). Kept strictly separate from `stopRequested`: nobody
+   * asked to stop — the page simply left. It detaches both delta receivers and
+   * makes the final read use the last received frame instead of the page.
+   */
+  let sessionInterrupted = false
+  /** The conversation this in-flight send writes into (`null` while at `/`). */
+  let sendSession: SendSessionState | null = null
+  /** Last location handed to the Host (de-duplicates repeated navigations). */
+  let lastForwardedLocation: SessionLocation | undefined
   /** Set by `dispose()`: background work must stop touching the page. */
   let disposed = false
+
+  /**
+   * One main-frame navigation inside DeepSeek (Phase 08.1).
+   *
+   * `page.on('framenavigated')` fires for the SPA's `history.pushState` as well
+   * (verified in Phase 08.1), so this is the only signal needed — no polling,
+   * no history patching, no fiber/hash-class reading. The conversation id comes
+   * from the URL path alone.
+   *
+   * While a send streams, the meaning of the navigation is decided FIRST: a
+   * session DeepSeek created for THIS send is accepted (its id becomes the
+   * send's session), while a switch to ANOTHER conversation detaches both delta
+   * receivers immediately, so nothing from the new conversation can reach the
+   * in-flight assistant message. The Host is then told about the location —
+   * with `createdBySend`, so its sync controller records it instead of
+   * re-reading a transcript the running send already owns.
+   */
+  const handleLocationNavigation = (location: SessionLocation): void => {
+    let createdBySend = false
+    if (sending && sendSession !== null) {
+      const verdict = classifyDuringSend(sendSession, location)
+      if (verdict === 'accept-created') {
+        createdBySend = true
+        if (location.kind === 'session') sendSession = { ...sendSession, currentId: location.id }
+      } else if (verdict === 'external') {
+        // The page left this conversation: stop feeding the in-flight assistant
+        // and never read the new conversation on its behalf. The send keeps
+        // whatever it already received; DeepSeek's own Stop is NOT clicked.
+        sessionInterrupted = true
+        currentDeltaReceiver = null
+        currentReasoningReceiver = null
+      }
+    }
+    if (lastForwardedLocation !== undefined && sameLocation(location, lastForwardedLocation)) return
+    lastForwardedLocation = location
+    onSessionLocation?.(location, { createdBySend })
+  }
+
+  /** Watch one page's main frame for session navigation. */
+  const attachSessionWatcher = (target: Page): void => {
+    target.on('framenavigated', (frame) => {
+      if (frame !== target.mainFrame()) return
+      handleLocationNavigation(sessionLocationFromPath(frame.url()))
+    })
+  }
+
+  attachSessionWatcher(page)
 
   /**
    * Best-effort citation hydration (Phase 07I).
@@ -547,6 +700,12 @@ export async function createDeepSeekBrowser(
     if (sending) throw new Error('a send is already in progress')
     sending = true
     stopRequested = false
+    sessionInterrupted = false
+    // Which conversation does this round write into? A send started from `/`
+    // gets its session created by DeepSeek a moment later — `classifyDuringSend`
+    // accepts exactly that first id and treats any LATER change as external.
+    const startedAt = sessionLocationFromPath(page.url())
+    sendSession = { startedAt, currentId: startedAt.kind === 'session' ? startedAt.id : null }
 
     // Body and reasoning get their OWN throttle, so the two streams can never
     // overwrite each other. Both coalesce to ~one emit per 100ms.
@@ -560,8 +719,18 @@ export async function createDeepSeekBrowser(
       100,
       (a, b) => a.content === b.content && a.format === b.format,
     )
-    currentDeltaReceiver = (reply) => replyThrottle.push(reply)
-    currentReasoningReceiver = (reply) => reasoningThrottle.push(reply)
+    // Keep the last frame of each stream: an interrupted send must finish with
+    // what it already received instead of reading the NEW conversation's DOM.
+    let lastReply: AssistantReply | null = null
+    let lastReasoning: AssistantReply | null = null
+    currentDeltaReceiver = (reply) => {
+      lastReply = reply
+      replyThrottle.push(reply)
+    }
+    currentReasoningReceiver = (reply) => {
+      lastReasoning = reply
+      reasoningThrottle.push(reply)
+    }
 
     const cleanupObservers = (): Promise<void> =>
       Promise.all([
@@ -651,29 +820,43 @@ export async function createDeepSeekBrowser(
       const response = await completionPromise
       await response.finished()
 
-      // Condition waits (never a fixed sleep): the final read needs the NEW node
-      // to exist. Reasoning is only awaited when Deep Think was ON for this send,
-      // so a normal reply never blocks waiting for a reasoning node.
-      await waitForNewNode('__hasNewReply')
-      if (modeAtSend.deepThink.enabled) await waitForNewNode('__hasNewReasoning')
+      // An interruption means the page now shows a DIFFERENT conversation: the
+      // new DOM must never be read on behalf of this send — no node wait, no
+      // final page read, no citation handle. The reply ends with the last frame
+      // that actually arrived for THIS conversation.
+      let replyHandle: JSHandle | null = null
+      let finalReasoning: AssistantReply
+      let finalReply: AssistantReply
+      if (sessionInterrupted) {
+        finalReasoning = lastReasoning ?? { content: '', format: 'text' }
+        finalReply = lastReply ?? { content: '', format: 'text' }
+        // Tear the readers down WITHOUT reading.
+        await cleanupObservers()
+      } else {
+        // Condition waits (never a fixed sleep): the final read needs the NEW
+        // node to exist. Reasoning is only awaited when Deep Think was ON for
+        // this send, so a normal reply never blocks on a reasoning node.
+        await waitForNewNode('__hasNewReply')
+        if (modeAtSend.deepThink.enabled) await waitForNewNode('__hasNewReasoning')
 
-      // Capture THIS reply's node before the readers are torn down (they delete
-      // the page globals). The later, out-of-band citation hydration must stay
-      // pinned to this exact reply, never to "whatever is last" (Phase 07I).
-      const replyHandle = await page
-        .evaluateHandle(() => {
-          const w = window as unknown as { __replyNode?: () => unknown }
-          return typeof w.__replyNode === 'function' ? w.__replyNode() : null
-        })
-        .catch(() => null)
+        // Capture THIS reply's node before the readers are torn down (they
+        // delete the page globals). The later, out-of-band citation hydration
+        // must stay pinned to this exact reply, never to "whatever is last"
+        // (Phase 07I).
+        replyHandle = await page
+          .evaluateHandle(() => {
+            const w = window as unknown as { __replyNode?: () => unknown }
+            return typeof w.__replyNode === 'function' ? w.__replyNode() : null
+          })
+          .catch(() => null)
 
-      // Final reads (each also disconnects its own observer), then force-flush
-      // both throttles so neither final value can be dropped.
-      const finalReasoning = normalizeReply(await page.evaluate(readAndCleanupReasoning, {}))
-      const finalReply = normalizeReply(await page.evaluate(readAndCleanupReply, {}))
+        // Final reads (each also disconnects its own observer).
+        finalReasoning = normalizeReply(await page.evaluate(readAndCleanupReasoning, {}))
+        finalReply = normalizeReply(await page.evaluate(readAndCleanupReply, {}))
+      }
 
-      // Reasoning is optional: an empty result means Deep Think produced none, so
-      // nothing is emitted and the reply path is completely unaffected.
+      // Force-flush both throttles so neither final value can be dropped.
+      // Reasoning is optional: an empty result means Deep Think produced none.
       if (finalReasoning.content !== '') {
         reasoningThrottle.push(finalReasoning)
         reasoningThrottle.flush()
@@ -681,11 +864,11 @@ export async function createDeepSeekBrowser(
       replyThrottle.push(finalReply)
       replyThrottle.flush()
 
-      // A non-empty reply is always fine. An EMPTY one is only an error when
-      // nobody asked to stop: a stop that arrived before the first token is a
-      // NORMAL outcome, and whatever partial reply/reasoning already streamed has
-      // been flushed above and is kept.
-      const emptyError = emptyReplyError(finalReply.content, stopRequested)
+      // A non-empty reply is always fine. An EMPTY one is only an error when the
+      // round ended for a reason the user asked for — a stop (Phase 07J) or an
+      // external session switch (Phase 08.1). Those are normal endings and keep
+      // whatever partial reply already streamed; anything else is a real error.
+      const emptyError = emptyReplyError(finalReply.content, stopRequested, sessionInterrupted)
       if (emptyError !== null) throw new Error(emptyError)
 
       // Hand the citation work off BEFORE returning. The reply is already
@@ -704,6 +887,9 @@ export async function createDeepSeekBrowser(
       // belongs to exactly one send, so it must never leak into the next round
       // (a later, genuinely empty reply has to fail again).
       stopRequested = false
+      // The session state follows the same one-send lifecycle (Phase 08.1).
+      sessionInterrupted = false
+      sendSession = null
     }
   }
 
@@ -792,6 +978,184 @@ export async function createDeepSeekBrowser(
     await syncComposerMode()
   }
 
+  /**
+   * Read the sidebar's history entries (Phase 08). Read-only projection of the
+   * standard anchors the sidebar itself renders: `{ id, title }` plus an
+   * `active` flag computed by comparing the id with the page's own pathname —
+   * no styling class is involved, and only what the DOM really holds is
+   * returned.
+   */
+  const listSessions = async (): Promise<ChatSessionSummary[]> =>
+    toSessionSummaries(normalizeSessionsResult(await page.evaluate(readSessionsInPage, { options: SESSION_OPTIONS })))
+
+  /** The number of message containers the page currently renders. */
+  const messageCount = async (): Promise<number> =>
+    page.evaluate((selector: string) => document.querySelectorAll(selector).length, MESSAGE_SELECTOR).catch(() => -1)
+
+  /**
+   * Wait (bounded) until the message count stops moving. The rebuild after a
+   * switch happens in steps, and reading mid-render would capture a partial
+   * transcript.
+   */
+  const waitForMessageCountStable = async (): Promise<void> => {
+    const deadline = Date.now() + SWITCH_STABLE_TIMEOUT
+    let last = -1
+    let stableReads = 0
+    while (Date.now() < deadline) {
+      const count = await messageCount()
+      if (count === last) stableReads += 1
+      else stableReads = 0
+      last = count
+      if (stableReads >= 2) return
+      await new Promise((resolve) => setTimeout(resolve, SWITCH_STABLE_INTERVAL))
+    }
+  }
+
+  /**
+   * Open a DeepSeek history conversation (Phase 08).
+   *
+   * When the target IS the conversation already on screen this resolves without
+   * any click — the page is never asked to reload what it is showing. Otherwise
+   * exactly one native click lands on the sidebar anchor whose href carries that
+   * id, and the switch is only reported as done after a bounded confirmation:
+   * the page's pathname is that id AND every message node recorded before the
+   * click is gone (identity, not a count). No private API, no hash class, no
+   * fixed sleep.
+   */
+  const switchChat = async (conversationId: string): Promise<void> => {
+    const currentId = conversationIdFromPath(page.url(), SESSION_HREF_MARKER)
+    // Already on this conversation → never click it again: the caller simply
+    // re-reads what the page shows.
+    if (!needsSwitchChat(currentId, conversationId)) return
+    const options: SwitchChatOptions = {
+      ...SESSION_OPTIONS,
+      conversationId,
+      messageSelector: MESSAGE_SELECTOR,
+    }
+    const outcome = normalizeSwitchOutcome(await page.evaluate(switchChatInPage, { options }))
+    if (outcome === 'missing') throw new Error('chat session not found')
+    if (outcome === 'ambiguous') throw new Error('chat session link is ambiguous')
+    const ready = await page
+      .waitForFunction(switchChatReadyInPage, { options }, { timeout: SWITCH_CONFIRM_TIMEOUT })
+      .then(() => true)
+      .catch(() => false)
+    if (!ready) throw new Error('chat switch did not complete')
+    await waitForMessageCountStable()
+  }
+
+  /** Scroll the chat's virtual list (the scroller that can actually scroll). */
+  const scrollMessagesTo = async (position: 'top' | 'bottom'): Promise<void> => {
+    await page.evaluate(scrollMessagesInPage, { options: SCROLL_OPTIONS, position }).catch(() => {})
+  }
+
+  /**
+   * A signature of the virtual list: how many message nodes are rendered AND
+   * how tall the real scroller says the conversation is. Both grow when the
+   * missing history is rendered, so the wait below cannot mistake "still
+   * clipped" for "settled".
+   */
+  const listSignature = async (): Promise<string> =>
+    page
+      .evaluate((selector: string) => {
+        const messages = Array.from(document.querySelectorAll(selector))
+        let current: Element | null = messages[0] ?? null
+        let height = 0
+        while (current !== null) {
+          if (String(current.className).includes('ds-scroll-area') && current.scrollHeight > current.clientHeight + 10) {
+            height = Math.round(current.scrollHeight)
+            break
+          }
+          current = current.parentElement
+        }
+        return `${messages.length}:${height}`
+      }, MESSAGE_SELECTOR)
+      .catch(() => '')
+
+  /** Wait (bounded) until the list signature stops moving. */
+  const waitForListStable = async (): Promise<void> => {
+    const deadline = Date.now() + SWITCH_STABLE_TIMEOUT
+    let last = ''
+    let stableReads = 0
+    while (Date.now() < deadline) {
+      const signature = await listSignature()
+      if (signature !== '' && signature === last) stableReads += 1
+      else stableReads = 0
+      last = signature
+      if (stableReads >= 2) return
+      await new Promise((resolve) => setTimeout(resolve, SWITCH_STABLE_INTERVAL))
+    }
+  }
+
+  /**
+   * Make the virtual list render the WHOLE conversation, and LEAVE it there.
+   *
+   * DeepSeek keeps only the messages around the viewport in the DOM, so a
+   * switched-to chat shows a handful of nodes at first (verified: 5 of 16).
+   * Scrolling to the top renders the rest (16 of 16, scrollHeight 3545 → 8767);
+   * scrolling back to the bottom would clip them again, so the view is restored
+   * only AFTER the transcript has been read. Bounded rounds, settled signature —
+   * never a fixed sleep.
+   */
+  const ensureFullHistory = async (): Promise<void> => {
+    for (let round = 0; round < HISTORY_FILL_ROUNDS; round += 1) {
+      const before = await listSignature()
+      await scrollMessagesTo('top')
+      await waitForListStable()
+      if ((await listSignature()) === before) break
+    }
+  }
+
+  /**
+   * Rebuild the transcript the page is currently showing (Phase 08).
+   *
+   * The virtual list is filled first (see `ensureFullHistory`), then one
+   * page-side pass reads the message list in DOM order (roles decided by
+   * structure, assistant content from the raw Markdown props with a rendered
+   * text fallback, reasoning from its own container). Citation badges are then
+   * read per reply with the SAME block reader the hydration uses, and mapped
+   * with the SAME strict block rule. Only plain data leaves the page — never
+   * HTML, a React object or a token.
+   */
+  const readTranscript = async (): Promise<ChatMessageInput[]> => {
+    await ensureFullHistory()
+
+    const raw = normalizeTranscript(await page.evaluate(readTranscriptInPage, { options: TRANSCRIPT_OPTIONS }))
+
+    /** DOM blocks per assistant reply, in reply order (only when needed). */
+    const readReplyBlocks = async (): Promise<DomBlock[][]> => {
+      // The selector is written inline: this callback is serialized into the
+      // page, where module constants do not exist.
+      const nodes = await page
+        .evaluateHandle(() => Array.from(document.querySelectorAll('.ds-assistant-message-main-content')))
+        .catch(() => null)
+      if (nodes === null) return []
+      try {
+        const count = await nodes.evaluate((value) => (Array.isArray(value) ? value.length : 0)).catch(() => 0)
+        const blocks: DomBlock[][] = []
+        for (let index = 0; index < count; index += 1) {
+          const node = await nodes.getProperty(String(index)).catch(() => null)
+          if (node === null) {
+            blocks.push([])
+            continue
+          }
+          const read = await page.evaluate(readDomBlocks, node).catch(() => [] as DomBlock[])
+          blocks.push(read)
+          await node.dispose().catch(() => {})
+        }
+        return blocks
+      } finally {
+        await nodes.dispose().catch(() => {})
+      }
+    }
+
+    const blocks = transcriptNeedsBlocks(raw.entries) ? await readReplyBlocks() : []
+    const messages = buildTranscript(raw.entries, blocks)
+    // The rebuild is done — put the page back where a reader expects it (the
+    // newest message). Doing this earlier would clip the DOM mid-read.
+    await scrollMessagesTo('bottom')
+    return messages
+  }
+
   return {
     check,
     showLogin,
@@ -803,6 +1167,9 @@ export async function createDeepSeekBrowser(
     sendMessage,
     stopGeneration,
     newChat,
+    listSessions,
+    switchChat,
+    readTranscript,
     async dispose() {
       // Stop any in-flight background work before the page goes away.
       disposed = true

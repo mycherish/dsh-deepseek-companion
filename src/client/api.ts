@@ -5,7 +5,7 @@
  * copy of the state shape. `origin` is the parent DSH page origin (the pop-out
  * is `about:blank`, so it must not rely on its own relative URL).
  */
-import type { CompanionState, DeepThinkState, SearchState } from '../shared/state.ts'
+import type { ChatSessionSummary, CompanionState, DeepThinkState, SearchState } from '../shared/state.ts'
 
 export type { CompanionState }
 
@@ -67,6 +67,53 @@ const STOP_PATH = '/api/deepseek-companion/chat/stop'
 
 /** POST route that starts a new DeepSeek chat (Phase 07L). */
 const NEW_CHAT_PATH = '/api/deepseek-companion/chat/new'
+
+/** GET route listing the sidebar's history sessions (Phase 08). */
+const SESSIONS_PATH = '/api/deepseek-companion/chat/sessions'
+/** POST route switching the current conversation (Phase 08). */
+const SWITCH_PATH = '/api/deepseek-companion/chat/switch'
+
+/**
+ * Read the DeepSeek history sessions the Host can currently see. Read-only: the
+ * list is a projection of the sidebar, never cached by this view.
+ */
+export async function fetchChatSessions(origin: string): Promise<ChatSessionSummary[]> {
+  const response = await fetch(`${origin}${SESSIONS_PATH}`, { credentials: 'include' })
+  const body = (await response.json().catch(() => null)) as { sessions?: unknown; error?: unknown } | null
+  if (!response.ok) {
+    throw new Error(typeof body?.error === 'string' ? body.error : `HTTP ${response.status}`)
+  }
+  const sessions: ChatSessionSummary[] = []
+  if (Array.isArray(body?.sessions)) {
+    for (const entry of body.sessions) {
+      if (entry === null || typeof entry !== 'object') continue
+      const { id, title, active } = entry as { id?: unknown; title?: unknown; active?: unknown }
+      if (typeof id !== 'string' || id === '') continue
+      sessions.push({ id, title: typeof title === 'string' ? title : '', active: active === true })
+    }
+  }
+  return sessions
+}
+
+/**
+ * Ask the Host to switch to a history conversation and resolve with the number
+ * of messages the rebuilt transcript holds. The Host clicks the real DeepSeek
+ * link and only replaces the transcript once the switch is confirmed; this view
+ * never clears anything locally.
+ */
+export async function switchChatSession(origin: string, conversationId: string): Promise<number> {
+  const response = await fetch(`${origin}${SWITCH_PATH}`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ conversationId }),
+  })
+  const body = (await response.json().catch(() => null)) as { messages?: unknown; error?: unknown } | null
+  if (!response.ok) {
+    throw new Error(typeof body?.error === 'string' ? body.error : `HTTP ${response.status}`)
+  }
+  return typeof body?.messages === 'number' ? body.messages : 0
+}
 
 /**
  * Ask the Host to start a new DeepSeek conversation. The Host clicks the real

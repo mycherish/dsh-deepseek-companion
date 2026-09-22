@@ -3,9 +3,16 @@ import type {} from '@deepseek-ai/dsh-client-connection'
 import { createDeepSeekBrowser, type DeepSeekBrowser } from './host/browser.ts'
 import { handleChatMessage } from './host/chat.ts'
 import { handleDeepThinkRequest } from './host/deep-think.ts'
-import { createNewChatGuard, handleNewChatRequest } from './host/new-chat.ts'
+import { createPageGuard } from './host/guard.ts'
+import { handleNewChatRequest } from './host/new-chat.ts'
 import { browserProfileDir } from './host/paths.ts'
 import { handleSearchRequest } from './host/search.ts'
+import {
+  createSessionSyncController,
+  handleListSessionsRequest,
+  handleSwitchChatRequest,
+  type SessionLocation,
+} from './host/sessions.ts'
 import { handleStopRequest } from './host/stop.ts'
 import { createCompanionStateStore, type CompanionStateStore } from './host/state.ts'
 import type { CompanionState } from './shared/state.ts'
@@ -32,6 +39,10 @@ const SEARCH_PATH = '/api/deepseek-companion/search'
 const STOP_PATH = '/api/deepseek-companion/chat/stop'
 /** POST route to start a new DeepSeek chat and reset the transcript (Phase 07L). */
 const NEW_CHAT_PATH = '/api/deepseek-companion/chat/new'
+/** GET route listing the sidebar's history sessions (Phase 08, read-only). */
+const SESSIONS_PATH = '/api/deepseek-companion/chat/sessions'
+/** POST route switching the current conversation (Phase 08). */
+const SWITCH_PATH = '/api/deepseek-companion/chat/switch'
 
 /**
  * DeepSeek Web Companion host half.
@@ -75,10 +86,22 @@ export function apply(ctx: Context): void {
   // only plugin dispose does.
   let browser: DeepSeekBrowser | null = null
 
-  // One page is shared by every route, so the Host arbitrates its use: while a
-  // new-chat switch is in flight, sends are refused and a second new chat is
-  // refused (Phase 07L). Bookkeeping only — no view renders it.
-  const newChatGuard = createNewChatGuard()
+  // One page is shared by every route, so the Host arbitrates its use (Phase
+  // 07L → 08): while a page operation (new chat / history switch) is in flight,
+  // sends are refused and a second page operation is refused. Bookkeeping only
+  // — no view renders it.
+  const pageGuard = createPageGuard()
+
+  // External session sync (Phase 08.1): when the USER navigates inside the
+  // DeepSeek window itself, the Host pulls the page's transcript back into the
+  // shared state. It reuses the SAME page guard, so a sync never runs next to a
+  // send / new chat / switch.
+  const sessionSync = createSessionSyncController({
+    // The browser is created asynchronously; resolve it lazily.
+    browser: () => browser,
+    store,
+    guard: pageGuard,
+  })
 
   ctx.effect(() => {
     let disposed = false
@@ -95,6 +118,10 @@ export function apply(ctx: Context): void {
       },
       (state) => {
         if (!disposed) store.setSearchState(state)
+      },
+      // Session navigation inside the DeepSeek window itself (Phase 08.1).
+      (location, info) => {
+        if (!disposed) sessionSync.onLocation(location, info)
       },
     )
       .then((created) => {
@@ -169,12 +196,15 @@ export function apply(ctx: Context): void {
             (text, onDelta, onReasoning, onCitations) =>
               currentBrowser.sendMessage(text, onDelta, onReasoning, onCitations),
             message,
-            // Refused while a new-chat page switch owns the page (409).
-            newChatGuard,
+            // Refused while a page operation (new chat / switch) owns the page.
+            pageGuard,
           )
           if (result.status === 500) {
             console.warn('[dsh-deepseek-companion] failed to send chat message', result.body.error)
           }
+          // The send no longer owns the page: a session switch that happened
+          // WHILE it streamed can now be applied (Phase 08.1, latest wins).
+          void sessionSync.drain()
           return Response.json(result.body, { status: result.status })
         },
       }),
@@ -261,19 +291,82 @@ export function apply(ctx: Context): void {
         // field; a buffered body is simply ignored.
         requestBody: 'buffered',
         fetch: async () => {
-          const result = await handleNewChatRequest(store, browser, newChatGuard)
-          if (result.status !== 200) {
+          const result = await handleNewChatRequest(store, browser, pageGuard)
+          if (result.status === 200) {
+            // The Host made this navigation itself: record where it landed, so
+            // the watcher never syncs the same change a second time (08.1).
+            sessionSync.markKnown({ kind: 'empty' })
+          } else {
             console.warn('[dsh-deepseek-companion] new chat request not applied:', result.status, result.body.error)
           }
+          void sessionSync.drain()
           return Response.json(result.body, { status: result.status })
         },
       }),
     'deepseek-companion: chat new route',
   )
 
+  // History sessions (Phase 08): a read-only projection of the sidebar, and one
+  // real click on a history link. The switch is confirmed on the page (pathname
+  // + rebuilt message DOM) and only then does the Host replace its transcript —
+  // a failed switch leaves every surface showing what it already had.
+  ctx.effect(
+    () =>
+      ctx.connection.fetch.register({
+        path: SESSIONS_PATH,
+        methods: ['GET'],
+        requestBody: 'buffered',
+        fetch: async () => {
+          const result = await handleListSessionsRequest(browser)
+          if (result.status !== 200) {
+            console.warn('[dsh-deepseek-companion] failed to list chat sessions:', result.body.error)
+          }
+          return Response.json(result.body, { status: result.status })
+        },
+      }),
+    'deepseek-companion: chat sessions route',
+  )
+
+  ctx.effect(
+    () =>
+      ctx.connection.fetch.register({
+        path: SWITCH_PATH,
+        methods: ['POST'],
+        requestBody: 'buffered',
+        fetch: async (request) => {
+          const body: unknown = await request.json().catch(() => null)
+          const result = await handleSwitchChatRequest(store, browser, pageGuard, body)
+          if (result.status === 200) {
+            // The Host switched itself: record the destination so the watcher
+            // never re-syncs it (Phase 08.1).
+            const known = knownLocationFromSwitchBody(body)
+            if (known !== null) sessionSync.markKnown(known)
+          } else {
+            console.warn('[dsh-deepseek-companion] chat switch not applied:', result.status, result.body.error)
+          }
+          void sessionSync.drain()
+          return Response.json(result.body, { status: result.status })
+        },
+      }),
+    'deepseek-companion: chat switch route',
+  )
+
   ctx.effect(() => () => store.dispose(), 'deepseek-companion: state store')
 
   console.log('[dsh-deepseek-companion] loaded')
+}
+
+/**
+ * The location a successful switch landed on, or `null` when the request body
+ * carried no usable conversation id. Used only to record what the Host itself
+ * already synced (Phase 08.1).
+ */
+function knownLocationFromSwitchBody(body: unknown): SessionLocation | null {
+  const requested: { conversationId?: unknown } =
+    body !== null && typeof body === 'object' ? (body as { conversationId?: unknown }) : {}
+  return typeof requested.conversationId === 'string' && requested.conversationId !== ''
+    ? { kind: 'session', id: requested.conversationId }
+    : null
 }
 
 /**

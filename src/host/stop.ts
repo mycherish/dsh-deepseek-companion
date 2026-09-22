@@ -61,15 +61,20 @@ export function decideStopAction(state: StopGuardState): StopAction {
  * A NON-EMPTY reply is never an error — it is the normal case, and checking it
  * first is what keeps a plain send from being reported as "empty reply".
  *
- * An empty reply is only acceptable when the user asked to stop THIS send. A stop
- * from an EARLIER round must never make a later failure look like a success, which
- * is why the flag is reset both before a send starts and when the send flow ends.
+ * An empty reply is only acceptable when THIS round ended on purpose: the user
+ * stopped it, or the page left the conversation mid-stream (Phase 08.1). Such a
+ * flag from an EARLIER round must never make a later failure look like a
+ * success, which is why both are reset before a send starts and when it ends.
  *
  * `content` is compared with `=== ''` (the original pre-07J semantics — no trim).
  */
-export function emptyReplyError(content: string, stopRequested: boolean): string | null {
+export function emptyReplyError(content: string, stopRequested: boolean, sessionInterrupted = false): string | null {
   if (content !== '') return null
-  return stopRequested ? null : 'empty reply from DeepSeek'
+  // Two NORMAL endings make an empty final reply acceptable: the user asked to
+  // stop this round (Phase 07J), or the page left this conversation mid-stream
+  // (Phase 08.1). They stay separate signals — one is a user action, the other
+  // is an external navigation — but both mean "the round ended on purpose".
+  return stopRequested || sessionInterrupted ? null : 'empty reply from DeepSeek'
 }
 
 export interface ChatStopResult {

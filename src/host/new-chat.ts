@@ -24,6 +24,7 @@
  * after the page switch was confirmed (page first, Host second — never the
  * other way round).
  */
+import type { PageGuard } from './guard.ts'
 import type { CompanionStateStore } from './state.ts'
 
 /** The DOM surface the page helpers need (`document` inside the page). */
@@ -196,43 +197,6 @@ export function normalizeNewChatOutcome(value: unknown): NewChatClickOutcome {
   return 'missing'
 }
 
-// --- Host-side mutual exclusion ---------------------------------------------
-
-/**
- * Host-internal guard that keeps a new-chat page switch and a send from ever
- * touching the same DeepSeek page at the same time (Phase 07L).
- *
- * The Client's `startingNew` flag is per surface — Dock / Float / Pop-out cannot
- * see each other — so the exclusion lives HERE, in the one process that owns the
- * browser. It is deliberately NOT part of `CompanionState`: it is bookkeeping,
- * not something any view renders.
- */
-export interface NewChatGuard {
-  /** Is a new-chat page switch in flight right now? */
-  inProgress(): boolean
-  /** Claim the guard atomically. `false` when someone else already holds it. */
-  tryClaim(): boolean
-  /** Release the guard (always from `finally`, success or failure). */
-  release(): void
-}
-
-export function createNewChatGuard(): NewChatGuard {
-  let inProgress = false
-  return {
-    inProgress: () => inProgress,
-    tryClaim() {
-      // Synchronous check-and-set with no `await` in between: two concurrent
-      // requests can never both win, so the real control is clicked once.
-      if (inProgress) return false
-      inProgress = true
-      return true
-    },
-    release() {
-      inProgress = false
-    },
-  }
-}
-
 // --- Host-side request flow -------------------------------------------------
 
 /** Just the browser capability this flow needs (keeps the unit test trivial). */
@@ -250,22 +214,22 @@ export interface ChatNewResult {
   body: { ok?: boolean; error?: string }
 }
 
-//   503 browser not ready · 409 while a reply streams OR another new chat runs
+//   503 browser not ready · 409 while a reply streams OR another page op runs
 //   200 new chat confirmed + Host transcript cleared
 //   500 the control/page failed — the Host transcript is left UNTOUCHED
 export async function handleNewChatRequest(
   store: CompanionStateStore,
   browser: NewChatCapableBrowser | null,
-  guard: NewChatGuard,
+  guard: PageGuard,
 ): Promise<ChatNewResult> {
   if (browser === null) return { status: 503, body: { error: 'browser not ready' } }
   // A reply is streaming: the page belongs to that send. The Host refuses
   // instead of yanking the conversation out from under it.
   if (store.getState().chat.sending) return { status: 409, body: { error: 'chat is busy' } }
-  // Claim the page for the whole switch. A second request (another surface, or
-  // a double click that slipped past the UI) is refused here — the real control
-  // is clicked exactly once, by the request that won the claim.
-  if (!guard.tryClaim()) return { status: 409, body: { error: 'new chat already in progress' } }
+  // Claim the page for the whole switch. A second request (another surface, a
+  // history switch, or a double click that slipped past the UI) is refused here
+  // — the real control is clicked exactly once, by the request that won.
+  if (!guard.tryClaim()) return { status: 409, body: { error: 'page operation in progress' } }
   try {
     // Page FIRST: only a confirmed new conversation may clear the transcript.
     await browser.newChat()

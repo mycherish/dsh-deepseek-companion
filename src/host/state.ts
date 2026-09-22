@@ -10,6 +10,8 @@ import { randomUUID } from 'node:crypto'
 import type {
   ChatFormat,
   ChatMessage,
+  ChatMessageInput,
+  ChatReasoning,
   Citation,
   CompanionState,
   DeepSeekStatus,
@@ -28,6 +30,29 @@ function sameCitations(a: Citation[], b: Citation[]): boolean {
   })
 }
 
+function sameReasoning(a: ChatReasoning | undefined, b: ChatReasoning | undefined): boolean {
+  if (a === undefined || b === undefined) return a === b
+  return a.content === b.content && a.format === b.format
+}
+
+/**
+ * Whether an incoming transcript is EQUIVALENT to the current one: same roles,
+ * content, format, reasoning and citations — ids aside, since a re-read of the
+ * same conversation mints fresh Host ids every time (Phase 08).
+ */
+function equivalentMessages(current: ChatMessage[], next: ChatMessageInput[]): boolean {
+  if (current.length !== next.length) return false
+  return current.every((message, index) => {
+    const other = next[index]!
+    if (message.role !== other.role || message.content !== other.content || message.format !== other.format) return false
+    if (!sameReasoning(message.reasoning, other.reasoning)) return false
+    const a = message.citations
+    const b = other.citations
+    if (a === undefined || b === undefined) return a === b
+    return sameCitations(a, b)
+  })
+}
+
 export interface CompanionStateStore {
   getState(): CompanionState
   subscribe(listener: StateListener): () => void
@@ -42,6 +67,12 @@ export interface CompanionStateStore {
   setChatSending(sending: boolean): void
   /** Drop every chat message (new DeepSeek conversation, Phase 07L). */
   clearChatMessages(): void
+  /**
+   * Replace the whole transcript with a rebuilt one (history switch, Phase 08).
+   * Fresh Host ids are minted for every entry; an equivalent transcript is a
+   * no-op (no notify).
+   */
+  replaceChatMessages(messages: ChatMessageInput[]): void
   dispose(): void
 }
 
@@ -184,6 +215,18 @@ export function createCompanionStateStore(): CompanionStateStore {
       // this is a new conversation, not a reset of the Host.
       if (state.chat.messages.length === 0) return
       state = { ...state, chat: { ...state.chat, messages: [] } }
+      notify(state)
+    },
+
+    replaceChatMessages(messages: ChatMessageInput[]) {
+      if (disposed) return
+      // Re-reading the same conversation must not produce a redundant push: the
+      // rebuilt transcript carries NEW ids, so equivalence ignores them.
+      if (equivalentMessages(state.chat.messages, messages)) return
+      const next = messages.map((message) => ({ ...message, id: randomUUID() }))
+      // One replacement, one notify. `sending` and everything under `deepseek`
+      // are untouched — a switch never changes the login or composer state.
+      state = { ...state, chat: { ...state.chat, messages: next } }
       notify(state)
     },
 

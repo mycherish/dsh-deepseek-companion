@@ -166,6 +166,12 @@ export function normalizeBlockText(raw: string): string {
   text = text.replace(/\[(?:reference|citation):\d+\]/g, '')
   // Leading block decoration per line (heading hashes, quote marks, bullets).
   text = text.replace(/^\s{0,3}(?:#{1,6}\s+|>\s?|(?:[-*+]|\d+[.)])\s+)/gm, '')
+  // Hyphens are dropped on BOTH sides. A citation badge DeepSeek has not
+  // hydrated renders as a hidden "-" glyph in the DOM (the hydrated ones sit
+  // inside `.ds-markdown-cite` and are removed by the DOM reader), so the
+  // rendered text carries a stray "-" the Markdown source does not have.
+  // Removing it symmetrically keeps the comparison exact.
+  text = text.replace(/-/g, '')
   // Inline decoration.
   text = text.replace(/[*_`~]/g, '')
   return text.replace(/\s+/g, ' ').trim()

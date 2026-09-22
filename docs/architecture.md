@@ -366,5 +366,67 @@ Companion「新建聊天」
 - **旧 citation 迟到不污染新会话**：citation hydration 绑定旧 assistant message id，`clearChatMessages()` 之后该 id 已不存在，`updateChatCitations` 自然 no-op。
 - **UI**：ChatView 控件行进输入区上方右侧新增「新建聊天」轻按钮；`chat.sending === true` 时禁用（Host 层同时 409 双保险），本地 `startingNew` 防重复点击；Client **不维护本地 messages**，清空只由 Host 推送到三个界面。
 - **实机验证（真实页面 + 真实产品代码）**：多轮消息（4 条）→ 新建 → Host 200 + messages 0（页面清空由 `newChat()` 的确认条件保证）；toggle 组合跨新建保持一致；新会话首条发送 200 且 reply/reasoning 均流式（deltas 3 / reasoningDeltas 7）、可 Stop；生成中新建 → 409 且既有生成不受影响（Stop 后正常收尾）。
-- **实机验证（07L 收尾）**：并发两次 new chat（模拟两个界面）→ 一个 200、另一个 409（`new chat already in progress`），真实控件只点击一次；切换期间发送 → 409（`new chat in progress`）且不产生任何消息；切换结束后发送 200；toggle 组合保留；共享 transcript 清空（三界面同一份状态）。标准 DOM 定位（无 React 私有依赖）在真实页面连续两轮点击均成功触发切换（`pathname = /` 且消息 DOM 清零）——真实候选链为 `SPAN → DIV`，全链无 `button`/`a`/`role`，走的是文本候选 + 原生 click 冒泡路径。
+- **实机验证（07L 收尾）**：并发两次 new chat（模拟两个界面）→ 一个 200、另一个 409（`page operation in progress`，07L 收尾后与历史切换共用同一个 page guard），真实控件只点击一次；切换期间发送 → 409 且不产生任何消息；切换结束后发送 200；toggle 组合保留；共享 transcript 清空（三界面同一份状态）。标准 DOM 定位（无 React 私有依赖）在真实页面连续两轮点击均成功触发切换（`pathname = /` 且消息 DOM 清零）——真实候选链为 `SPAN → DIV`，全链无 `button`/`a`/`role`，走的是文本候选 + 原生 click 冒泡路径。
+- token / cookie 不离开 browser context。
+
+### DeepSeek 历史会话（Phase 08）
+
+```
+Sidebar sessions（a[href*="/a/chat/s/"]）
+  → conversationId（来自 href 自身；URL 与 fiber 同源，只用于交叉校验）
+  → Host GET /api/deepseek-companion/chat/sessions（只读投影：{ id, title, active }）
+  → POST /api/deepseek-companion/chat/switch { conversationId }
+  → page guard（与 send / new chat 互斥）
+  → Playwright 原生 click 目标历史链接（id 字符串比较，绝不拼选择器）
+  → 有界确认：pathname === /a/chat/s/<id> 且点击前的消息节点全部脱链
+  → 虚拟列表补齐（滚动到顶，5 → 16 节点）→ 重建当前 transcript
+  → store.replaceChatMessages（一次替换、一次 notify）
+  → SSE
+  → Dock / Float / Pop-out
+```
+
+要点：
+
+- **统一 page guard（`src/host/guard.ts`）**：一个页面被所有 route 共享，`send` / `newChat` / `switchChat` 三者互斥。`chat.sending === true` → new chat / switch 返回 409 `chat is busy`；任一页面操作持有 guard → 发送返回 409、再次页面操作返回 409 `page operation in progress`。`tryClaim()` 是同步 check-and-set（无 await 间隙），`finally` 必定释放。三个界面共享同一个 Host guard，不再依赖各自的本地防抖。
+- **会话列表**：只读投影侧栏**标准锚点** `a[href*="/a/chat/s/"]`，`id` 从 href 解析（用 `indexOf(marker)` + 截断，绝不把外部输入拼进选择器），`title` 取条目文本（**绝不作为键**——同名会话按 id 并列），`active` 由 id 与页面 pathname 比较得出（**不用样式类**），重复 id 去重。返回的永远只是 DOM 当前能可靠读到的条目。
+- **切换确认**：点击前把当前 `.ds-message` 节点记录到页面全局 `__switchBase`（内联字面量——页面函数被序列化，模块常量不存在），确认条件 = pathname 命中目标 id **且** 旧节点全部 `isConnected === false`（身份而非计数）；随后等待消息计数 + 滚动高度的「双签名」稳定，再读取。
+- **虚拟列表补齐（Phase 08 关键技术点）**：DeepSeek 的聊天是**虚拟列表**，切换后 DOM 只保留视口附近的节点（实测 16 条只渲染 5 条，滚动到顶后补齐为 16 条、scrollHeight 3545 → 8767）。`readTranscript` 会先把列表滚到顶（有界轮次 + 稳定等待）**并保持在那里读取**——读完才滚回底部（提前滚回会再次裁剪，曾导致只读到 1 条）。滚动目标是「真正可滚动的祖先」（内层包裹的 `scrollHeight === clientHeight`，滚它无效）。
+- **transcript 重建**：DOM 顺序遍历 `.ds-message`；角色由**结构**决定（含 `.ds-assistant-message-main-content` 的是 assistant，其余为 user）；正文优先 fiber `markdown` prop（有界扫描 + 松散文本校验，与 `reply.ts` 同一策略），否则渲染文本（`format: 'text'`）；reasoning 取 `.ds-think-content`；citation 用与实时 hydration **完全相同**的 DOM block 读取 + 严格 block 规则。Host 侧为每条消息生成新的 message id（不与 DeepSeek 对齐）。
+- **Host 更新顺序**：页面切换成功 → transcript 读取成功 → `replaceChatMessages`（一次替换、一次 notify、`sending` 与 composer/login 状态不动）。**任一步失败都保留现有 transcript**；重新读到等价内容（id 不同）时静默不推送。旧 citation hydration / 旧 message update 因目标 id 已不存在而自然 no-op。
+- **旧 citation 描述修正**：07I 曾记录「实时生成后 badge 无 href，只有重新打开会话才能读到 URL」。**当前 DeepSeek 前端已改变**：08-0/08 实测**实时生成完成后的 badge 已带 `a[href]`（20/20）**，切换离开再回来后同样 20/20。Host 既有的 `scheduleCitationHydration` 因此现在能真正产出 citations。
+- **citation 重建的已知限制（严格规则的正常结果，不是缺陷）**：历史重建对单个搜索回复实测出现三种不映射情形——① 未水合的角标在 DOM 中渲染为隐藏的 `-` 字形（`normalizeBlockText` 现已**对称剔除 `-`**，使文本仍能精确匹配），但该块 badge 数为 0 < group 数 → 正确放弃；② **Markdown 表格**是一整块而 DOM 按单元格（`td`/`th`）拆成多块 → 无法匹配；③ 相邻 marker 合并假设不总成立（实测 3 groups vs 2 badges）→ 严格规则放弃。文本匹配本身链路正常（实测 `exactMatch` 成功），失败点始终在「数量/水合」条件，符合「不猜」原则。
+- **Client**：控件行新增「历史会话」按钮 + 输入区上方的轻量列表面板（标题 + 「当前」标记，点击切换）；`sending`/`newChat`/`switching` 期间统一禁用；Client **不缓存任何其它会话的 messages**，列表也不落地——Host 是 transcript 唯一权威来源。
+- **实机验证（Phase 08）**：A→B→A 切换 200/200（同一会话再次切换 200 且不点击）；B 恢复 15 条（roles 交替、Markdown 406/397/379/346/2311、thinking 800–96、尾部 3 条为 08-0 中断产生的孤立 user 消息）；切换后继续发送 200（正文 + reasoning 流式）；`Stop` 200 并保留部分内容；生成中切换 → 409 `chat is busy` 且消息不变。
+- token / cookie 不离开 browser context。
+
+### DeepSeek 外部会话切换同步（Phase 08.1）
+
+```
+用户在 DeepSeek 窗口内自行导航（侧栏条目 / New chat）
+  → page.on('framenavigated')（main frame；SPA history.pushState 同样触发）
+  → sessionLocationFromPath → { session | empty | other }
+  → browser 先判定「这对正在进行的发送意味着什么」
+      accept-created：DeepSeek 为本次发送创建了会话 → 记录，绝不重读
+      external：切到别的会话 / New chat → sessionInterrupted + 立即断开两个 receiver
+  → Host session sync controller
+      空闲  → PageGuard.tryClaim → readTranscript → replaceChatMessages
+                                    empty → clearChatMessages
+      忙    → pending（latest wins，事件不丢）
+  → send / newChat / switch 结束后 drain → 应用 pending
+  → SSE
+  → Dock / Float / Pop-out
+```
+
+要点：
+
+- **唯一信号是 `framenavigated`**（实测覆盖：首条消息 `/` → session、侧栏点击、New chat → `/`、生成中点击侧栏；同一会话被点击**不产生**事件，天然去重）。不轮询、不 patch `history`、不读 fiber/hash class；conversation id 只从 URL path 解析。
+- **三态 location**：`{ kind: 'session', id }` / `{ kind: 'empty' }`（`/`）/ `{ kind: 'other' }`（sign_in 等）。**`other` 永远不修改 Host transcript**；只有真正停在 `/` 的 `empty` 才清空。绝不用 `null` 混合「空会话」与「未知页面」两种含义。
+- **首条消息不会被误判为外部切换**：发送开始时记录本轮起始 location；`classifyDuringSend` 只接受「从 `/` 开始 → 第一次出现的 session id」为 `accept-created`（DeepSeek 为本次发送创建），此后的**另一个** id 才是 external。`accept-created` 一路传到 Host 的 controller 并触发 `markKnown`，因此**不会重新读取/替换 transcript**（实测：发送前后 `messages[].id` 完全不变）。
+- **生成中外部切换 = reader 隔离 + 安全收尾**：`sessionInterrupted` 与 `stopRequested` **严格分开**；检测到 external 时立即把 `currentDeltaReceiver` / `currentReasoningReceiver` 置空，final read **跳过页面**（否则会读到新会话的最后一条回复）改用「已收到的最后一帧」，不点击 DeepSeek 的 Stop；空正文不再报 `empty reply from DeepSeek`（`emptyReplyError(content, stopRequested, sessionInterrupted)`）。
+- **pending latest-wins**：`chat.sending` 为真或 PageGuard 被占（DSH 自己的 newChat/switchChat）时不争抢页面，只把最新 location 停在 `pending`；三类操作结束后 `drain()` 应用它。
+- **DSH 自身操作不产生重复同步**：`newChat` / `switchChat` 成功后由 route 调用 `markKnown({ kind: 'empty' } / { kind: 'session', id })`；watcher 收到同位置事件时按 `lastKnown` 去重（no-op）。
+- **PageGuard 保持不变**：send / newChat / switchChat / external session sync 四者继续共用同一个 guard，永不并发操作页面。
+- **page 重建**（`showLogin` 新建 page）时 watcher 随 `attachListeners` 一起重挂。
+- **Client 零改动**：同步只改 Host store → SSE，三个界面天然一致（无 UI、无列表、无多会话缓存）。
+- **实机验证（Phase 08.1，真实产品代码）**：外部切换到历史会话（快速排序，15 条）→ Host 自动替换；外部 New chat → Host 自动清空；从 `/` 发送首条 → `messages[].id` 在 send 与 drain 前后均不变（无重复重建）；**生成中切换** → `handleChatMessage` 返回 200（无 empty reply）、deltas 不含目标会话任何内容、生成结束后 Host 一次性切换到目标会话的 transcript。
 - token / cookie 不离开 browser context。

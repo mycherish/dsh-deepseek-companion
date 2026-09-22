@@ -2,15 +2,14 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import { handleChatMessage } from '../src/host/chat.ts'
+import { createPageGuard, type PageGuard } from '../src/host/guard.ts'
 import {
-  createNewChatGuard,
   handleNewChatRequest,
   newChatInPage,
   newChatReadyInPage,
   normalizeNewChatOutcome,
   type NewChatCapableBrowser,
   type NewChatEnv,
-  type NewChatGuard,
   type NewChatOptions,
 } from '../src/host/new-chat.ts'
 import { createCompanionStateStore } from '../src/host/state.ts'
@@ -315,7 +314,7 @@ test('D: browser 未就绪 → 503，既有消息保持不变', async () => {
   const store = createCompanionStateStore()
   store.appendChatMessage('user', '旧消息')
 
-  const result = await handleNewChatRequest(store, null, createNewChatGuard())
+  const result = await handleNewChatRequest(store, null, createPageGuard())
 
   assert.equal(result.status, 503)
   assert.equal(result.body.error, 'browser not ready')
@@ -328,7 +327,7 @@ test('D: 生成中 → 409，完全不触碰 browser，也绝不清空消息', a
   store.setChatSending(true)
   const { browser, state } = stubBrowser(async () => {})
 
-  const result = await handleNewChatRequest(store, browser, createNewChatGuard())
+  const result = await handleNewChatRequest(store, browser, createPageGuard())
 
   assert.equal(result.status, 409)
   assert.equal(result.body.error, 'chat is busy')
@@ -347,7 +346,7 @@ test('D: 成功 → 页面先确认、Host 后清空（成功后 messages 为空
     seenByPage.push(store.getState().chat.messages.length)
   })
 
-  const result = await handleNewChatRequest(store, browser, createNewChatGuard())
+  const result = await handleNewChatRequest(store, browser, createPageGuard())
 
   assert.equal(result.status, 200)
   assert.deepEqual(result.body, { ok: true })
@@ -363,7 +362,7 @@ test('D: 页面失败 → 500 + 原因，且 Host 消息完全不变（绝不先
     throw new Error('new chat control not found')
   })
 
-  const result = await handleNewChatRequest(store, browser, createNewChatGuard())
+  const result = await handleNewChatRequest(store, browser, createPageGuard())
 
   assert.equal(result.status, 500)
   assert.equal(result.body.error, 'new chat control not found')
@@ -496,7 +495,7 @@ function deferred(): { promise: Promise<void>; resolve: () => void } {
 }
 
 test('G: tryClaim 是同步原子的——同一时刻只有一个持有者', () => {
-  const guard: NewChatGuard = createNewChatGuard()
+  const guard: PageGuard = createPageGuard()
 
   assert.equal(guard.inProgress(), false)
   assert.equal(guard.tryClaim(), true)
@@ -510,7 +509,7 @@ test('G: tryClaim 是同步原子的——同一时刻只有一个持有者', ()
 
 test('G-A: newChat 进行中 → 发送被 409 拒绝，且 sendMessage 零调用', async () => {
   const store = createCompanionStateStore()
-  const guard = createNewChatGuard()
+  const guard = createPageGuard()
   const gate = deferred()
   const { browser } = stubBrowser(() => gate.promise)
 
@@ -530,7 +529,7 @@ test('G-A: newChat 进行中 → 发送被 409 拒绝，且 sendMessage 零调�
   )
 
   assert.equal(result.status, 409)
-  assert.equal(result.body.error, 'new chat in progress')
+  assert.equal(result.body.error, 'page operation in progress')
   assert.equal(sendCalls, 0, 'sendMessage 绝不能被调用')
   assert.equal(store.getState().chat.messages.length, 0, '被拒绝的发送不得留下任何消息')
 
@@ -542,7 +541,7 @@ test('G-A: newChat 进行中 → 发送被 409 拒绝，且 sendMessage 零调�
 test('G-B: 三个界面同时请求 newChat → 真实控件最多点击一次（其余 409）', async () => {
   const store = createCompanionStateStore()
   store.appendChatMessage('user', '旧消息')
-  const guard = createNewChatGuard()
+  const guard = createPageGuard()
   const gate = deferred()
   const { browser, state } = stubBrowser(async () => {
     await gate.promise
@@ -557,9 +556,9 @@ test('G-B: 三个界面同时请求 newChat → 真实控件最多点击一次�
   const b = await loserA
   const c = await loserB
   assert.equal(b.status, 409)
-  assert.equal(b.body.error, 'new chat already in progress')
+  assert.equal(b.body.error, 'page operation in progress')
   assert.equal(c.status, 409)
-  assert.equal(c.body.error, 'new chat already in progress')
+  assert.equal(c.body.error, 'page operation in progress')
   assert.equal(state.calls, 1, '第二/第三个请求绝不触碰页面')
 
   gate.resolve()
@@ -572,7 +571,7 @@ test('G-B: 三个界面同时请求 newChat → 真实控件最多点击一次�
 test('G-C: browser.newChat 抛错 → guard 在 finally 正确释放，下一次可以重试', async () => {
   const store = createCompanionStateStore()
   store.appendChatMessage('user', '旧消息')
-  const guard = createNewChatGuard()
+  const guard = createPageGuard()
   let fail = true
   const { browser, state } = stubBrowser(async () => {
     if (fail) throw new Error('new chat did not open')
@@ -594,7 +593,7 @@ test('G-C: browser.newChat 抛错 → guard 在 finally 正确释放，下一次
 test('G-D: newChat 成功后 guard 释放 → 下一条发送正常', async () => {
   const store = createCompanionStateStore()
   store.appendChatMessage('user', '旧消息')
-  const guard = createNewChatGuard()
+  const guard = createPageGuard()
   const { browser } = stubBrowser(async () => {})
 
   assert.equal((await handleNewChatRequest(store, browser, guard)).status, 200)

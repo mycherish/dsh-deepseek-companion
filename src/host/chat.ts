@@ -6,21 +6,12 @@
  * without a real browser or connection service.
  */
 import type { AssistantReply, Citation } from '../shared/state.ts'
+import type { PageOperationBlocker } from './guard.ts'
 import type { CompanionStateStore } from './state.ts'
 
 export interface ChatSendResult {
   status: 200 | 409 | 500
   body: { reply?: string; error?: string }
-}
-
-/**
- * Optional Host-side exclusion a send must respect (Phase 07L): while a
- * new-chat page switch is in flight the page belongs to that switch, so a send
- * is refused instead of racing it. Defined here (not imported from the new-chat
- * module) because a send only needs this one read.
- */
-export interface ChatSendBlocker {
-  inProgress(): boolean
 }
 
 export async function handleChatMessage(
@@ -32,13 +23,13 @@ export async function handleChatMessage(
     onCitations: (citations: Citation[]) => void,
   ) => Promise<AssistantReply>,
   message: string,
-  /** A new-chat switch owns the page right now → refuse without touching it. */
-  newChatGuard?: ChatSendBlocker,
+  /** A page operation (new chat / history switch) owns the page right now → refuse without touching it. */
+  pageGuard?: PageOperationBlocker,
 ): Promise<ChatSendResult> {
-  // A new-chat switch owns the page — never start a send against it, and never
+  // A page operation owns the page — never start a send against it, and never
   // append a user message that could not be sent.
-  if (newChatGuard?.inProgress() === true) {
-    return { status: 409, body: { error: 'new chat in progress' } }
+  if (pageGuard?.inProgress() === true) {
+    return { status: 409, body: { error: 'page operation in progress' } }
   }
   // Concurrency gate: atomically claim the send slot before touching messages,
   // so a busy second request is rejected without a stray user message.

@@ -87,6 +87,26 @@ export interface AssistantReply {
   format: ChatFormat
 }
 
+/**
+ * One DeepSeek history entry as read from the sidebar (Phase 08). Read-only
+ * projection: `id` comes from the entry's own href — never from a hash class,
+ * and never from the title (two chats may share a title).
+ */
+export interface ChatSessionSummary {
+  /** Conversation id parsed from the sidebar link's href. */
+  id: string
+  /** Sidebar title — display only, never a key. */
+  title: string
+  /** Whether this entry is the conversation currently open in the page. */
+  active: boolean
+}
+
+/**
+ * A chat message before the Host assigns its id (Phase 08 history restore).
+ * Only the fields the Host already models — never React props, HTML or a token.
+ */
+export type ChatMessageInput = Omit<ChatMessage, 'id'>
+
 export interface CompanionState {
   status: 'ready'
   revision: number

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNod
 import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import {
+  fetchChatSessions,
   sendChatMessage,
   setDeepThink,
   setSearch,
@@ -9,6 +10,7 @@ import {
   startNewChat,
   stopChatMessage,
   subscribeCompanionState,
+  switchChatSession,
 } from './api.ts'
 import { remarkCitations } from './remark-citations.ts'
 import { STOP_PHASE_LABEL, initialStopUiState, reduceStopUi, stopPhase } from './stop-state.ts'
@@ -16,6 +18,7 @@ import type {
   ChatFormat,
   ChatMessage,
   ChatReasoning,
+  ChatSessionSummary,
   Citation,
   ComposerToggleState,
   DeepSeekStatus,
@@ -169,6 +172,77 @@ const newChatButtonStyle = (disabled: boolean): CSSProperties => ({
   lineHeight: '18px',
   fontFamily: 'inherit',
 })
+
+// --- History sessions (Phase 08) ---------------------------------------------
+// A lightweight list: titles + the current marker, one click to switch. The
+// Host stays the only source of the transcript — this view never caches another
+// conversation's messages.
+
+const historyButtonStyle = (disabled: boolean): CSSProperties => ({
+  padding: '3px 10px',
+  borderRadius: 999,
+  border: '1px solid var(--dsw-alias-border-l3)',
+  background: 'transparent',
+  color: disabled ? 'var(--dsw-alias-label-secondary)' : 'var(--dsw-alias-label-primary)',
+  cursor: disabled ? 'not-allowed' : 'pointer',
+  opacity: disabled ? 0.5 : 1,
+  fontSize: 12,
+  lineHeight: '18px',
+  fontFamily: 'inherit',
+})
+
+const historyPanelStyle: CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 2,
+  maxHeight: 180,
+  overflowY: 'auto',
+  padding: 4,
+  border: '1px solid var(--dsw-alias-border-l3)',
+  borderRadius: 8,
+  flexShrink: 0,
+}
+
+const historyItemStyle = (active: boolean, disabled: boolean): CSSProperties => ({
+  display: 'flex',
+  alignItems: 'center',
+  gap: 6,
+  padding: '4px 8px',
+  border: 'none',
+  borderRadius: 6,
+  background: active ? 'var(--dsw-alias-interactive-bg-hover)' : 'transparent',
+  color: 'var(--dsw-alias-label-primary)',
+  cursor: disabled ? 'not-allowed' : 'pointer',
+  opacity: disabled && !active ? 0.6 : 1,
+  fontSize: 12,
+  lineHeight: '18px',
+  fontFamily: 'inherit',
+  textAlign: 'left',
+  width: '100%',
+  overflow: 'hidden',
+  whiteSpace: 'nowrap',
+  textOverflow: 'ellipsis',
+})
+
+const historyActiveStyle: CSSProperties = {
+  marginLeft: 'auto',
+  flexShrink: 0,
+  color: 'var(--dsw-alias-label-secondary)',
+  fontSize: 11,
+}
+
+const historyTitleStyle: CSSProperties = {
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
+}
+
+const historyHintStyle: CSSProperties = {
+  padding: '2px 6px',
+  color: 'var(--dsw-alias-label-secondary)',
+  fontSize: 12,
+  lineHeight: '18px',
+}
 
 /** One DeepSeek composer switch, mirrored from the Host (never optimistic). */
 function ComposerTogglePill({
@@ -451,6 +525,11 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
   const [togglingSearch, setTogglingSearch] = useState(false)
   /** Local in-flight flag for 新建聊天 — blocks a second click until the Host answers (Phase 07L). */
   const [startingNew, setStartingNew] = useState(false)
+  /** History panel (Phase 08): read-only list, loaded on demand, never cached. */
+  const [historyOpen, setHistoryOpen] = useState(false)
+  const [sessions, setSessions] = useState<ChatSessionSummary[] | null>(null)
+  const [loadingSessions, setLoadingSessions] = useState(false)
+  const [switching, setSwitching] = useState(false)
   const listRef = useRef<HTMLDivElement>(null)
 
   useEffect(
@@ -474,6 +553,9 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
   const stopping = stopUi.stopping
   const busy = submitting || stopUi.sending
   const phase = stopPhase({ sending: busy, stopping })
+  // Any in-flight page operation (sending, new chat, switch) blocks the other
+  // entry points — the Host refuses the same combinations with 409.
+  const pageBusy = busy || startingNew || switching
 
   // Keep the newest message in view.
   useEffect(() => {
@@ -541,6 +623,47 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
       setError(e instanceof Error ? e.message : '新建聊天失败')
     } finally {
       setStartingNew(false)
+    }
+  }
+
+  /** Load (or refresh) the DeepSeek history list. Read-only, never cached. */
+  const loadSessions = async (): Promise<void> => {
+    setLoadingSessions(true)
+    setError(null)
+    try {
+      setSessions(await fetchChatSessions(origin))
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '读取历史会话失败')
+    } finally {
+      setLoadingSessions(false)
+    }
+  }
+
+  const toggleHistory = (): void => {
+    if (pageBusy || loadingSessions) return
+    const next = !historyOpen
+    setHistoryOpen(next)
+    if (next) void loadSessions()
+  }
+
+  /**
+   * Ask the Host to open a history conversation. The Host clicks the real
+   * DeepSeek link and replaces the transcript only after the switch is
+   * confirmed — this view waits for the push, so all three surfaces stay in
+   * sync. The list is refreshed afterwards so the current marker moves.
+   */
+  const switchTo = async (conversationId: string): Promise<void> => {
+    if (pageBusy) return
+    setSwitching(true)
+    setError(null)
+    try {
+      await switchChatSession(origin, conversationId)
+      await loadSessions()
+      setHistoryOpen(false)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '切换会话失败')
+    } finally {
+      setSwitching(false)
     }
   }
 
@@ -657,18 +780,53 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
           onToggle={(next) => void toggleMode('search', next)}
         />
         {deepThink.available || search.available ? null : <span style={toggleHintStyle}>开关不可用</span>}
+        {/* History sessions (Phase 08): read-only list; switching goes through
+            the same Host page guard as new chat. */}
+        <button
+          type="button"
+          style={historyButtonStyle(pageBusy || loadingSessions)}
+          disabled={pageBusy || loadingSessions}
+          title="查看并切换 DeepSeek 历史会话"
+          onClick={toggleHistory}
+        >
+          {historyOpen ? '收起历史' : '历史会话'}
+        </button>
         {/* New chat (Phase 07L): disabled while a reply streams, so a
             generation is never yanked out from under the page. */}
         <button
           type="button"
-          style={newChatButtonStyle(busy || startingNew)}
-          disabled={busy || startingNew}
+          style={newChatButtonStyle(pageBusy)}
+          disabled={pageBusy}
           title="开始新的 DeepSeek 会话（清空当前聊天）"
           onClick={() => void startNew()}
         >
           {startingNew ? '新建中…' : '新建聊天'}
         </button>
       </div>
+      {/* History list (Phase 08): titles + the current marker. Every entry is
+          disabled while a page operation is in flight; the transcript is always
+          the Host's push, never a local copy. */}
+      {historyOpen ? (
+        <div style={historyPanelStyle}>
+          {sessions === null ? <div style={historyHintStyle}>{loadingSessions ? '读取中…' : '暂无数据'}</div> : null}
+          {sessions !== null && sessions.length === 0 ? (
+            <div style={historyHintStyle}>没有可用的历史会话</div>
+          ) : null}
+          {(sessions ?? []).map((session) => (
+            <button
+              key={session.id}
+              type="button"
+              style={historyItemStyle(session.active, pageBusy)}
+              disabled={pageBusy || session.active}
+              title={session.active ? '当前会话' : session.title}
+              onClick={() => void switchTo(session.id)}
+            >
+              <span style={historyTitleStyle}>{session.title === '' ? '未命名会话' : session.title}</span>
+              {session.active ? <span style={historyActiveStyle}>当前</span> : null}
+            </button>
+          ))}
+        </div>
+      ) : null}
       <div style={inputRowStyle}>
         <textarea
           style={inputStyle}
