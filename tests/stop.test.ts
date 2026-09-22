@@ -288,11 +288,11 @@ test('幂等 C: Host API 在幂等成功时仍返回 200 + stopped:true', async 
 
 test('幂等 D: 上一轮 Stop 不会让下一轮的空回复变成合法', () => {
   // Round 1 was stopped → its empty final reply is a normal outcome.
-  assert.equal(emptyReplyError(true), null)
+  assert.equal(emptyReplyError('', true), null)
 
   // The flag is reset when that send ends, so round 2 has no stop to justify an
   // empty reply: it must fail with the original error.
-  assert.equal(emptyReplyError(false), 'empty reply from DeepSeek')
+  assert.equal(emptyReplyError('', false), 'empty reply from DeepSeek')
 })
 
 test('幂等 D: 每轮 send 的 stopRequested 生命周期——开始前与结束后都复位', () => {
@@ -303,7 +303,7 @@ test('幂等 D: 每轮 send 的 stopRequested 生命周期——开始前与结�
   for (const stopped of [true, false]) {
     let stopRequested = false // ← reset before the send starts
     stopRequested = stopped // ← stop arrives mid-stream (or not)
-    rounds.push({ stopRequested, emptyReplyLegal: emptyReplyError(stopRequested) === null })
+    rounds.push({ stopRequested, emptyReplyLegal: emptyReplyError('', stopRequested) === null })
     stopRequested = false // ← finally
     assert.equal(stopRequested, false)
   }
@@ -312,6 +312,46 @@ test('幂等 D: 每轮 send 的 stopRequested 生命周期——开始前与结�
     { stopRequested: true, emptyReplyLegal: true },
     { stopRequested: false, emptyReplyLegal: false },
   ])
+})
+
+// --- 回归 A / B / C / D. emptyReplyError 的完整真值表 -------------------------
+
+test('回归 A: 非空正文 + 未停止 → null（本次 bug 的守门测试）', () => {
+  // 普通发送的路径：finalReply 有内容、stopRequested === false。
+  // 只判断 stopRequested 的旧签名会在这里错误地返回 'empty reply from DeepSeek'。
+  assert.equal(emptyReplyError('正常正文', false), null)
+})
+
+test('回归 B: 非空正文 + 已停止 → null', () => {
+  assert.equal(emptyReplyError('正常正文', true), null)
+})
+
+test('回归 C: 空正文 + 未停止 → 仍然报错', () => {
+  assert.equal(emptyReplyError('', false), 'empty reply from DeepSeek')
+})
+
+test('回归 D: 空正文 + 已停止 → null（07J 的 Stop 例外）', () => {
+  assert.equal(emptyReplyError('', true), null)
+})
+
+test('回归: 只有「空正文且未停止」才报错（完整真值表）', () => {
+  const table = [
+    { content: 'x', stop: false, expected: null },
+    { content: 'x', stop: true, expected: null },
+    { content: '', stop: false, expected: 'empty reply from DeepSeek' },
+    { content: '', stop: true, expected: null },
+  ]
+  for (const row of table) {
+    assert.equal(
+      emptyReplyError(row.content, row.stop),
+      row.expected,
+      `content=${JSON.stringify(row.content)} stopRequested=${row.stop}`,
+    )
+  }
+})
+
+test('回归: content 不做 trim（纯空白正文不算空回复）', () => {
+  assert.equal(emptyReplyError('   ', false), null)
 })
 
 // --- I. stop does not disturb the other phases ------------------------------

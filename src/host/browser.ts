@@ -641,10 +641,11 @@ export async function createDeepSeekBrowser(
       replyThrottle.push(finalReply)
       replyThrottle.flush()
 
-      // An empty reply is only an error when nobody asked to stop: a stop that
-      // arrived before the first token is a NORMAL outcome, and whatever partial
-      // reply/reasoning already streamed has been flushed above and is kept.
-      const emptyError = emptyReplyError(stopRequested)
+      // A non-empty reply is always fine. An EMPTY one is only an error when
+      // nobody asked to stop: a stop that arrived before the first token is a
+      // NORMAL outcome, and whatever partial reply/reasoning already streamed has
+      // been flushed above and is kept.
+      const emptyError = emptyReplyError(finalReply.content, stopRequested)
       if (emptyError !== null) throw new Error(emptyError)
 
       // Hand the citation work off BEFORE returning. The reply is already

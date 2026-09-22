@@ -56,12 +56,19 @@ export function decideStopAction(state: StopGuardState): StopAction {
 }
 
 /**
- * An empty final reply is only acceptable when the user asked to stop THIS send.
- * A genuinely empty reply must keep failing: a stop from an EARLIER round must
- * never make a later failure look like a success, which is why the flag is reset
- * both before a send starts and when the send flow ends.
+ * Is this final reply acceptable, or must the send fail?
+ *
+ * A NON-EMPTY reply is never an error — it is the normal case, and checking it
+ * first is what keeps a plain send from being reported as "empty reply".
+ *
+ * An empty reply is only acceptable when the user asked to stop THIS send. A stop
+ * from an EARLIER round must never make a later failure look like a success, which
+ * is why the flag is reset both before a send starts and when the send flow ends.
+ *
+ * `content` is compared with `=== ''` (the original pre-07J semantics — no trim).
  */
-export function emptyReplyError(stopRequested: boolean): string | null {
+export function emptyReplyError(content: string, stopRequested: boolean): string | null {
+  if (content !== '') return null
   return stopRequested ? null : 'empty reply from DeepSeek'
 }
 
