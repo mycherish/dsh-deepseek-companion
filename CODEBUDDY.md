@@ -5,7 +5,7 @@
 项目目标：DeepSeek Web Companion for DSH —— 在 DSH 中提供一个可停靠、可独立窗口打开的
 DeepSeek 网页聊天工具，复用用户自己的 `chat.deepseek.com` 登录状态，不消耗 API 余额。
 
-主要技术：TypeScript、Node.js、Cordis、DeepSeek Harness、React（后续）、Playwright（后续）。
+主要技术：TypeScript、Node.js、Cordis、DeepSeek Harness、React（Client/Dock/Float/Pop-out）、Playwright（Host 侧常驻浏览器）。
 
 开发前必须阅读：
 

@@ -15,9 +15,13 @@ DeepSeek Web Companion plugin for [DeepSeek Harness](https://github.com/deepseek
 - **不是** OpenAI-compatible Gateway。
 - **不消耗** DeepSeek API 余额；但仍受 DeepSeek 网页端本身的使用限制与风控约束。
 
-## 当前版本
+## 当前进度
 
-`0.0.1` —— 当前仅完成工程初始化（Phase 01）。除最小插件骨架外，尚未实现任何业务功能。
+已完成 **Phase 01–08.2**：插件骨架与注入 → Host State / HTTP+SSE → 常驻浏览器与登录 → 文本聊天（流式、Markdown、Deep Think、智能搜索、引用、Stop、新建会话）→ 历史会话列表 / 切换 / 外部导航同步 → 统一状态模型收口。
+
+进行中：**Phase 18A 图片发送 —— 设计已定稿（design finalized / awaiting implementation），尚未写任何实现代码**。其余 Phase 见 [docs/roadmap.md](docs/roadmap.md)。
+
+> 尚未实现：图片发送、文件附件、浏览器恢复、代理、Task Brief 等 —— 详见路线图，不要再把未实现能力当作业已可用。
 
 ## 开发
 

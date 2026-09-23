@@ -468,3 +468,400 @@ DeepSeek page（URL pathname / 侧栏 href，标准 DOM）
 - **「当前」标记实时同步**：历史浮层优先用 Host 的 `currentSession.id` 高亮（含用户在 DeepSeek 窗口内手动切换），列表自身的 `active` 只在 Host 尚无 id 时兜底。
 - **不用 React fiber 做状态**：本次全部新增状态都来自 URL / 标准 DOM / 既有 store 写入；`readTranscriptInPage` 里 fiber 只用于读取 DeepSeek 自己的 raw Markdown（既有行为，未改动）。
 - **测试**：`tests/state.test.ts`（connection/currentSession/composer/message 状态与三界面快照一致）、`tests/state-compat.test.ts`（兼容层 + 旧状态迁移）、`tests/stop-state.test.ts`（Host 停止标记让未点击界面也显示「停止中…」）、`tests/chat.test.ts` / `tests/stop.test.ts` / `tests/new-chat.test.ts` / `tests/sessions.test.ts` / `tests/session-sync.test.ts`（各自的不回归用例）。
+
+## DeepSeek 图片发送（Phase 18 · 18A 设计已收口，**未实现**）
+
+> 本节是**设计文档**，不是已完成架构。所有「实测」结论来自真实页面上的两轮探测（2026-09-23 能力 / DOM / 历史恢复；2026-09-24 上传响应关联与失败路径），用 **companion-test profile 的临时副本** + 独立 Playwright 实例完成；仓库中**尚无任何图片实现代码**。18B 只保留结论，本轮不细化。
+
+### 实测事实（真实 DeepSeek 页面）
+
+**上传入口**
+
+- 整页只有 **一个** `input[type=file]`：`multiple=true`，`accept` 是一份超长扩展名清单（图片与文档混在一起，**不是** `image/*`），**没有** `aria-label` / `title` / `name`，且视觉隐藏（`offsetParent === null`）。UI 上的附件图标按钮只是替用户调 `input.click()`。
+- Playwright 直接 `setInputFiles()` 写这个隐藏 input 即可走同一条路径（无需点击按钮，实测反复可用）。
+- **粘贴**与**拖拽**都真实支持：手工派发带 `File` 的 `ClipboardEvent('paste')` 与 `DragEvent('drop')` 都触发了真实 `upload_file` 请求。
+
+**上传与引用**
+
+- `POST /api/v0/file/upload_file`，`Content-Type: multipart/form-data`（浏览器原生 FormData），**不需要 conversationId**（在 `/` 空会话上也能上传）。
+- 响应结构：`data.biz_data = { id: "file-<uuid>", status, file_name, file_size, is_image, model_kind, audit_result, … }`；随后 SPA 再 `GET /api/v0/file/fetch_files?file_ids=file-<uuid>` 取元数据。
+- **页面的**草稿预览是**本地 blob**：`img[src^="blob:"]`（64×64，外层是 `div[role=button]`，无 aria/title）；Companion 只用它做内部 `previewIdentity`，**不作为 Client 的图片 src**。
+- 发送时 `POST /api/v0/chat/completion`（JSON）用 **`ref_file_ids: ["file-<uuid>"]`** 引用图片：图片**不进入 prompt**、不 base64；只发图片时 `prompt === ""`。
+- 会话创建仍由 SPA 负责（`POST /api/v0/chat_session/create`），与 Phase 07L 一致。
+
+**草稿生命周期**
+
+- 上传是**后台异步**的：attach 后 ~120ms 缩略图即出现（本地 blob），上传失败时草稿卡片显示 `Upload failed` 文本，composer 仍可继续输入。**这是 DeepSeek 页面自身的缩略图**，Companion 不复用它的 `blob:` src（见「Client UI 边界：attachment card」）。
+- **删除入口**：hover **页面**卡片后其**右上角出现深色圆形 X**（`cursor: pointer` 的 `<svg>`，无 aria/title）；点击后草稿消失，且**不产生任何服务端删除请求**（纯前端移除，服务端文件保留）。
+- **只发图片**（无文本）是允许的；图片 + 文本同样允许。
+- **生成中仍可继续附加图片**（实测草稿 1 → 2 且上传真实发生）。
+- 实测至少可同时附加 **6 张**（未继续加压，未触及上限）。
+
+**上传响应关联与“成功”判据（2026-09-24 实测）**
+
+- 在 `setInputFiles()` **之前**注册 `page.waitForResponse(POST …/api/v0/file/upload_file)`，可以稳定拿到**本次动作触发的那一条** response（顺序 attach 三次全部命中，延迟 224 / 496 ms；`file_name` / `file_size` 与本地文件逐字节一致）→ 这就是关联证据，不需要任何 DOM 推断。
+- 成功响应的真实取值：`code: 0`、`data.biz_code: 0`、`data.biz_data.id: "file-<uuid>"`、`file_name`、`file_size`、`is_image: true`、**`status: "PENDING"`**。`PENDING` 是入库后的处理/审核状态，**不是失败** —— 所以判据**不能**写成 `status === 'SUCCESS'`。
+- 两条失败路径都实测过：`upload_file` 被 abort → `waitForResponse` **超时**（此时本地缩略图仍会出现，卡片显示 `Upload failed`）；服务端 500 → response 正常返回，但 `code: 50000` 且没有 `biz_data`。
+- 因此 `attachImage` 的“成功”必须是：**① 先注册 response waiter → ② setInputFiles → ③ 校验 HTTP 200 + `code`/`biz_code` + `id` 形状 + `file_name`/`file_size` 与本次文件一致 → ④ 才置 `ready`**，并带显式超时（建议 10 s）。**绝不以「blob 缩略图出现」或「草稿数 +1」作为成功判据**（失败时缩略图同样出现，实测已验证）。
+
+**草稿 identity 与定向删除（2026-09-24 实测）**
+
+- **唯一新增**：每次 `setInputFiles()` 前后对 `img[src^="blob:"]` 取差集，**恰好得到一个**新增 blob src（连续三次 attach 均 `newCount === 1`）→ 可作内部 `previewIdentity`。
+- **稳定**：identity 在 6 s 后、以及输入触发 React 重渲染后**完全不变**；删除后再 attach **不会复用**旧 identity。
+- **定向删除可行**：删除中间那张 → 目标 identity 消失、其它 identity 全部保留（再删第一张同样精确）；hover 后右上角命中元素是 `cursor: pointer` 的 `<svg>`（可作安全判据）。
+- **`ready` 后立即发送可行**：upload response（`status: PENDING`）之后马上点发送，completion 的 `ref_file_ids` 正常带上全部草稿文件 → Host **不需要**自己等 `fetch_files`（那是 SPA 内部步骤）。
+
+**历史恢复（切走再回）**
+
+- user 消息中的图片是 `img`：`src` 为 **CDN 绝对 URL** `https://files.deepseeksvc.com/api/file?...`（会话内实时为相对 `/api/file?...`），两处都带 `file_id` + 签名 `state` + `ty`；`alt` = 原始文件名。
+- **只有图片、没有文本的 user 消息**：`.ds-message` 的 `textContent === ""`，结构判定仍是 `user`，但当前 reader 的「空 user 气泡丢弃」规则会让**整条消息丢失**。
+
+### 对现有 transcript reader 的影响
+
+| 场景 | 现状（实测） | 结论 |
+|---|---|---|
+| 图片 + 文本 | 文本保留，图片被静默忽略 | 不破坏现有行为 |
+| 只有图片 | user 消息被丢弃 | ✗ 必须处理（18B） |
+| role 判定 | 结构判定（是否含 assistant 容器）不受图片影响 | 不需改动 |
+| session 恢复 | 图片不进入 `content` / `reasoning` / `citations` | 不污染现有字段 |
+
+### 数据模型（两个类型，**不复用**）
+
+```ts
+/** 已发送消息里的图片：没有 uploading / error —— 发出去的一定是 ready 的。 */
+export interface ChatAttachment {
+  id: string
+  kind: 'image'
+  name: string | null        // 原始文件名（历史恢复时来自 img.alt）
+  mimeType?: string
+  bytes?: number
+  remoteUrl?: string         // 历史恢复的 CDN 签名 URL（会过期，仅展示；18B）
+}
+// ChatMessage += { attachments?: ChatAttachment[] }
+
+/** 待发送草稿：只有它带上传生命周期。 */
+export interface ComposerAttachment {
+  id: string
+  kind: 'image'
+  name: string
+  mimeType: string
+  bytes: number
+  status: 'uploading' | 'ready' | 'error'
+  error?: string
+}
+// CompanionState.composer += { attachments: ComposerAttachment[] }
+```
+
+**Client UI 边界：attachment card，不是像素缩略图（18A 定稿）**
+
+`ComposerAttachment` 只带**元数据**（`id / kind / name / mimeType / bytes / status / error`），**没有**可供 Client 渲染图片的数据。因此 18A 的 Companion UI 统一使用 **attachment card / attachment draft UI**：
+
+```
+[image icon] foo.png   ×
+1.8 MB · 已就绪
+```
+
+- 三界面（Dock / Float / Pop-out）的卡片**完全由 Host `composer.attachments` 渲染**：image 图标 + `name` + `bytes` + `status`（`上传中… / 已就绪 / 失败`）+ `error` 文案 + remove 按钮（remove 走 `remove` action，Host 与页面一起删）。
+- **绝不**把原图 `dataBase64` / 原始字节放进 `CompanionState`；**绝不**通过 SSE 推送完整图片。
+- **绝不**把 Host `tempPath` 暴露给 Client。
+- **绝不**把 DeepSeek 页面的 `blob:` URL 当作 Client 的图片 `src`（页面内部对象，跨 surface 无意义）。
+- 真实 DeepSeek 页面**自己**的草稿缩略图照旧存在（那是页面的 UI，不是 Companion 的 UI）。
+- **真正的 Companion 图片 thumbnail 不在 18A**：留给 Phase 24 UI Polish 或独立后续阶段；18A 不实现 thumbnail proxy / gallery / lightbox。
+- 文档与实现中统一使用 **attachment card / attachment draft UI** 这一表述，避免被误解成“Companion 要渲染图片像素”。
+
+**Host 内部记录（与 shared state 分离，永不进 SSE）**：
+
+```ts
+/** 只存在于 Host 内存的附件资源记录：id 与 ComposerAttachment.id 一一对应。 */
+interface AttachmentRecord {
+  id: string                 // att-<uuid>，与 shared state 里的 ComposerAttachment.id 相同
+  tempPath: string           // 随机文件名的临时文件（Host 私有）
+  previewIdentity?: string   // 页面草稿缩略图的 blob src（仅 Host/Browser 使用）
+  deepSeekFileId?: string    // file-<uuid>（仅 Host 使用；Client 无用途，不下发）
+}
+```
+
+- **不进入 shared state 的东西**：`tempPath`、`previewIdentity`、`deepSeekFileId`、原始字节、`File` 句柄。
+- **两者必须同步维护**：`add` 成功 → 同时写 shared state 与 record；`remove` / commit / 清空草稿 / page 重建 / dispose → 同时删两边的条目（record 里的 `tempPath` 是删除临时文件的唯一依据）。
+- **`previewIdentity` 与 `deepSeekFileId` 是发送前置条件**：前者用于「页面 blob 身份集合 === Host 集合」的比对与定向删除，后者用于 `ref_file_ids` 精确校验；缺任何一个 → 该轮 send 直接 409（PRE-SUBMIT，不点 Send）。
+- **Host 权威、Client 只读**：`composer.attachments` 与已发送 `message.attachments` 都只能由 Host 写；Client 通过 add/remove action 请求变更，**不能直接改**。
+- **Client 本地**：仅 `File` 句柄与“正在读取文件”的瞬时 UI 态（不进 state）。
+- **三界面一致**：草稿是 Host state，`New chat` / 切换 / 外部导航 / page 重建都会清空它 —— Pop-out 添加的图片，Dock / Float 通过 SSE 立即看到同一份。
+- **不引入 `sessionId` 绑定**：草稿属于“当前 composer”；会话一变就丢弃（避免把 A 会话的图片带进 B）。
+
+### 文件传输边界（三种方案对比）
+
+| 方案 | 机制 | 内存 | 大图 | 文件名/MIME | DSH 能力 | 结论 |
+|---|---|---|---|---|---|---|
+| A | Client 直接把 `File` 交给 Host API，Host 再交给 Playwright | 全量驻留 Host | 受 buffered cap 限制 | 需显式传 name/type | `connection.fetch` 的 route 只有 `GET/HEAD/POST` + `buffered | streaming` 两种 body 模式，**没有** multipart helper | 不可行（`File` 不能跨 HTTP 直接传） |
+| B | Client base64/DataURL → Host 落临时文件 → `setInputFiles` | base64 膨胀 33%，Host 内存峰值高 | 受 `buffered` 上限（**300 MiB**）约束，桥接层整包驻留内存 | name/type 由 Client 提供，需校验 | 与 DSH 官方图片通道同构（官方 cap 就是按「200 MiB 聚合图片 + base64」推导的） | **可用，推荐** |
+| C | Client 二进制 POST（`requestBody: 'streaming'`）→ Host 边写盘边转发 | 常驻低（背压） | 无聚合上限 | 需在 header/query 带 name/type | 0.1.5-rc.2 的 `ConnectionFetchRoute.requestBody` 支持 `'streaming'`（无聚合上限、有背压） | 可行，但需自建一条 route + 流式落盘 + 清理，复杂度高于 B |
+
+**推荐：方案 B**，但**只用于 `add` 这一个动作用**：Client 把**一张**图片 base64 后 POST 给 Host，Host 落临时文件并驱动页面上传；**最终 `POST /chat` 不再携带任何图片字节**（矛盾点已消除，见下）。
+
+**限制**：单张 ≤ 20 MiB；草稿内聚合 ≤ 40 MiB（也远低于 DSH 的 300 MiB `buffered` cap，留给信头与其它字段）。若将来需要更大，再评估方案 C（`streaming`）作为 18C。
+
+**临时文件生命周期**（`<profileDir>/deepseek-companion-uploads/`，与浏览器 profile 同域）：
+
+| 时机 | 行为 |
+|---|---|
+| `add` 成功 | 文件保留（发送前页面随时可能需要重试/展示） |
+| `add` 失败 / 超时 | **立即删除**该临时文件，Host 记 `error`（保留草稿条目让用户看到失败） |
+| `remove` 成功 | 删除对应临时文件 |
+| send commit 确认（见「状态一致性」） | **只删 snapshot（consumedAttachmentIds）里条目的临时文件** |
+| send pre-submit 失败 | **不删**（草稿仍在，用户可重试） |
+| `newChat` / `switch` / 外部导航 / page 重建 / 插件 dispose | 清空草稿 → 删除全部临时文件 |
+| `remove` 一个 `error` 条目 | 见下「失败草稿的 remove 规则」；删除临时文件**幂等** |
+| Host 启动 | 扫描并清理遗留目录（上次异常退出的残留） |
+
+**失败草稿的 remove 规则（18A 定稿）**
+
+upload 失败时 record 有两种形态，remove 必须区分处理：
+
+| 失败发生点 | record 状态 | remove 行为 |
+|---|---|---|
+| **blob preview 已经出现**后失败（服务端 500 / `code: 50000` / 元数据校验不通过，页面已画出卡片） | **保留 `previewIdentity`**；临时文件按上表规则删除；`ComposerAttachment` 保持 `status: 'error'` + `error` 文案 | ① 按 `previewIdentity` 精确删除**页面上的失败卡片**（与正常草稿同一段几何点击逻辑，仍要求“目标 identity 消失、其它 identity 仍在”）；② 页面卡片确认消失后，才删除 Host 的 error attachment / record |
+| **blob preview 出现之前**就失败（`upload_file` 被 abort / 超时） | record **没有 `previewIdentity`** | **不执行任何页面点击**，只清 Host 的 error attachment / record |
+
+- `previewIdentity` 只在“页面确实画出了卡片”时写入，因此它**不会指向不存在的元素**；找不到 identity → 安全失败（409），绝不误删其它草稿。
+- 清理临时文件**必须幂等**：`unlink` 忽略 `ENOENT`（同一 record 可能经 remove / commit 清理 / newChat 清空 / dispose 多条路径到达），清理失败绝不允许阻断后续清理。
+- 失败条目的清理**只针对该 record**，不影响其它草稿。
+
+### Browser API（草案，未实现）
+
+```ts
+// Browser（Playwright 层；self-contained helper 与 sessions / new-chat 同风格）
+attachImage(input: { path: string; fileName: string; mimeType: string; bytes: number })
+  : Promise<{ ok: true; previewIdentity: string; deepSeekFileId: string | null } | { ok: false; error: string }>
+//   ⓪ before = 当前所有 img[src^="blob:"]（identity 基线）
+//   ① 注册 waitForResponse(POST /api/v0/file/upload_file)（超时 ~10s）
+//   ② input[type=file].setInputFiles([{ name: fileName, mimeType, buffer }])
+//   ③ 校验 HTTP 200 / code / biz_code / id 形状 / file_name / file_size 与本次文件一致
+//   ④ after = 当前所有 blob src；差集必须**恰好一个** → 它就是 previewIdentity
+//      （差集不为 1 → 失败：视为无法安全关联，返回 error 并让 Host 回滚）
+removeDraftAttachment(input: { previewIdentity: string }): Promise<boolean>
+//   ① 精确定位 img[src === previewIdentity] → 最近的 div[role=button] 卡片
+//   ② hover 卡片 → 点其右上角（命中元素必须是 cursor:pointer 的 <svg>）
+//   ③ 重新取 blob src：**目标 identity 必须消失**（其它 identity 必须仍在）→ 才返回 true
+countDraftAttachments(): Promise<number>   // 仅诊断用，**不作**任何成功判据
+// 发送：现有 sendMessage 只增加一个可选 onSubmitted（request 级 commit point），其余流程不变
+sendMessage(text, onDelta, onReasoning, onCitations?, onSubmitted?: (submitted: { refFileIds: string[] }) => void)
+//   ① 注册 requestPromise  = page.waitForRequest(isCompletionRequest)   （click 之前）
+//   ② 注册 responsePromise = page.waitForResponse(isCompletionRequest)  （沿用现有 generation 逻辑）
+//   ③ fill → click
+//   ④ request 兑现 → onSubmitted({ refFileIds: request.postDataJSON().ref_file_ids ?? [] }) 恰好一次
+//   ⑤ response 兑现 → response.finished()（生命周期不变）
+```
+
+- **上传与 sendMessage 的关系**：`attachImage` 在**选图时**完成（SPA 自己上传并持有 file id），`sendMessage` 只负责发文本；Host **不构造** `ref_file_ids`。
+- **上传由 Browser Host 全权拥有**：只有 Host 的浏览器能上传；Client 只投递字节、展示状态。
+- **多附件 / 同名文件**：Host 侧把 attachment 操作**串行化**（内部队列 + PageGuard），一次 `add` 只 attach 一个文件；关联靠「动作前注册的 response waiter」，再用 `file_name` / `file_size` 复核，因此**同名不同大小的文件也能区分**（实测通过）。
+- **response 到达顺序**：串行化后不存在并发竞态；若将来允许批量，则一次 `setInputFiles([...])` 对应 N 条 response，逐一按 name/size 匹配。
+- **页面重建**（`showLogin` 新建 page）：草稿随页面消失 → Host 清空 `composer.attachments` 并删除临时文件（不试图迁移）。
+- **Stop 只停 generation**：不动草稿（与真实页面一致）。
+
+### Host API（最小：一条 route，action 判别）
+
+- **一条 route**：`POST /api/deepseek-companion/chat/attachment`（**不用 DELETE** —— DSH 只支持 `GET/HEAD/POST`）。add / remove 操作的是同一个草稿集合，用 body 里的 `action` 判别，比两条 route 更少的注册/注销面。
+
+```jsonc
+// add：一次一张；Client 只投字节，id 与 status 由 Host 决定
+POST /api/deepseek-companion/chat/attachment
+{ "action": "add", "name": "a.png", "mimeType": "image/png", "dataBase64": "…" }
+→ 200 { "attachment": { "id": "att-…", "kind": "image", "name": "a.png",
+                        "mimeType": "image/png", "bytes": 40083,
+                        "status": "uploading" | "ready" | "error", "error": "…"? } }
+
+// remove：Host 先让页面删掉真实 draft，再删 state
+POST /api/deepseek-companion/chat/attachment
+{ "action": "remove", "id": "att-…" }
+→ 200 { "removed": true }               // 页面草稿确实减少 + state 已删
+→ 409 { "error": "page draft not removed" }   // 安全失败：Host state 与临时文件都不动
+```
+
+- 状态码：`400` 形状/MIME/尺寸非法、`409` 页面忙（guard）或页面草稿未被删除、`503` browser 未就绪。
+- `composer.attachments` **只能**由这两个 action 修改；Client 永远不发送 `status`。
+
+### 完整数据流（修正后）
+
+```
+① 选图（Dock / Float / Pop-out 任一处发起，结果全体可见）
+Client File → FileReader → base64
+  → POST /chat/attachment { action:'add' }
+  → Host：MIME 白名单(png/jpeg/webp/gif) + 尺寸/上限校验 → 写临时文件
+  → Browser：PageGuard claim → 注册 upload_file 的 response waiter → input.setInputFiles()
+  → DeepSeek SPA：multipart /api/v0/file/upload_file（页面自己持有 file-<uuid>）
+  → Host：校验 response → status='ready'（失败/超时 → 'error' + 删临时文件）
+  → SSE → 三界面同步（uploading / ready / error 都是 Host 状态）
+
+② 发送（**不再传图片字节**，且基于 snapshot）
+Client → POST /chat { message }            // 文本可以为空（见下）
+  → Host：入口检查 guard + uploading/error → consumedAttachmentIds = 当前 ready 的 id
+        → 逐条要求 record.previewIdentity / record.deepSeekFileId 存在（否则 409）
+        → 页面 blob 身份集合 === Host identity 集合（否则 409，不点 Send）
+  → Browser：sendMessage(text, …, onSubmitted)（request/response 两个 waiter 都在 click 前注册）
+  → ★ commit point：**completion REQUEST 已出现** →
+        ref_file_ids === expectedFileIds（去重排序比较）
+          ├─ 相等 → 写 user message.attachments → 只移除 snapshot 的 composer 条目 → 只删 snapshot 临时文件
+          └─ 不等 → post-submit integrity error：不写 attachments、不回滚草稿、只清理 snapshot 资源
+  → pre-submit 失败（含 request 未出现）：草稿 + record + 临时文件全部保留（可重试）
+  → post-submit 失败 / Stop / interrupted：附件已归属 user 消息，不回滚
+  → SSE → 三界面
+
+③ 删除草稿（发送前）
+Client → POST /chat/attachment { action:'remove', id }
+  → Browser：按 record.previewIdentity 定位卡片 → hover → 点右上角 X → 确认**该 identity** 消失
+  → 只有目标消失才删 Host state + record + 临时文件；否则 409（三者都不动）
+```
+
+### 只发图片（prompt === ""）
+
+- 真实页面允许 `prompt === ""` + `ref_file_ids`（实测）。
+- Phase 18A 的改动点只有两处门禁：Host 的 `/chat` 校验从「message 非空」放宽为「message 非空 **或** `composer.attachments` 中至少一条 `ready`」；`ChatView.send()` 的 `text === ''` 早退同理放宽。
+- **纯文本路径不变**：没有附件时仍然要求非空文本，`expectedFileIds` 为空集合，而实测纯文本发送的 `ref_file_ids === []` → 校验天然通过、行为与现在完全一致（回归测试覆盖）；request 级 commit point 对它只是提前判断“已提交”，不改变任何可见行为。
+
+### 状态一致性：send snapshot / commit point / attachment identity
+
+**发送必须用 snapshot，不能“发送结束后清空草稿”**（否则会误删发送开始后新增的附件）：
+
+```
+send 开始（已通过 guard 与 uploading/error 检查）
+  consumedAttachmentIds = composer.attachments.filter(a => a.status === 'ready').map(a => a.id)
+  // snapshot 之后，本轮只能碰这些 id
+```
+
+- 本轮 `message.attachments` **只由 snapshot 里的记录生成**；
+- 本轮清理（composer state + 临时文件）**只针对 snapshot 里的 id**；
+- 不在 snapshot 里的附件（例如提交后才出现的）**本轮绝不触碰**；
+- 由于生成期间 add/remove 被禁止（见下），snapshot 在整轮 send 内保持稳定。
+
+**发送前的 draft identity 闸门（严格模式）**：发送前必须比较**集合**，不能只比数量：
+
+```
+pageDraftIdentities = 页面当前所有 img[src^="blob:"] 的 src 集合
+hostDraftIdentities = 所有 AttachmentRecord.previewIdentity 集合
+
+pageDraftIdentities === hostDraftIdentities（集合完全相等）才允许发送
+否则 → /chat 409 "DeepSeek page contains image drafts not managed by Companion"
+       不点击 Send、不改 composer、不删临时文件
+```
+
+即 **Companion 不允许发送它无法追踪的页面图片草稿**（用户在 DeepSeek 页面手动拖入/粘贴的图片）。用户可先删掉页面上的外部草稿，或 New chat 后重试。
+
+**commit point = completion REQUEST 已经从页面发出**（不是 response 返回）。为什么不能用 response：`click → request 已发出 → 页面已消费图片 draft → 服务端迟迟不返回 / 连接被 reset` 时，response waiter 会超时，若把它当 pre-submit 就会**保留草稿**，造成 Host 与页面分叉。request 才是“页面已提交”的唯一可靠信号。
+
+```
+① requestPromise  = page.waitForRequest(isCompletionRequest)     ← 必须在 click 前注册
+② responsePromise = page.waitForResponse(isCompletionRequest)    ← 保留，用于既有 generation 生命周期
+③ page.fill(textarea, text)
+④ page.locator('.ds-button--primary').first().click()
+⑤ const committedRequest = await requestPromise   ← ★ commit point（已提交，不可回退）
+   onSubmitted(payload)                            ← 恰好一次；payload 由 committedRequest 现场解析
+   —— 校验 ref_file_ids（见下），再写入 user message.attachments
+⑥ const response = await responsePromise
+   if (response.request() !== committedRequest) → POST-SUBMIT ERROR（不是本轮的 response）
+   await response.finished()                       ← 之后只是 generation 生命周期
+```
+
+- 两个 waiter 必须共用同一个谓词 `isCompletionRequest(req)`（`method === 'POST'` 且 `new URL(url).pathname === '/api/v0/chat/completion'`），且在 click **之前**注册。
+- **request / response 强关联**：commit 后拿到 `committedRequest`，response 到达时**必须**校验 `response.request() === committedRequest`（同一对象引用，等价于“这条 response 属于本轮已提交的那个 request”）。**绝不允许**把另一条请求的 response 当作本轮 response；关联不成立 → 按 **post-submit generation/integrity error** 处理（不恢复草稿、不写 attachments、按 post-submit 清理）。
+- **request 超时前失败 = pre-submit**；**request 已发出之后**（response 超时 / HTTP 5xx / connection reset / `response.finished()` 抛错 / Stop / sessionInterrupted）**一律是 post-submit**。
+- **malformed completion payload 也是 post-submit**（request 一旦出现即为 COMMITTED，不因解析失败退回 PRE-SUBMIT）：`request.postData() === null`、`JSON.parse` 失败、payload 不是 object、`ref_file_ids` 不是 array、`ref_file_ids` 含非 string 元素、存在 duplicate file id、expected/actual mismatch —— **全部**归入 **POST-SUBMIT INTEGRITY ERROR**：不恢复 composer attachments、清理本轮 consumed snapshot 的 record/临时文件、**不写** `ChatMessage.attachments`、不影响 snapshot 之外的 attachment、写明确的 Host error 日志。
+- 实测（2026-09-24）：`click → request` 约 113 ms，`request → response headers` 约 31 ms，`response.finished()` 约 956 ms；**request 解析时 `request.postData()` 已可完整读取**，因此 `ref_file_ids` 校验可以在 commit 点同步完成，无需延迟。
+
+**`ref_file_ids` 精确校验（唯一性集合比较，不 fuzzy、不用 dedupe 掩盖）**：
+
+```
+expectedFileIds = consumedAttachmentIds → AttachmentRecord[] → deepSeekFileId[]
+
+规则（全部满足才算通过）：
+  1. expected 每一项都是合法非空 string
+  2. actual 必须是 array，且元素全部是合法非空 string
+  3. expected 不允许重复
+  4. actual   不允许重复                    ← [A] 与 [A, A] 必须判 mismatch
+  5. actual.length === expected.length
+  6. Set(actual) === Set(expected)          ← 只要求集合相等，不要求数组/DOM 顺序一致
+  任一不满足 → mismatch
+
+纯文本发送：expected = []；实测 ref_file_ids === [] → 天然通过（行为与现在一致）
+```
+
+**绝不**用 `dedupe(sort(actual)) === dedupe(sort(expected))` 这类比较：它会把重复项藏起来（`[A]` 与 `[A, A]` 会被误判为相等），而**重复的 file id 本身就是异常**（同一张图片被引用两次），必须暴露为 mismatch。
+- 校验**通过** → 把 snapshot 写成 `ChatAttachment[]` 写入本轮 user 消息 → 从 composer 移除 snapshot 的 id → 删除这些临时文件。
+- 校验**不通过**（request 已发出）→ **post-submit integrity error**：页面已经提交，附件的归属无法确证，因此
+  - **绝不**把附件放回 composer（页面已消费，回滚只会再次分叉）；
+  - 只清理 **snapshot 的** record 与临时文件，**绝不**碰其它 attachment；
+  - user 消息**不写** `attachments`（**不谎报**“图片已发送”）——这是最保守、最真实的数据策略；`assistant` 消息照常完成/中断，`error` 字段留在 Host 日志与该轮的错误记录里（`ChatMessage` 不新增“附件部分成功”的表达，避免假状态）。
+
+**三阶段最终定义**：
+
+| 阶段 | 触发条件 | 结果 |
+|---|---|---|
+| **PRE-SUBMIT** | 校验失败 / browser 未就绪 / PageGuard busy / **page↔Host draft identity 不一致** / ready record 缺 `previewIdentity` 或 `deepSeekFileId` / fill 或 click 抛错 / **completion REQUEST 未出现（request waiter 超时）** | composer、record、临时文件**全部保留**（等于没发生过）；user 消息沿用现有文本语义，不带 attachments；可重试 |
+| **COMMITTED** | **completion REQUEST 已出现**（`waitForRequest` 兑现） | 本轮 snapshot 进入已提交生命周期；`ref_file_ids` 唯一性集合校验**通过**则写入 `message.attachments`；一次且仅一次 `onSubmitted`。此后**任何**异常都不再回退（含 payload 无法解析） |
+| **POST-SUBMIT** | response 超时 / HTTP error / `response.finished()` 失败 / Stop / sessionInterrupted / 生成中途错误 / **`response.request() !== committedRequest`** / **ref_file_ids 不一致** / **malformed payload**（postData 为 null、JSON 解析失败、非 object、`ref_file_ids` 非 array 或含非 string、duplicate id） | **不恢复**草稿；只清理 **snapshot 的** record + 临时文件；不影响其它 attachment；**不写** `message.attachments`；记录明确 Host error |
+
+**`ChatMessage.attachments` 的写入时机（最终规则）**：`/chat` 先按现有语义创建 user 消息（纯文本行为不变）→ commit 点确认 + `ref_file_ids` 校验通过后才 `update` 该消息的 `attachments`。**request 发出前绝不写入永久 attachments**；已经提交但校验失败时**保持为空**（宁缺毋假）。
+
+**ready record 的三项前置条件**（发送前逐条检查，缺一即 PRE-SUBMIT 409）：
+
+1. `status === 'ready'`（不允许 `uploading` / `error`）；
+2. `AttachmentRecord.previewIdentity` 存在；
+3. `AttachmentRecord.deepSeekFileId` 存在（用于 `ref_file_ids` 比对）。
+
+### PageGuard 与草稿失效（唯一互斥规则）
+
+现状（真实代码）：**send 不持有 `PageGuard`** —— `handleChatMessage` 只在入口检查 `pageGuard.inProgress()`；guard 仅被 `newChat` / `switchChat` / 外部 session sync 在各自操作期间 claim。生成期间 `chat.sending === true` 才是互斥信号。因此 18A 的规则是：
+
+| 场景 | 规则 |
+|---|---|
+| `chat.sending === true` | **attach / remove / newChat / switch 一律 409**（新 route 必须显式检查 `sending`，不能只看 guard）；Client 图片按钮同时 disabled |
+| `attach` / `remove` 执行期间 | `guard.tryClaim()` 成功才继续，`finally` 释放；guard 被占用 → 409 `page operation in progress`（沿用现状） |
+| `send` 入口 | 现有 `guard.inProgress()` 检查即已覆盖“有 attach/remove 在飞”竞态 → **snapshot 取定时不可能有 attach/remove 在途** |
+| 草稿里有 `uploading` / `error` | 禁止 send（409 + Client 禁用） |
+| `newChat` / `switchChat` / 外部导航 / page 重建 | 清空 `composer.attachments` + 删临时文件 + 删内部 record；外部导航由 sessionSync 触发同一段清理 |
+| `Stop generation` | **不动草稿**（首版生成期间不允许新增，所以无需任何草稿善后） |
+| `attach` 失败/超时 | 删该临时文件，条目留 `error`（用户可 remove / 重选） |
+
+**生成期间不复制 DeepSeek 的“可继续挂图”能力**（YAGNI）：真实页面允许，但那会让 consumed snapshot 与下一轮草稿并发、并把 `PageGuard` 生命周期复杂化；18A 首版明确禁止，扩展留到后续 Phase。
+
+### 安全边界
+
+1. **临时文件名**：一律 `randomUUID()` 生成（如 `att-<uuid>`，扩展名由校验后的 MIME 推导），**绝不用用户文件名拼路径**；原始 `name` 只用于展示与上传 metadata（`setInputFiles` 的 `name`）。
+2. **MIME（Client 不可信）**：Host 按 **magic bytes** 判定，只接受 `png / jpeg / webp / gif` 四种（小型纯函数，无新依赖）；magic 与声明的 `mimeType` 不一致 → `400`；`<img>` 解码不属于 Host 职责。
+3. **base64**：严格解码（长度/字符集校验，非法 → `400`）；**解码后再计算真实 `bytes`**（不信任 Client 上报）；单张 ≤ 20 MiB、草稿聚合 ≤ 40 MiB、数量 ≤ 5 张，超限 → `400` 并给出具体原因。
+4. **状态写入**：`status` / `error` 只有 Host 能写；`previewIdentity`（blob src）与 `deepSeekFileId` 只存在 Host 内部 record，**永不进 shared state、永不下发 SSE**。
+
+### `ready` 的准确语义
+
+`ComposerAttachment.status === 'ready'` = **「`upload_file` 已被 DeepSeek 受理，并返回了有效 `file-<uuid>`，页面草稿已具备可提交条件」**。
+
+- 它**不是**“服务端审核/处理最终完成”：真实响应里 `biz_data.status === "PENDING"`（处理/审核中），`PENDING` **不是失败**，也**不必等待**。
+- **不需要 Host 调 `fetch_files`**：那是 SPA 自己的步骤。实测在 upload response 之后**立即**点发送，completion 的 `ref_file_ids` 正常带上全部草稿文件（`["file-<uuid>", …]`）。
+- UI 文案不得承诺审核结果（文案只说“已就绪/可发送”）。
+
+### UI 范围（最小）
+
+- composer 行新增「图片」按钮（`<input type="file" accept="image/*" multiple hidden>`，Client 侧仍按 MIME 白名单再过滤一次），沿用现有 DSH token 的 pill 样式。
+- 待发送草稿一律用 **attachment card**：image 图标 + `name` + `bytes` + 状态文案（`上传中… / 已就绪 / 失败`）+ `error` 文案 + remove 按钮；**不渲染图片像素**（无 thumbnail、无 base64、无页面 `blob:` src —— 见「Client UI 边界」）。
+- **删除走 `remove` action**（Host + 页面一起删），不是只删本地卡片；失败卡片同样按 `previewIdentity` 走 `remove`（见「失败草稿的 remove 规则」）。
+- 禁用规则：`sending`（与 Stop 抢主按钮）或 `pageBusy` 或 `uploading` 时禁用「图片」按钮；有 `uploading`/`error` 条目时禁用发送。
+- 不做 thumbnail proxy / gallery / lightbox / crop / 编辑器 / 非图片文件（真正的 Companion 缩略图留给 Phase 24 UI Polish 或独立阶段）。
+
+### 18A / 18B 拆分结论
+
+- **18A（发送图片）**：选图 → Host action → 页面上传 → 草稿状态（attachment card，无像素缩略图）→ 发送（request 级 commit point + `ref_file_ids` 校验）→ 消息 `attachments`。**可独立交付，且不依赖 18B。**
+- **18B（历史图片恢复）**：`readTranscriptInPage` 读 user 消息里的 `img`；只有图片的消息不再被丢弃；URL 映射必须基于**结构证据**（「这个 `img` 属于这条 `.ds-message`」），**禁止 fuzzy mapping**（不按顺序/数量猜对应关系）。签名 URL 过期后的展示降级需单独决定（例如只显示文件名占位）。
+- 若 18B 达不到结构证据标准，则**只交付 18A**，历史里继续表现为“该轮只有文本/空白”，不伪造。
+
+### 风险与未决项（实现前已知，均可接受）
+
+1. **`remove` 的控件是几何定位，但目标身份是精确的**：hover 后页面卡片右上角是无 aria 的 `<svg>`（几何点击），而**删哪一张由 `previewIdentity` 决定**（已实测唯一 / 稳定 / 不复用）；失败卡片（`status: 'error'`，仍带 `previewIdentity`）走同一段逻辑。缓解：identity 找不到、命中元素不是 `cursor:pointer` 的 `<svg>`、或点击后该 identity 仍在 → **安全失败（409，Host state + record + 临时文件都不动）**；绝不误删其它草稿。
+2. **草稿上限未知**：实测 ≥6 张，官方上限未确认 → Host 自设上限 5 张 + 明确错误提示。
+3. **上传被受理 ≠ 最终可用**：成功响应 `status: "PENDING"`（审核/处理中）。若最终审核失败，发送时的行为**未测**；Phase 18A 只保证“受理成功”，并在文档与 UI 文案上不承诺审核结果。
+4. **失败草稿“手动发送”行为未测**：因此设计上**禁止**在存在 `error` 草稿时发送（比 DeepSeek 页面更保守）。
+5. **签名 URL 过期**（18B 相关）：`state` 是签名参数，长期展示需降级或重新取 URL（额外 API）。
+6. **`accept` 不是 `image/*`**：文件选择器允许文档 → Client 必须自行按 MIME 白名单过滤（png/jpeg/webp/gif），不依赖 `accept`。
+7. **不新增生产依赖**：base64 编解码用浏览器 `FileReader` / Node `Buffer`。
+8. **外部手动草稿会被严格拒绝**（预期行为）：页面身份集合 === Host 集合是硬闸门，因此用户在 DeepSeek 页面自己拖入/粘贴的图片会让 `/chat` 返回 409，直到用户删掉它或 New chat。这是 18A 的明确取舍：**宁可拒发，也不发送无法追踪的图片**。
+9. **`ref_file_ids` 不一致时消息不带 attachments**（预期行为）：页面已提交、归属无法确证时按“宁缺毋假”处理——user 消息只保留文本，附件资源被清理，Host 记录 integrity error。若将来需要“部分成功”的可视表达，应作为独立 Phase 设计，不在 18A 引入。
