@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import { createCompanionStateStore } from '../src/host/state.ts'
+import { connectionFrom, type CompanionState } from '../src/shared/state.ts'
 
 test('初始 revision = 1 且 status = ready', () => {
   const store = createCompanionStateStore()
@@ -263,4 +264,249 @@ test('B: updateChatReasoning 空内容不创建空 reasoning（Deep Think 未开
   store.updateChatReasoning(assistant.id, '', 'text')
 
   assert.equal(store.getState().chat.messages[0]!.reasoning, undefined)
+})
+
+// --- Phase 08.2: connection（统一连接状态） ------------------------------------
+
+test('08.2 connection: browser 未就绪 → offline，与登录状态无关', () => {
+  const store = createCompanionStateStore()
+  assert.deepEqual(store.getState().connection, { status: 'offline', browserReady: false })
+
+  store.setDeepSeekStatus('logged_in')
+  assert.deepEqual(store.getState().connection, { status: 'offline', browserReady: false })
+})
+
+test('08.2 connection: browser 就绪 + logged_in → online；logged_out → login_required', () => {
+  const store = createCompanionStateStore()
+  store.setBrowserReady(true)
+  store.setDeepSeekStatus('logged_in')
+  assert.deepEqual(store.getState().connection, { status: 'online', browserReady: true })
+
+  store.setDeepSeekStatus('logged_out')
+  assert.deepEqual(store.getState().connection, { status: 'login_required', browserReady: true })
+})
+
+test('08.2 connection: error / 掉线都回到 offline（browserReady 保留真实值）', () => {
+  const store = createCompanionStateStore()
+  store.setBrowserReady(true)
+  store.setDeepSeekStatus('error')
+  assert.deepEqual(store.getState().connection, { status: 'offline', browserReady: true })
+
+  store.setBrowserReady(false)
+  assert.deepEqual(store.getState().connection, { status: 'offline', browserReady: false })
+})
+
+test('08.2 connection: 相同值不重复通知，真实变化恰好通知一次', () => {
+  const store = createCompanionStateStore()
+  const seen: string[] = []
+  store.subscribe((state) => seen.push(state.connection.status))
+  seen.length = 0 // ignore the subscribe replay
+
+  store.setBrowserReady(false) // 已是 false
+  assert.deepEqual(seen, [])
+
+  store.setBrowserReady(true)
+  assert.deepEqual(seen, ['offline'], 'browser 就绪但仍在检测 → offline')
+  store.setDeepSeekStatus('logged_in')
+  assert.deepEqual(seen, ['offline', 'online'])
+})
+
+test('08.2 connectionFrom: Host 与 Client 共用同一张映射表', () => {
+  assert.deepEqual(connectionFrom('checking', false), { status: 'offline', browserReady: false })
+  assert.deepEqual(connectionFrom('checking', true), { status: 'offline', browserReady: true })
+  assert.deepEqual(connectionFrom('logged_in', false), { status: 'offline', browserReady: false })
+  assert.deepEqual(connectionFrom('logged_in', true), { status: 'online', browserReady: true })
+  assert.deepEqual(connectionFrom('logged_out', true), { status: 'login_required', browserReady: true })
+  assert.deepEqual(connectionFrom('error', true), { status: 'offline', browserReady: true })
+})
+
+// --- Phase 08.2: currentSession（当前会话） ------------------------------------
+
+test('08.2 currentSession: 记录 id/title，相同值不重复通知', () => {
+  const store = createCompanionStateStore()
+  assert.deepEqual(store.getState().currentSession, { id: null, title: null })
+
+  let notifies = 0
+  store.subscribe(() => {
+    notifies += 1
+  })
+  notifies = 0
+
+  store.setCurrentSession({ id: 'a1', title: '会话 A' })
+  assert.deepEqual(store.getState().currentSession, { id: 'a1', title: '会话 A' })
+  assert.equal(notifies, 1)
+
+  store.setCurrentSession({ id: 'a1', title: '会话 A' })
+  assert.equal(notifies, 1, '完全相同的会话 → 不 notify')
+})
+
+test('08.2 currentSession: 同一会话的 title:null 不擦掉已知标题', () => {
+  const store = createCompanionStateStore()
+  store.setCurrentSession({ id: 'a1', title: '会话 A' })
+
+  // 页面再次报告同一 id（URL 每次导航都会推一遍），但没有标题信息。
+  store.setCurrentSession({ id: 'a1' })
+  store.setCurrentSession({ id: 'a1', title: null })
+  assert.deepEqual(store.getState().currentSession, { id: 'a1', title: '会话 A' })
+
+  // 换到别的会话 → 旧标题必须被清掉（它属于另一个会话）。
+  store.setCurrentSession({ id: 'b2' })
+  assert.deepEqual(store.getState().currentSession, { id: 'b2', title: null })
+})
+
+test('08.2 currentSession: 回到空会话（/）→ id 与 title 都清空', () => {
+  const store = createCompanionStateStore()
+  store.setCurrentSession({ id: 'a1', title: '会话 A' })
+
+  store.setCurrentSession({ id: null, title: null })
+
+  assert.deepEqual(store.getState().currentSession, { id: null, title: null })
+})
+
+// --- Phase 08.2: composer（统一 composer 状态） --------------------------------
+
+test('08.2 composer: sending 与 chat.sending 始终一致', () => {
+  const store = createCompanionStateStore()
+  assert.equal(store.getState().composer.sending, false)
+
+  store.setChatSending(true)
+  assert.equal(store.getState().chat.sending, true)
+  assert.equal(store.getState().composer.sending, true)
+
+  store.setChatSending(false)
+  assert.equal(store.getState().chat.sending, false)
+  assert.equal(store.getState().composer.sending, false)
+})
+
+test('08.2 composer: stopping 只在 sending 期间记录，send 结束即清除', () => {
+  const store = createCompanionStateStore()
+
+  store.setComposerStopping(true) // 没有 send → 忽略
+  assert.equal(store.getState().composer.stopping, false)
+
+  store.setChatSending(true)
+  store.setComposerStopping(true)
+  assert.equal(store.getState().composer.stopping, true)
+
+  // 一次 send 结束 = sending 与 stopping 在同一次写入中归零。
+  store.setChatSending(false)
+  assert.deepEqual(
+    { sending: store.getState().composer.sending, stopping: store.getState().composer.stopping },
+    { sending: false, stopping: false },
+  )
+})
+
+test('08.2 composer: deepThink/search 与 deepseek 镜像同源（同一对象引用）', () => {
+  const store = createCompanionStateStore()
+  store.setDeepThinkState({ available: true, enabled: true })
+  store.setSearchState({ available: true, enabled: false })
+
+  const state = store.getState()
+  assert.deepEqual(state.composer.deepThink, state.deepseek.deepThink)
+  assert.deepEqual(state.composer.search, state.deepseek.search)
+  assert.equal(state.composer.deepThink, state.deepseek.deepThink, '同一对象引用 → 两个投影不可能漂移')
+  assert.equal(state.composer.search, state.deepseek.search)
+})
+
+test('08.2 三界面一致: 一次 send 生命周期内三个 surface 收到完全相同的 composer 快照', () => {
+  const store = createCompanionStateStore()
+  const snapshot = (state: CompanionState): string => JSON.stringify(state.composer)
+  const dock: string[] = []
+  const float: string[] = []
+  const popout: string[] = []
+  store.subscribe((state) => dock.push(snapshot(state)))
+  store.subscribe((state) => float.push(snapshot(state)))
+  store.subscribe((state) => popout.push(snapshot(state)))
+
+  store.setChatSending(true)
+  store.setComposerStopping(true)
+  store.setChatSending(false)
+
+  assert.deepEqual(dock, float, 'Dock 与 Float 必须看到同一串 composer 快照')
+  assert.deepEqual(float, popout, 'Float 与 Pop-out 必须看到同一串 composer 快照')
+  assert.deepEqual(JSON.parse(dock[dock.length - 1]!) as object, {
+    sending: false,
+    stopping: false,
+    deepThink: { available: false, enabled: false },
+    search: { available: false, enabled: false },
+  })
+})
+
+// --- Phase 08.2: Message 模型（status / sessionId） ---------------------------
+
+test('08.2 message: assistant 初始 streaming，user 直接 finished', () => {
+  const store = createCompanionStateStore()
+  const user = store.appendChatMessage('user', '你好')
+  const assistant = store.appendChatMessage('assistant', '')
+
+  assert.equal(user.status, 'finished')
+  assert.equal(assistant.status, 'streaming')
+})
+
+test('08.2 message: setChatMessageStatus 迁移并去重', () => {
+  const store = createCompanionStateStore()
+  const assistant = store.appendChatMessage('assistant', '部分内容')
+  const seen: string[] = []
+  store.subscribe((state) => seen.push(state.chat.messages[0]!.status ?? 'finished'))
+  seen.length = 0
+
+  store.setChatMessageStatus(assistant.id, 'interrupted')
+  assert.equal(store.getState().chat.messages[0]!.status, 'interrupted')
+
+  store.setChatMessageStatus(assistant.id, 'interrupted') // 重复 → 不 notify
+  assert.deepEqual(seen, ['interrupted'])
+
+  store.setChatMessageStatus('nonexistent-id', 'error') // 安全 no-op
+  assert.equal(store.getState().chat.messages[0]!.status, 'interrupted')
+})
+
+test('08.2 message: 新消息带上当前会话 id，空会话（/）不带', () => {
+  const store = createCompanionStateStore()
+  store.setCurrentSession({ id: 'a1', title: null })
+
+  const tagged = store.appendChatMessage('user', '在 A 里')
+  assert.equal(tagged.sessionId, 'a1')
+
+  store.setCurrentSession({ id: null, title: null })
+  const untagged = store.appendChatMessage('user', '在 / 里')
+  assert.equal(untagged.sessionId, undefined)
+})
+
+test('08.2 message: adoptSessionMessages 只补没有 sessionId 的消息', () => {
+  const store = createCompanionStateStore()
+  const first = store.appendChatMessage('user', '首条（无会话）')
+  store.setCurrentSession({ id: 'a1', title: null })
+  store.appendChatMessage('user', '第二条（属于 A）')
+
+  store.adoptSessionMessages('a1')
+
+  const messages = store.getState().chat.messages
+  assert.equal(messages[0]!.id, first.id)
+  assert.equal(messages[0]!.sessionId, 'a1', 'DeepSeek 为这一轮铸出的 id 会认领此前写入的消息')
+  assert.equal(messages[1]!.sessionId, 'a1')
+})
+
+test('08.2 message: replaceChatMessages 带 sessionId 标签，等价重建仍 no-op', () => {
+  const store = createCompanionStateStore()
+  const transcript = [
+    { role: 'user' as const, content: '问题', format: 'text' as const },
+    { role: 'assistant' as const, content: '回答', format: 'markdown' as const },
+  ]
+
+  store.replaceChatMessages(transcript, 'b2')
+
+  const messages = store.getState().chat.messages
+  assert.equal(messages.length, 2)
+  assert.equal(messages[0]!.sessionId, 'b2')
+  assert.equal(messages[1]!.sessionId, 'b2')
+  assert.equal(messages[0]!.status, 'finished', '重建出来的消息都是已完成态')
+  assert.equal(messages[1]!.status, 'finished')
+
+  let notifies = 0
+  store.subscribe(() => {
+    notifies += 1
+  })
+  notifies = 0
+  store.replaceChatMessages(transcript, 'b2')
+  assert.equal(notifies, 0, '同一会话的等价重建不产生推送')
 })

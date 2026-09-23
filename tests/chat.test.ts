@@ -201,3 +201,78 @@ test('sendMessage 抛错：保留 user 与部分 assistant 文本，sending 恢�
   assert.equal(messages[1]!.content, '部分文本')
   assert.equal(store.getState().chat.sending, false)
 })
+
+// --- Phase 08.2: message lifecycle (status) -----------------------------------
+
+test('08.2: 流式期间 assistant 为 streaming，成功后落为 finished', async () => {
+  const store = createCompanionStateStore()
+  let duringSend: string | undefined
+  const result = await handleChatMessage(
+    store,
+    async (_message, onDelta) => {
+      onDelta(reply('流式中'))
+      duringSend = store.getState().chat.messages[1]!.status
+      return reply('最终回复')
+    },
+    '你好',
+  )
+
+  assert.equal(result.status, 200)
+  assert.equal(duringSend, 'streaming')
+  assert.equal(store.getState().chat.messages[1]!.status, 'finished')
+})
+
+test('08.2: 用户停止 / 外部切换那一轮 → interrupted（部分内容保留）', async () => {
+  const store = createCompanionStateStore()
+  // The browser froze this round as interrupted before `sendMessage` settled.
+  let interrupted = false
+  const result = await handleChatMessage(
+    store,
+    async (_message, onDelta) => {
+      onDelta(reply('被打断的部分'))
+      interrupted = true
+      return reply('')
+    },
+    '你好',
+    undefined,
+    () => interrupted,
+  )
+
+  assert.equal(result.status, 200)
+  const assistant = store.getState().chat.messages[1]!
+  assert.equal(assistant.content, '被打断的部分')
+  assert.equal(assistant.status, 'interrupted')
+})
+
+test('08.2: status 绑定到本轮消息 —— 下一轮发送不会改写上一轮', async () => {
+  const store = createCompanionStateStore()
+  await handleChatMessage(store, async () => reply('第一轮'), '你好')
+  const firstId = store.getState().chat.messages[1]!.id
+
+  let previousDuringSecond: string | undefined
+  await handleChatMessage(
+    store,
+    async (_message, onDelta) => {
+      onDelta(reply('第二轮'))
+      previousDuringSecond = store.getState().chat.messages[1]!.status
+      return reply('第二轮')
+    },
+    '再来',
+  )
+
+  const messages = store.getState().chat.messages
+  assert.equal(messages[1]!.id, firstId)
+  assert.equal(messages[1]!.status, 'finished')
+  assert.equal(previousDuringSecond, 'finished', '第二轮流式期间上一轮仍是 finished')
+  assert.equal(messages[3]!.status, 'finished')
+})
+
+test('08.2: send 抛错 → error 状态（不回写成 finished）', async () => {
+  const store = createCompanionStateStore()
+
+  await handleChatMessage(store, async () => {
+    throw new Error('boom')
+  }, '你好')
+
+  assert.equal(store.getState().chat.messages[1]!.status, 'error')
+})

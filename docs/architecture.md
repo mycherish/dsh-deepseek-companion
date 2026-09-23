@@ -430,3 +430,41 @@ Sidebar sessions（a[href*="/a/chat/s/"]）
 - **Client 零改动**：同步只改 Host store → SSE，三个界面天然一致（无 UI、无列表、无多会话缓存）。
 - **实机验证（Phase 08.1，真实产品代码）**：外部切换到历史会话（快速排序，15 条）→ Host 自动替换；外部 New chat → Host 自动清空；从 `/` 发送首条 → `messages[].id` 在 send 与 drain 前后均不变（无重复重建）；**生成中切换** → `handleChatMessage` 返回 200（无 empty reply）、deltas 不含目标会话任何内容、生成结束后 Host 一次性切换到目标会话的 transcript。
 - token / cookie 不离开 browser context。
+
+### 状态模型收口（Phase 08.2）
+
+**目标**：不新增功能，只把散落在 Host / Client / 各视图里的「同一件事」收敛成单一来源。
+
+```
+收口前 → 收口后
+  deepseek.status (checking|logged_in|logged_out|error)
+  browser === null（6 个 route 各自判断）        → connection { status: online|offline|login_required, browserReady }
+  sessions.active（每次重新读侧栏）              → currentSession { id, title }
+  chat.sending + 本地 stopping 派生              → composer { sending, stopping, deepThink, search }
+  消息只有 content/format/reasoning/citations    → + message.status{streaming|finished|interrupted|error} + sessionId
+```
+
+```
+DeepSeek page（URL pathname / 侧栏 href，标准 DOM）
+  → Host store（唯一权威）
+       connection   ← setBrowserReady(browser 创建/销毁) + probeLogin 结果
+       currentSession ← framenavigated / switch 请求 / newChat 确认 / 侧栏 active 条目
+       composer     ← send 生命周期 + stop 请求 + 页面真实开关
+       chat.messages← 同一份消息，带 status 与 sessionId
+  → GET /state + SSE /state/stream
+  → normalizeCompanionState（兼容层：旧形态缺字段时由旧字段派生）
+  → ChatView（Dock / Float / Pop-out 同一组件，仅 origin 不同）
+```
+
+要点：
+
+- **`connection` 是派生量，不是新事实**：`connectionFrom(status, browserReady)` 放在 `src/shared/state.ts`，Host store 与 Client 兼容层**共用同一张映射表**——`online` 仅当「浏览器存在 + 已登录」；`logged_out → login_required`；`checking/error/无浏览器 → offline`。旧的 `deepseek.status` 原样保留（登录文案仍读它），二者由同一次 store 写入一起更新。
+- **`currentSession` 只来自标准 DOM / URL**：id 从 `/a/chat/s/<id>` 或侧栏 `href` 解析，title 只来自侧栏条目文本（且只作展示）。`setCurrentSession({id})` 在 id 不变时保留已读到的 title；id 变化才丢弃旧标题。**位置是 URL 事实，transcript 才是页面事实**：watcher 事件先记录位置，transcript 仍在「读取成功之后」才替换（失败保留旧 transcript，此前语义不变）。
+- **send 铸出的会话 id 的归属（`adoptSessionMessages`）**：从 `/` 发出的第一条消息在 DeepSeek 铸出 id 之前就已写入 Host，watcher 收到 `createdBySend` 的 location 时会把 id 认领给它——不重读 transcript、不改写消息内容（08.1 语义不变）。
+- **`composer` 是唯一投影，`chat.sending` 仍是唯一闸门**：`setChatSending` 一次写入同时更新 `chat.sending` + `composer.sending`（结束时一并清 `composer.stopping`）；`setDeepThinkState` / `setSearchState` 同时写 `composer` 与 `deepseek` 镜像，且**两个投影指向同一对象引用**，不可能漂移。
+- **`stopping` 上移到 Host**：stop 请求成功（`stopped: true`）时写入 `composer.stopping`，send 结束时自动归零；Client 的 stop 状态机新增 `host-stopping` 事件——点击方仍走本地乐观标记（保持 07J 的「不闪回」），**其它界面靠 Host 推送同样显示「停止中…」**；`host-stopping: false` 是 no-op（否则会擦掉本地点击窗口）。
+- **Message 模型向后兼容**：`status` / `sessionId` 都是可选字段；append 时 assistant 为 `streaming`、user 为 `finished`，send 收尾按 `browser.wasInterrupted()`（stop 或外部切换）落 `interrupted`，抛错落 `error`，历史重建统一 `finished`。旧状态被 Client 归一化为 `finished`，**无持久化数据需要迁移**（Companion state 全在内存）。
+- **Client 兼容层**：`normalizeCompanionState` 统一处理快照与 SSE 事件：缺 `connection/currentSession/composer` 时由 `deepseek`/`chat` 派生，缺 status 的消息补 `finished`，形状错误的消息/字段被丢弃而不是让视图崩。
+- **「当前」标记实时同步**：历史浮层优先用 Host 的 `currentSession.id` 高亮（含用户在 DeepSeek 窗口内手动切换），列表自身的 `active` 只在 Host 尚无 id 时兜底。
+- **不用 React fiber 做状态**：本次全部新增状态都来自 URL / 标准 DOM / 既有 store 写入；`readTranscriptInPage` 里 fiber 只用于读取 DeepSeek 自己的 raw Markdown（既有行为，未改动）。
+- **测试**：`tests/state.test.ts`（connection/currentSession/composer/message 状态与三界面快照一致）、`tests/state-compat.test.ts`（兼容层 + 旧状态迁移）、`tests/stop-state.test.ts`（Host 停止标记让未点击界面也显示「停止中…」）、`tests/chat.test.ts` / `tests/stop.test.ts` / `tests/new-chat.test.ts` / `tests/sessions.test.ts` / `tests/session-sync.test.ts`（各自的不回归用例）。

@@ -234,6 +234,10 @@ export async function handleNewChatRequest(
     // Page FIRST: only a confirmed new conversation may clear the transcript.
     await browser.newChat()
     store.clearChatMessages()
+    // Phase 08.2: the page really is on the empty-chat path — there is no
+    // conversation yet. The id DeepSeek mints on the first send is adopted by
+    // the session watcher when that navigation arrives.
+    store.setCurrentSession({ id: null, title: null })
     return { status: 200, body: { ok: true } }
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error)

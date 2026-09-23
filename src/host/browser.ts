@@ -247,6 +247,15 @@ export interface DeepSeekBrowser {
    */
   stopGeneration(): Promise<boolean>
   /**
+   * Whether the send that ended LAST was interrupted on purpose (Phase 08.2):
+   * the user stopped it, or the page left the conversation mid-stream. Read
+   * straight after `sendMessage` settled — it is what separates a normal
+   * completion (`finished`) from an `interrupted` message. The flags themselves
+   * stay per-send internal; this is a read-only projection of the round that
+   * just ended.
+   */
+  wasInterrupted(): boolean
+  /**
    * Start a NEW DeepSeek conversation by clicking the REAL sidebar control, then
    * confirm the SPA actually switched (empty-chat pathname + no message DOM
    * left) and re-mirror the composer switches. Resolves only on that
@@ -549,6 +558,13 @@ export async function createDeepSeekBrowser(
    * makes the final read use the last received frame instead of the page.
    */
   let sessionInterrupted = false
+  /**
+   * Read-only projection of the round that just ended (Phase 08.2): `true` when
+   * that send was stopped or left behind. Kept AFTER the per-send flags reset so
+   * the Host can ask "was this round interrupted?" the moment `sendMessage`
+   * settles — see `wasInterrupted()`.
+   */
+  let lastSendInterrupted = false
   /** The conversation this in-flight send writes into (`null` while at `/`). */
   let sendSession: SendSessionState | null = null
   /** Last location handed to the Host (de-duplicates repeated navigations). */
@@ -701,6 +717,7 @@ export async function createDeepSeekBrowser(
     sending = true
     stopRequested = false
     sessionInterrupted = false
+    lastSendInterrupted = false
     // Which conversation does this round write into? A send started from `/`
     // gets its session created by DeepSeek a moment later — `classifyDuringSend`
     // accepts exactly that first id and treats any LATER change as external.
@@ -883,6 +900,9 @@ export async function createDeepSeekBrowser(
       reasoningThrottle.dispose()
       await cleanupObservers()
       sending = false
+      // Freeze how THIS round ended before the per-send flags are reset, so the
+      // Host can label the message (Phase 08.2).
+      lastSendInterrupted = stopRequested || sessionInterrupted
       // Reset together with `sending`, AFTER the empty-reply check above: a stop
       // belongs to exactly one send, so it must never leak into the next round
       // (a later, genuinely empty reply has to fail again).
@@ -1166,6 +1186,7 @@ export async function createDeepSeekBrowser(
     getComposerModeState: readComposerMode,
     sendMessage,
     stopGeneration,
+    wasInterrupted: () => lastSendInterrupted,
     newChat,
     listSessions,
     switchChat,

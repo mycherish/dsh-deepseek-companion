@@ -560,7 +560,9 @@ export function createSessionSyncController(deps: {
     const browser = deps.browser()
     if (browser === null) throw new Error('browser not ready')
     const transcript = await browser.readTranscript()
-    deps.store.replaceChatMessages(transcript)
+    // Page first, Host second: the rebuilt transcript arrives tagged with the
+    // conversation it was read from (Phase 08.2).
+    deps.store.replaceChatMessages(transcript, location.id)
   }
 
   const run = async (location: SessionLocation): Promise<void> => {
@@ -582,6 +584,17 @@ export function createSessionSyncController(deps: {
 
   return {
     onLocation(location, info) {
+      // WHERE the page is is a URL fact, not a transcript fact (Phase 08.2), so
+      // it is recorded before the read below: every surface's「当前」marker
+      // follows the real page even when a transcript read is pending or fails.
+      if (location.kind === 'session') {
+        deps.store.setCurrentSession({ id: location.id, title: null })
+        // DeepSeek minted this id FOR the running send: the messages that send
+        // already wrote have no session id yet — they belong to it.
+        if (info.createdBySend) deps.store.adoptSessionMessages(location.id)
+      } else if (location.kind === 'empty') {
+        deps.store.setCurrentSession({ id: null, title: null })
+      }
       if (info.createdBySend) {
         // DeepSeek created this send's own session: it belongs to the running
         // send, whose flow already owns the transcript. Record, never sync.
@@ -687,10 +700,24 @@ export interface ChatSessionsResult {
 }
 
 //   503 browser not ready · 200 with what the sidebar actually shows
-export async function handleListSessionsRequest(browser: SessionsCapableBrowser | null): Promise<ChatSessionsResult> {
+export async function handleListSessionsRequest(
+  browser: SessionsCapableBrowser | null,
+  /**
+   * When given, this read also refreshes the Host's `currentSession` (Phase
+   * 08.2): the sidebar's ACTIVE entry carries the title the URL alone cannot
+   * give us. Only a found entry updates it — a partial/virtualized sidebar read
+   * never erases a conversation that is already known.
+   */
+  store?: CompanionStateStore,
+): Promise<ChatSessionsResult> {
   if (browser === null) return { status: 503, body: { error: 'browser not ready' } }
   try {
-    return { status: 200, body: { sessions: await browser.listSessions() } }
+    const sessions = await browser.listSessions()
+    const active = sessions.find((entry) => entry.active)
+    if (store !== undefined && active !== undefined) {
+      store.setCurrentSession({ id: active.id, title: active.title })
+    }
+    return { status: 200, body: { sessions } }
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error)
     return { status: 503, body: { error: detail } }
@@ -726,7 +753,10 @@ export async function handleSwitchChatRequest(
     // Page FIRST, Host second: the transcript is only replaced once the switch
     // AND the rebuild read both succeeded.
     const transcript = await browser.readTranscript()
-    store.replaceChatMessages(transcript)
+    // Phase 08.2: the rebuilt messages are tagged with the conversation they
+    // were read from, and the Host records where the page is now.
+    store.replaceChatMessages(transcript, requested.conversationId)
+    store.setCurrentSession({ id: requested.conversationId, title: null })
     return { status: 200, body: { switched: true, messages: transcript.length } }
   } catch (error) {
     // The current Host transcript is deliberately left untouched.

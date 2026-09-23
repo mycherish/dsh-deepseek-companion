@@ -287,6 +287,61 @@ test('N: 同步不会改变 sending / composer / login 状态', async () => {
   assert.deepEqual(view.deepseek.search, { available: true, enabled: false })
 })
 
+// --- Q. Phase 08.2: the watcher is also the session recorder -------------------
+
+test('08.2 Q: 外部切到会话 A → currentSession 立即跟上（transcript 随同步更新）', async () => {
+  const { store, controller } = makeController([transcript('A')])
+
+  controller.onLocation(atA, { createdBySend: false })
+
+  // URL 事实先落地，页面读取随后完成 —— 三个界面的「当前」标记不等 transcript。
+  assert.deepEqual(store.getState().currentSession, { id: SESSION_A, title: null })
+  await flush()
+  assert.deepEqual(store.getState().currentSession, { id: SESSION_A, title: null })
+  assert.equal(store.getState().chat.messages[0]!.sessionId, SESSION_A)
+})
+
+test('08.2 Q: 外部 New chat（empty）→ currentSession 归零', async () => {
+  const { store, controller } = makeController()
+  store.setCurrentSession({ id: SESSION_A, title: '会话 A' })
+  store.appendChatMessage('user', '旧消息')
+
+  controller.onLocation(atEmpty, { createdBySend: false })
+  await flush()
+
+  assert.deepEqual(store.getState().currentSession, { id: null, title: null })
+  assert.deepEqual(store.getState().chat.messages, [])
+})
+
+test('08.2 Q: sign_in 等 other 页面 → 位置与 transcript 都不动', async () => {
+  const { store, controller } = makeController()
+  store.setCurrentSession({ id: SESSION_A, title: '会话 A' })
+  store.appendChatMessage('user', '必须保住')
+
+  controller.onLocation(atOther, { createdBySend: false })
+  await flush()
+
+  assert.deepEqual(store.getState().currentSession, { id: SESSION_A, title: '会话 A' })
+  assert.equal(store.getState().chat.messages.length, 1)
+})
+
+test('08.2 Q: 首条消息铸出的会话 id → 记录 + 认领本轮消息，且绝不重读 transcript', async () => {
+  const { store, state, controller } = makeController([transcript('不该被读')])
+  store.appendChatMessage('user', '首条')
+  store.appendChatMessage('assistant', '回答')
+
+  controller.onLocation(atA, { createdBySend: true })
+  await flush()
+
+  assert.equal(state.reads, 0, '本轮 transcript 属于正在进行的发送，绝不重读')
+  assert.deepEqual(store.getState().currentSession, { id: SESSION_A, title: null })
+  const messages = store.getState().chat.messages
+  assert.equal(messages.length, 2)
+  assert.equal(messages[0]!.sessionId, SESSION_A, 'DeepSeek 为这一轮铸出的 id 认领此前写入的消息')
+  assert.equal(messages[1]!.sessionId, SESSION_A)
+  assert.equal(messages[0]!.content, '首条', '消息本身不改写')
+})
+
 // --- O. emptyReplyError: sessionInterrupted is its own signal ------------------
 
 test('O: 外部会话切换让空回复合法，且与 stopRequested 相互独立', () => {

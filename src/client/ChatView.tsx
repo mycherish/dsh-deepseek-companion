@@ -14,6 +14,7 @@ import {
 } from './api.ts'
 import { remarkCitations } from './remark-citations.ts'
 import { STOP_PHASE_LABEL, initialStopUiState, reduceStopUi, stopPhase } from './stop-state.ts'
+import { connectionFrom } from '../shared/state.ts'
 import type {
   ChatFormat,
   ChatMessage,
@@ -21,6 +22,8 @@ import type {
   ChatSessionSummary,
   Citation,
   ComposerToggleState,
+  ConnectionState,
+  CurrentSession,
   DeepSeekStatus,
   DeepThinkState,
   SearchState,
@@ -543,6 +546,14 @@ function ReasoningBlock({ reasoning }: { reasoning: ChatReasoning }): ReactNode 
  */
 export function ChatView({ origin }: { origin: string }): JSX.Element {
   const [status, setStatus] = useState<DeepSeekStatus>('checking')
+  /**
+   * Unified connection (Phase 08.2): the ONE field the send gate reads. The
+   * three login screens below still key off `deepseek.status` — it stays the
+   * source of the texts, and both are pushed from the same Host state.
+   */
+  const [connection, setConnection] = useState<ConnectionState>(() => connectionFrom('checking', false))
+  /** Where the DeepSeek page is (Phase 08.2) — drives the「当前」marker. */
+  const [currentSession, setCurrentSession] = useState<CurrentSession>({ id: null, title: null })
   const [messages, setMessages] = useState<ChatMessage[]>([])
   /**
    * Send/stop slot state (Phase 07J). `sending` is the Host's authoritative
@@ -575,13 +586,22 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
     () =>
       subscribeCompanionState(origin, (state) => {
         setStatus(state.deepseek.status)
+        setConnection(state.connection)
+        setCurrentSession(state.currentSession)
         setMessages(state.chat.messages)
-        setDeepThinkState(state.deepseek.deepThink)
-        setSearchState(state.deepseek.search)
-        // The reducer is the ONLY place that folds the Host's authoritative
-        // `chat.sending` into the slot state — and the only thing that can clear
-        // 停止中… once a stop was requested (Phase 07J).
-        setStopUi((ui) => reduceStopUi(ui, { type: 'host-sending', sending: state.chat.sending }))
+        // The unified composer group is the single source for the controls
+        // (Phase 08.2); the legacy mirrors carry the same values.
+        setDeepThinkState(state.composer.deepThink)
+        setSearchState(state.composer.search)
+        // The reducer is the ONLY place that folds the Host's composer state
+        // into the slot: `host-stopping` shows 停止中… on surfaces that did not
+        // click, and `host-sending: false` is the only thing that ends it.
+        setStopUi((ui) =>
+          reduceStopUi(reduceStopUi(ui, { type: 'host-stopping', stopping: state.composer.stopping }), {
+            type: 'host-sending',
+            sending: state.composer.sending,
+          }),
+        )
       }),
     [origin],
   )
@@ -595,6 +615,10 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
   // Any in-flight page operation (sending, new chat, switch) blocks the other
   // entry points — the Host refuses the same combinations with 409.
   const pageBusy = busy || startingNew || switching
+  // Which history entry is「当前」(Phase 08.2): the Host's `currentSession` is
+  // the authority (it follows the real page, manual navigation included); the
+  // list's own `active` flag is only used while the Host has no id yet.
+  const activeId = currentSession.id ?? (sessions ?? []).find((session) => session.active)?.id ?? null
 
   // Keep the newest message in view.
   useEffect(() => {
@@ -628,7 +652,9 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
 
   const send = async (): Promise<void> => {
     const text = input.trim()
-    if (text === '' || busy || status !== 'logged_in') return
+    // The unified connection is the gate (Phase 08.2): `online` already means
+    // "browser ready AND logged in", so the three surfaces agree on one field.
+    if (text === '' || busy || connection.status !== 'online') return
     setInput('')
     setSubmitting(true)
     setError(null)
@@ -839,19 +865,26 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
             {sessions !== null && sessions.length === 0 ? (
               <div style={historyHintStyle}>没有可用的历史会话</div>
             ) : null}
-            {(sessions ?? []).map((session) => (
-              <button
-                key={session.id}
-                type="button"
-                style={historyItemStyle(session.active, pageBusy)}
-                disabled={pageBusy || session.active}
-                title={session.active ? '当前会话' : session.title}
-                onClick={() => void switchTo(session.id)}
-              >
-                <span style={historyTitleStyle}>{session.title === '' ? '未命名会话' : session.title}</span>
-                {session.active ? <span style={historyActiveStyle}>当前</span> : null}
-              </button>
-            ))}
+            {(sessions ?? []).map((session) => {
+              // Phase 08.2: the Host's `currentSession` is the authority (it
+              // follows the real page, including manual navigation inside
+              // DeepSeek); the list's own `active` flag is only the fallback for
+              // a state pushed before the page was first read.
+              const active = activeId === null ? session.active : session.id === activeId
+              return (
+                <button
+                  key={session.id}
+                  type="button"
+                  style={historyItemStyle(active, pageBusy)}
+                  disabled={pageBusy || active}
+                  title={active ? '当前会话' : session.title}
+                  onClick={() => void switchTo(session.id)}
+                >
+                  <span style={historyTitleStyle}>{session.title === '' ? '未命名会话' : session.title}</span>
+                  {active ? <span style={historyActiveStyle}>当前</span> : null}
+                </button>
+              )
+            })}
           </div>
         ) : null}
         <div style={controlsRowStyle}>
@@ -908,13 +941,13 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
             }}
           />
           {/* One slot, two roles: while a reply streams this is the stop control
-              (Phase 07J). Both roles read `chat.sending` from the Host, so Dock /
-              Float / Pop-out always agree. */}
+              (Phase 07J). Both roles read the Host's unified composer state, so
+              Dock / Float / Pop-out always agree (Phase 08.2). */}
           <button
             type="button"
             style={busy ? stopButtonStyle : sendButtonStyle}
             onClick={() => (busy ? void stop() : void send())}
-            disabled={busy ? stopping : submitting || status !== 'logged_in'}
+            disabled={busy ? stopping : submitting || connection.status !== 'online'}
           >
             {STOP_PHASE_LABEL[busy ? phase : 'send']}
           </button>

@@ -181,3 +181,57 @@ test('sending 状态为唯一事实来源：停止后不会残留 sending=true',
   assert.deepEqual(state, { sending: false, stopping: false })
   assert.equal(label(state), '发送')
 })
+
+// --- Phase 08.2: the Host's stopping flag keeps three surfaces in step --------
+
+test('08.2 三界面一致: 只有 Dock 点了停止，Float / Pop-out 也显示「停止中…」', () => {
+  const hostSending: StopEvent = { type: 'host-sending', sending: true }
+  const hostStopping: StopEvent = { type: 'host-stopping', stopping: true }
+
+  // Only Dock clicked; every surface folds the SAME Host pushes.
+  const dock = replay([hostSending, { type: 'click' }, hostStopping])
+  const float = replay([hostSending, hostStopping])
+  const popout = replay([hostSending, hostStopping])
+
+  assert.equal(label(dock), '停止中…')
+  assert.equal(label(float), '停止中…')
+  assert.equal(label(popout), '停止中…')
+  assert.deepEqual(dock, float)
+  assert.deepEqual(float, popout)
+})
+
+test('08.2 host-stopping:false 是 no-op —— 本地的 停止中… 只由 send 结束清除', () => {
+  const clicked = replay([{ type: 'host-sending', sending: true }, { type: 'click' }])
+
+  // The push that arrives between the click and the Host recording the stop
+  // reports `stopping: false`; it must NOT wipe the local flag (that flash-back
+  // is exactly what Phase 07J removed).
+  const after = reduceStopUi(clicked, { type: 'host-stopping', stopping: false })
+
+  assert.deepEqual(after, clicked)
+  assert.equal(label(after), '停止中…')
+})
+
+test('08.2 三界面一致: 同一轮停止在点击方与未点击方收敛到同一状态', () => {
+  const events: StopEvent[] = [
+    { type: 'host-sending', sending: true },
+    { type: 'click' }, // 仅点击方发出的本地事件
+    { type: 'host-stopping', stopping: true },
+    { type: 'request-succeeded' },
+    { type: 'host-sending', sending: false },
+  ]
+
+  let dock = initialStopUiState
+  for (const event of events) dock = reduceStopUi(dock, event)
+
+  let float = initialStopUiState
+  for (const event of events) {
+    if (event.type === 'click') continue // 未点击的界面收不到这个事件
+    float = reduceStopUi(float, event)
+  }
+
+  assert.deepEqual(dock, { sending: false, stopping: false })
+  assert.deepEqual(float, { sending: false, stopping: false })
+  assert.equal(label(dock), label(float))
+  assert.equal(label(dock), '发送')
+})

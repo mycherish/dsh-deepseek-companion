@@ -44,4 +44,5 @@
 
 ## 当前状态
 
-Phase 01（工程初始化）。每次只完成一个 Phase，禁止顺手实现下一阶段。
+已完成：Phase 01–08.2（工程初始化 → Host State / HTTP+SSE → 浏览器与登录 → 基础聊天 / 流式 / Markdown / Deep Think / 搜索 / Stop / New Chat → 历史会话与外部会话同步 → 08.2 状态模型收口）。
+每次只完成一个 Phase，禁止顺手实现下一阶段。

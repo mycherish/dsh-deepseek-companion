@@ -91,7 +91,13 @@ export async function handleStopRequest(
   // primary composer button is the SEND button, so a stop must never be tried.
   if (!store.getState().chat.sending) return { status: 409, body: { error: 'not generating' } }
   try {
-    return { status: 200, body: { stopped: await browser.stopGeneration() } }
+    const stopped = await browser.stopGeneration()
+    // Phase 08.2: a requested stop becomes Host state (`composer.stopping`), so
+    // 停止中… shows on EVERY surface — not only on the one that clicked. The end
+    // of the send clears it (`setChatSending(false)`), so it can never outlive
+    // its round. A `stopped: false` answer records nothing.
+    if (stopped) store.setComposerStopping(true)
+    return { status: 200, body: { stopped } }
   } catch (error) {
     // A page-level failure is reported as such; the chat state itself is left to
     // `sendMessage`, which still owns `chat.sending`.

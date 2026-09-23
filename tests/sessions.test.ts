@@ -845,3 +845,75 @@ test('M: 失败时绝不先清空 —— 读取失败同样保留 transcript', a
   assert.equal(result.body.error, 'transcript read failed')
   assert.equal(store.getState().chat.messages.length, 1)
 })
+
+// --- Q. Phase 08.2: the switch is also a session record -----------------------
+
+test('08.2 Q: switch 成功 → currentSession 记录目标 id，消息带上 sessionId', async () => {
+  const store = createCompanionStateStore()
+  const { browser } = stubSessionsBrowser({ sessions: [{ id: VALID_ID, title: '会话甲', active: true }] })
+
+  const result = await handleSwitchChatRequest(store, browser, createPageGuard(), { conversationId: VALID_ID })
+
+  assert.equal(result.status, 200)
+  assert.deepEqual(store.getState().currentSession, { id: VALID_ID, title: null })
+  const messages = store.getState().chat.messages
+  assert.equal(messages.length, 2)
+  assert.equal(messages[0]!.sessionId, VALID_ID)
+  assert.equal(messages[1]!.sessionId, VALID_ID)
+})
+
+test('08.2 Q: switch 失败 → currentSession 保持原样（不谎报已切换）', async () => {
+  const store = createCompanionStateStore()
+  store.setCurrentSession({ id: 'keep-me', title: '原会话' })
+  const browser: SessionsCapableBrowser = {
+    async listSessions() {
+      return []
+    },
+    async switchChat() {
+      throw new Error('switch failed')
+    },
+    async readTranscript() {
+      return TRANSCRIPT_FIXTURE
+    },
+  }
+
+  const result = await handleSwitchChatRequest(store, browser, createPageGuard(), { conversationId: VALID_ID })
+
+  assert.equal(result.status, 500)
+  assert.deepEqual(store.getState().currentSession, { id: 'keep-me', title: '原会话' })
+  assert.equal(store.getState().chat.messages.length, 0)
+})
+
+test('08.2 Q: 列表读取顺带刷新 currentSession（把侧栏标题带进 Host）', async () => {
+  const store = createCompanionStateStore()
+  const { browser } = stubSessionsBrowser({
+    sessions: [
+      { id: VALID_ID, title: '会话甲', active: true },
+      { id: 'other-id', title: '会话乙', active: false },
+    ],
+  })
+
+  await handleListSessionsRequest(browser, store)
+
+  assert.deepEqual(store.getState().currentSession, { id: VALID_ID, title: '会话甲' })
+})
+
+test('08.2 Q: 列表里没有 active 条目（页面停在 /）→ 不擦掉已知会话', async () => {
+  const store = createCompanionStateStore()
+  store.setCurrentSession({ id: VALID_ID, title: '会话甲' })
+  const { browser } = stubSessionsBrowser({ sessions: [{ id: 'other-id', title: '会话乙', active: false }] })
+
+  await handleListSessionsRequest(browser, store)
+
+  assert.deepEqual(store.getState().currentSession, { id: VALID_ID, title: '会话甲' })
+})
+
+test('08.2 Q: 不传 store 的列表读取保持原行为（向后兼容）', async () => {
+  const store = createCompanionStateStore()
+  const { browser } = stubSessionsBrowser({ sessions: [{ id: VALID_ID, title: '会话甲', active: true }] })
+
+  const result = await handleListSessionsRequest(browser)
+
+  assert.equal(result.status, 200)
+  assert.deepEqual(store.getState().currentSession, { id: null, title: null }, '没传 store 就不动 Host 状态')
+})

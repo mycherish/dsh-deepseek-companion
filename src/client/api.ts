@@ -5,7 +5,20 @@
  * copy of the state shape. `origin` is the parent DSH page origin (the pop-out
  * is `about:blank`, so it must not rely on its own relative URL).
  */
-import type { ChatSessionSummary, CompanionState, DeepThinkState, SearchState } from '../shared/state.ts'
+import { connectionFrom } from '../shared/state.ts'
+import type {
+  ChatMessage,
+  ChatSessionSummary,
+  Citation,
+  CompanionState,
+  ComposerState,
+  ConnectionState,
+  CurrentSession,
+  DeepSeekStatus,
+  DeepThinkState,
+  MessageStatus,
+  SearchState,
+} from '../shared/state.ts'
 
 export type { CompanionState }
 
@@ -181,6 +194,125 @@ export async function sendChatMessage(origin: string, message: string): Promise<
   return body.reply
 }
 
+// --- state compatibility layer (Phase 08.2) -----------------------------------
+// The Client never trusts the wire shape blindly: every snapshot and every SSE
+// event goes through one normalizer, so the unified fields (`connection`,
+// `currentSession`, `composer`, message `status` / `sessionId`) exist even when
+// a state written by an older Host arrives without them. The legacy fields are
+// the fallback — never a second source on top of the new ones.
+
+const DEEPSEEK_STATUSES: DeepSeekStatus[] = ['checking', 'logged_in', 'logged_out', 'error']
+const CONNECTION_STATUSES: ConnectionState['status'][] = ['online', 'offline', 'login_required']
+const MESSAGE_STATUSES: MessageStatus[] = ['streaming', 'finished', 'interrupted', 'error']
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value !== null && typeof value === 'object' ? (value as Record<string, unknown>) : {}
+}
+
+function normalizeToggle(raw: unknown): DeepThinkState {
+  const value = asRecord(raw)
+  return { available: value.available === true, enabled: value.enabled === true }
+}
+
+function normalizeMessageStatus(raw: unknown): MessageStatus {
+  return MESSAGE_STATUSES.includes(raw as MessageStatus) ? (raw as MessageStatus) : 'finished'
+}
+
+function normalizeCitations(raw: unknown): Citation[] {
+  if (!Array.isArray(raw)) return []
+  const citations: Citation[] = []
+  for (const entry of raw) {
+    const value = asRecord(entry)
+    if (typeof value.marker !== 'number' || typeof value.url !== 'string' || typeof value.domain !== 'string') continue
+    citations.push({ marker: value.marker, url: value.url, domain: value.domain })
+  }
+  return citations
+}
+
+/** Coerce one wire message, or null when it carries no usable identity. */
+function normalizeMessage(raw: unknown): ChatMessage | null {
+  const value = asRecord(raw)
+  if (typeof value.id !== 'string' || value.id === '') return null
+  if (value.role !== 'user' && value.role !== 'assistant') return null
+  if (typeof value.content !== 'string') return null
+
+  const message: ChatMessage = {
+    id: value.id,
+    role: value.role,
+    content: value.content,
+    format: value.format === 'markdown' ? 'markdown' : 'text',
+    status: normalizeMessageStatus(value.status),
+  }
+  if (typeof value.sessionId === 'string' && value.sessionId !== '') message.sessionId = value.sessionId
+  const reasoning = asRecord(value.reasoning)
+  if (typeof reasoning.content === 'string' && reasoning.content !== '') {
+    message.reasoning = { content: reasoning.content, format: reasoning.format === 'markdown' ? 'markdown' : 'text' }
+  }
+  const citations = normalizeCitations(value.citations)
+  if (citations.length > 0) message.citations = citations
+  return message
+}
+
+/**
+ * Normalize one Host state payload (snapshot or SSE event) into the shape the
+ * views rely on. Unknown/garbage input degrades to the initial state instead of
+ * crashing a render.
+ */
+export function normalizeCompanionState(raw: unknown): CompanionState {
+  const value = asRecord(raw)
+  const deepseek = asRecord(value.deepseek)
+  const status: DeepSeekStatus = DEEPSEEK_STATUSES.includes(deepseek.status as DeepSeekStatus)
+    ? (deepseek.status as DeepSeekStatus)
+    : 'checking'
+  const deepThink = normalizeToggle(deepseek.deepThink)
+  const search = normalizeToggle(deepseek.search)
+
+  const chat = asRecord(value.chat)
+  const sending = chat.sending === true
+  const messages: ChatMessage[] = []
+  if (Array.isArray(chat.messages)) {
+    for (const entry of chat.messages) {
+      const message = normalizeMessage(entry)
+      if (message !== null) messages.push(message)
+    }
+  }
+
+  const composerRaw = asRecord(value.composer)
+  const composer: ComposerState = {
+    sending: typeof composerRaw.sending === 'boolean' ? composerRaw.sending : sending,
+    stopping: composerRaw.stopping === true,
+    deepThink: 'deepThink' in composerRaw ? normalizeToggle(composerRaw.deepThink) : deepThink,
+    search: 'search' in composerRaw ? normalizeToggle(composerRaw.search) : search,
+  }
+
+  const connectionRaw = asRecord(value.connection)
+  const connection: ConnectionState = CONNECTION_STATUSES.includes(connectionRaw.status as ConnectionState['status'])
+    ? {
+        status: connectionRaw.status as ConnectionState['status'],
+        browserReady: connectionRaw.browserReady === true,
+      }
+    : // Older Host: derive it from the signals it does publish. A login RESULT
+      // proves the browser exists; `checking`/`error` never claim it does.
+      connectionFrom(status, status === 'logged_in' || status === 'logged_out')
+
+  const sessionRaw = asRecord(value.currentSession)
+  const currentSession: CurrentSession = {
+    id: typeof sessionRaw.id === 'string' && sessionRaw.id !== '' ? sessionRaw.id : null,
+    title: typeof sessionRaw.title === 'string' && sessionRaw.title !== '' ? sessionRaw.title : null,
+  }
+
+  return {
+    status: 'ready',
+    revision: typeof value.revision === 'number' ? value.revision : 0,
+    instanceId: typeof value.instanceId === 'string' ? value.instanceId : '',
+    connection,
+    currentSession,
+    deepseek: { status, deepThink, search },
+    composer,
+    chat: { messages, sending },
+  }
+}
+
 /** One-shot snapshot (still used for simple/fallback reads). */
 export async function fetchCompanionState(origin: string, signal?: AbortSignal): Promise<CompanionState> {
   const response = await fetch(`${origin}${STATE_PATH}`, {
@@ -188,7 +320,7 @@ export async function fetchCompanionState(origin: string, signal?: AbortSignal):
     signal,
   })
   if (!response.ok) throw new Error(`host state unavailable (HTTP ${response.status})`)
-  return (await response.json()) as CompanionState
+  return normalizeCompanionState(await response.json())
 }
 
 /**
@@ -249,7 +381,7 @@ function parseSseData(rawEvent: string): CompanionState | null {
     const text = line.slice('data: '.length).trim()
     if (text === '') return null
     try {
-      return JSON.parse(text) as CompanionState
+      return normalizeCompanionState(JSON.parse(text))
     } catch {
       return null
     }

@@ -130,11 +130,17 @@ export function apply(ctx: Context): void {
           return
         }
         browser = created
+        // Phase 08.2: the unified connection needs to know the browser EXISTS —
+        // the login probe below decides whether it is usable.
+        store.setBrowserReady(true)
         return created.check()
       })
       .catch((error: unknown) => {
         console.warn('[dsh-deepseek-companion] failed to start DeepSeek browser', error)
-        if (!disposed) store.setDeepSeekStatus('error')
+        if (!disposed) {
+          store.setBrowserReady(false)
+          store.setDeepSeekStatus('error')
+        }
       })
 
     return () => {
@@ -143,6 +149,7 @@ export function apply(ctx: Context): void {
         void browser.dispose()
         browser = null
       }
+      store.setBrowserReady(false)
     }
   }, 'deepseek-companion: deepseek browser')
 
@@ -198,6 +205,9 @@ export function apply(ctx: Context): void {
             message,
             // Refused while a page operation (new chat / switch) owns the page.
             pageGuard,
+            // Phase 08.2: label the round `finished` or `interrupted` (stop /
+            // external switch) — read after the send settled.
+            () => currentBrowser.wasInterrupted(),
           )
           if (result.status === 500) {
             console.warn('[dsh-deepseek-companion] failed to send chat message', result.body.error)
@@ -317,7 +327,9 @@ export function apply(ctx: Context): void {
         methods: ['GET'],
         requestBody: 'buffered',
         fetch: async () => {
-          const result = await handleListSessionsRequest(browser)
+          // The active sidebar entry also refreshes `currentSession` (title
+          // included) — Phase 08.2.
+          const result = await handleListSessionsRequest(browser, store)
           if (result.status !== 200) {
             console.warn('[dsh-deepseek-companion] failed to list chat sessions:', result.body.error)
           }

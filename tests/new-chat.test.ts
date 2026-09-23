@@ -613,3 +613,41 @@ test('G: 不传 guard 时 handleChatMessage 完全保持原有行为', async () 
   assert.equal(result.status, 200)
   assert.equal(store.getState().chat.messages.length, 2)
 })
+
+// --- Phase 08.2: new chat also clears the current session ---------------------
+
+test('08.2: 新建成功 → currentSession 归零（页面确实停在 /）', async () => {
+  const store = createCompanionStateStore()
+  store.setCurrentSession({ id: 'a1', title: '会话 A' })
+  store.appendChatMessage('user', '旧消息')
+  const { browser } = stubBrowser(async () => {})
+
+  const result = await handleNewChatRequest(store, browser, createPageGuard())
+
+  assert.equal(result.status, 200)
+  assert.deepEqual(store.getState().currentSession, { id: null, title: null })
+})
+
+test('08.2: 新建失败 → currentSession 保持原样（绝不清成空会话）', async () => {
+  const store = createCompanionStateStore()
+  store.setCurrentSession({ id: 'a1', title: '会话 A' })
+  const { browser } = stubBrowser(async () => {
+    throw new Error('new chat did not open')
+  })
+
+  const result = await handleNewChatRequest(store, browser, createPageGuard())
+
+  assert.equal(result.status, 500)
+  assert.deepEqual(store.getState().currentSession, { id: 'a1', title: '会话 A' })
+})
+
+test('08.2: 新建后的第一条消息不再带旧会话 id（归属由 watcher 认领）', async () => {
+  const store = createCompanionStateStore()
+  store.setCurrentSession({ id: 'a1', title: '会话 A' })
+  const { browser } = stubBrowser(async () => {})
+  await handleNewChatRequest(store, browser, createPageGuard())
+
+  const message = store.appendChatMessage('user', '新会话第一条')
+
+  assert.equal(message.sessionId, undefined, 'id 由 DeepSeek 在首次发送时铸出，随后由 adoptSessionMessages 认领')
+})

@@ -376,3 +376,57 @@ test('I: Stop 后 citations 回调仍然只写给本条 assistant', async () => 
   ])
   assert.equal(store.getState().chat.messages[1]!.content, '部分正文')
 })
+
+// --- J. Phase 08.2: a requested stop becomes Host state ----------------------
+
+test('08.2 J: 成功请求停止 → composer.stopping 记录为真（三个界面都能看到）', async () => {
+  const store = createCompanionStateStore()
+  store.setChatSending(true)
+  const { browser } = stopStub(true)
+
+  const result = await handleStopRequest(store, browser)
+
+  assert.equal(result.status, 200)
+  assert.equal(store.getState().composer.stopping, true)
+  assert.equal(store.getState().chat.sending, true, '停止请求不改变发送中的事实')
+})
+
+test('08.2 J: stopped:false（页面没有可停的东西）→ 不记录 stopping', async () => {
+  const store = createCompanionStateStore()
+  store.setChatSending(true)
+  const { browser } = stopStub(false)
+
+  await handleStopRequest(store, browser)
+
+  assert.equal(store.getState().composer.stopping, false)
+})
+
+test('08.2 J: 409 / 503 都不记录 stopping', async () => {
+  const store = createCompanionStateStore()
+  const { browser } = stopStub(true)
+
+  await handleStopRequest(store, null) // 503：browser 未就绪
+  await handleStopRequest(store, browser) // 409：没有正在生成的回复
+  assert.equal(store.getState().composer.stopping, false)
+
+  store.setChatSending(true)
+  const failing = stopStub(new Error('page closed'))
+  await handleStopRequest(store, failing.browser) // 503：页面操作失败
+  assert.equal(store.getState().composer.stopping, false)
+})
+
+test('08.2 J: 停止中的标记在 send 结束时自动归零（不会跨轮残留）', async () => {
+  const store = createCompanionStateStore()
+  store.setChatSending(true)
+  const { browser } = stopStub(true)
+  await handleStopRequest(store, browser)
+  assert.equal(store.getState().composer.stopping, true)
+
+  // The send flow always ends with `setChatSending(false)`.
+  store.setChatSending(false)
+
+  assert.deepEqual(
+    { sending: store.getState().composer.sending, stopping: store.getState().composer.stopping },
+    { sending: false, stopping: false },
+  )
+})

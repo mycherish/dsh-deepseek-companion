@@ -1,18 +1,23 @@
 /**
- * Send / stop button state machine (Phase 07J).
+ * Send / stop button state machine (Phase 07J → 08.2).
  *
- * The button has three labels, fed by TWO independent sources of truth:
- *   - `sending`  — the Host's authoritative `chat.sending`, pushed over SSE
- *   - `stopping` — a LOCAL flag covering the window between the click and the
- *                  Host reporting that the send is over
+ * The button has three labels, fed by the Host plus one local window:
+ *   - `sending`  — the Host's authoritative `composer.sending` (= `chat.sending`)
+ *   - `stopping` — the Host's `composer.stopping` (a stop was requested for THIS
+ *                  send), OR the LOCAL click flag that covers the window between
+ *                  the click and that Host state arriving
  *
- * Keeping that local flag is what stops the label from flashing. The Stop API
- * returns quickly (the Host only forwards the click to the page), so clearing the
- * flag as soon as the request resolves re-renders 「停止」 while the generation is
- * still finishing — the user sees 停止 → 停止中 → 停止 → 发送.
+ * The local flag is what stops the label from flashing: the Stop API returns
+ * quickly (the Host only forwards the click to the page), so clearing as soon as
+ * the request resolves re-renders 「停止」 while the generation is still finishing
+ * — the user sees 停止 → 停止中 → 停止 → 发送.
+ *
+ * The Host flag is what makes Dock / Float / Pop-out agree: whatever surface
+ * asked for the stop, every surface is pushed `composer.stopping === true`.
  *
  * `stopping` is therefore cleared by exactly three things: the Host reporting the
- * send is over, a FAILED Stop request, or a request that reported `stopped:false`.
+ * send is over (`host-sending: false`), a FAILED Stop request, or a request that
+ * reported `stopped:false`.
  *
  * This module is pure so the whole lifecycle is unit-testable without React.
  */
@@ -20,7 +25,7 @@
 export interface StopUiState {
   /** Host-authoritative: a reply is currently streaming. */
   sending: boolean
-  /** Local: the user asked to stop THIS send and it has not ended yet. */
+  /** Host stop for this send, or the local click window — whichever is active. */
   stopping: boolean
 }
 
@@ -45,6 +50,13 @@ export type StopEvent =
   | { type: 'request-failed' }
   /** A Host state push: the authoritative send state. */
   | { type: 'host-sending'; sending: boolean }
+  /**
+   * A Host state push: the Host itself recorded a stop for the running send
+   * (Phase 08.2). `true` shows 停止中… on EVERY surface, even one that never
+   * clicked. `false` is deliberately a no-op — it would otherwise wipe the local
+   * click flag before the send actually ends.
+   */
+  | { type: 'host-stopping'; stopping: boolean }
 
 export const initialStopUiState: StopUiState = { sending: false, stopping: false }
 
@@ -72,6 +84,12 @@ export function reduceStopUi(state: StopUiState, event: StopEvent): StopUiState 
       // never inherit the previous round's 停止中… . And the authoritative end of
       // a send always clears the stop label.
       return { sending: event.sending, stopping: event.sending ? state.stopping : false }
+
+    case 'host-stopping':
+      // Only `true` is actionable (another surface asked for the stop); `false`
+      // is ignored on purpose — the local click flag must survive until the send
+      // really ends, which is `host-sending: false` alone.
+      return event.stopping ? { ...state, stopping: true } : state
   }
 }
 

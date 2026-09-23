@@ -25,6 +25,12 @@ export async function handleChatMessage(
   message: string,
   /** A page operation (new chat / history switch) owns the page right now → refuse without touching it. */
   pageGuard?: PageOperationBlocker,
+  /**
+   * Whether the round that just ended was interrupted ON PURPOSE (Phase 08.2):
+   * a user-requested stop or an external conversation switch. Read after `send`
+   * settled; it only decides the message's `status`, never the reply content.
+   */
+  wasInterrupted?: () => boolean,
 ): Promise<ChatSendResult> {
   // A page operation owns the page — never start a send against it, and never
   // append a user message that could not be sent.
@@ -59,10 +65,15 @@ export async function handleChatMessage(
     // produce, and the partial content already streamed must be kept rather than
     // wiped (Phase 07J). Reasoning follows the same rule in `sendMessage`.
     if (reply.content !== '') store.updateChatMessage(assistant.id, reply.content, reply.format)
+    // Lifecycle only (Phase 08.2): a normal end is `finished`, and a round that
+    // ended on purpose (stop / external switch) is `interrupted` — the partial
+    // content that already streamed is kept either way.
+    store.setChatMessageStatus(assistant.id, wasInterrupted?.() === true ? 'interrupted' : 'finished')
     return { status: 200, body: { reply: reply.content } }
   } catch (error) {
     // Keep the user message and any partial assistant text; never fabricate a
     // completion.
+    store.setChatMessageStatus(assistant.id, 'error')
     const detail = error instanceof Error ? error.message : String(error)
     return { status: 500, body: { error: detail } }
   } finally {
