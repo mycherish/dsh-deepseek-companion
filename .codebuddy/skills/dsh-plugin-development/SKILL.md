@@ -51,6 +51,13 @@ ctx.effect(() => ctx.connection.fetch.register({ ... }), 'label')
 
 这样插件卸载（dispose/reload）时 Route 才会一起注销，避免残留 route 和重复注册报错。
 
+### Route 能力边界（2026-09-24 对安装版 0.1.5-rc.2 类型/源码核对）
+
+- `methods` 只支持 **`GET | HEAD | POST`**（`lib/types/rpc.d.ts` 的 `ConnectionFetchMethod`）—— **没有 DELETE / PUT / PATCH**。
+- `requestBody` 必须显式声明：`'buffered'`（受 `DEFAULT_MAX_REQUEST_BODY_BYTES = 300 * 1024 * 1024` 约束，桥接层**整包驻留内存**）或 `'streaming'`（背压、**无聚合上限**）。
+- 该 buffered cap 与 DSH 官方图片通道的「200 MiB 聚合图片 + base64」同源 → **base64 传图是与 DSH 同构的做法**；`requestBody: 'streaming'` 适合将来的大文件通道。
+- **没有** multipart / FormData 支持，也**没有**文件上传 helper：要么自行 base64 编解码，要么自建 `streaming` route。
+
 ## DSH Bundle 配置
 
 `package.json`：
