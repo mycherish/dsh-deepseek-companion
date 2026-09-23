@@ -167,6 +167,16 @@ overlay 与 rightbar 宽度故意独立，绝不相同步，也不把 localStora
 
 不要把 DeepSeek 会话、消息、认证、浏览器生命周期长期存进 React Component state。
 
+## Playwright 页面函数契约（2026-09-24 实机验收确认）
+
+`page.evaluate(fn)` / `waitForFunction(fn)` 会把**函数体序列化**进页面执行：函数体内引用任何模块级 helper、常量或导入都会变成 `ReferenceError`（Host 侧只看到 `page.evaluate` reject）。
+
+- 页面函数必须**完全自包含**：DOM 操作、选择器、常量全部内联在函数体内；跨函数调用同样不允许。
+- 失败要显式暴露：`catch` 成「空数组 / 0 个」会把序列化错误伪装成「页面上没有东西」，排查成本极高。
+- 需要注入测试替身时，用 `payload.env ?? globalThis` 模式（本仓库 `draft-images.ts` / `new-chat.ts` 的写法）。
+- 页面 *读取* 也要限定作用域：整文档扫描（如所有 `img[src^="blob:"]`）会把已发送消息里的图片也算进来，必须限定到 composer 等具体容器。
+- 几何点击前必须双重校验（命中元素特征 + 点击后目标状态），并给出安全失败。
+
 ## 后续 Browser 约束（工程约定）
 
 Browser Engine 使用 Playwright（已接入）：Browser 生命周期属于 Host；selector 集中管理；使用有限 timeout/retry；登录走 DeepSeek 官方页面；不记录 Cookie/Token/密码；Browser/Profile 数据不得进入 Git。
