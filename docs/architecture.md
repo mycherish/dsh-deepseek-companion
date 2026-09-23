@@ -469,9 +469,11 @@ DeepSeek page（URL pathname / 侧栏 href，标准 DOM）
 - **不用 React fiber 做状态**：本次全部新增状态都来自 URL / 标准 DOM / 既有 store 写入；`readTranscriptInPage` 里 fiber 只用于读取 DeepSeek 自己的 raw Markdown（既有行为，未改动）。
 - **测试**：`tests/state.test.ts`（connection/currentSession/composer/message 状态与三界面快照一致）、`tests/state-compat.test.ts`（兼容层 + 旧状态迁移）、`tests/stop-state.test.ts`（Host 停止标记让未点击界面也显示「停止中…」）、`tests/chat.test.ts` / `tests/stop.test.ts` / `tests/new-chat.test.ts` / `tests/sessions.test.ts` / `tests/session-sync.test.ts`（各自的不回归用例）。
 
-## DeepSeek 图片发送（Phase 18 · 18A 设计已收口，**未实现**）
+## DeepSeek 图片发送（Phase 18 · **18A 已实现；核心场景已实机验收**）
 
-> 本节是**设计文档**，不是已完成架构。所有「实测」结论来自真实页面上的两轮探测（2026-09-23 能力 / DOM / 历史恢复；2026-09-24 上传响应关联与失败路径），用 **companion-test profile 的临时副本** + 独立 Playwright 实例完成；仓库中**尚无任何图片实现代码**。18B 只保留结论，本轮不细化。
+> 本节先记录**设计**，再记录**实现与实机验收**。设计期的「实测」结论来自真实页面上的两轮探测（2026-09-23 能力 / DOM / 历史恢复；2026-09-24 上传响应关联与失败路径），用 **companion-test profile 的临时副本** + 独立 Playwright 实例完成。**18A 已实现**（`feat(image): send images`）：8 个**核心**发送/清理场景已在真实 `companion-test` DSH 实例上跑通；**外部页面手动草稿、页面外部删除、失败卡片删除**这几条安全路径**没有完整真机驱动**，由单测覆盖（其中「审核失败后页面保留卡片」的行为已在真实环境观察到）。18B 仍只保留结论。
+>
+> **⚠ 实机验收纠正了两条设计期假设**（详见文末「实现与实机验收」）：① 页面函数必须自包含（Playwright 序列化）；② 草稿 blob 扫描必须限定在 composer 内 —— 已发送消息里的图片同样以 `blob:` 渲染。
 
 ### 实测事实（真实 DeepSeek 页面）
 
@@ -649,7 +651,8 @@ sendMessage(text, onDelta, onReasoning, onCitations?, onSubmitted?: (submitted: 
 //   ① 注册 requestPromise  = page.waitForRequest(isCompletionRequest)   （click 之前）
 //   ② 注册 responsePromise = page.waitForResponse(isCompletionRequest)  （沿用现有 generation 逻辑）
 //   ③ fill → click
-//   ④ request 兑现 → onSubmitted({ refFileIds: request.postDataJSON().ref_file_ids ?? [] }) 恰好一次
+//   ④ request 兑现 → onSubmitted(readCompletionSubmission(request)) 恰好一次
+//      （字段缺失 / null = malformed，属 post-submit integrity error，绝不 `?? []` 兜底）
 //   ⑤ response 兑现 → response.finished()（生命周期不变）
 ```
 
@@ -766,7 +769,7 @@ pageDraftIdentities === hostDraftIdentities（集合完全相等）才允许发�
 - 两个 waiter 必须共用同一个谓词 `isCompletionRequest(req)`（`method === 'POST'` 且 `new URL(url).pathname === '/api/v0/chat/completion'`），且在 click **之前**注册。
 - **request / response 强关联**：commit 后拿到 `committedRequest`，response 到达时**必须**校验 `response.request() === committedRequest`（同一对象引用，等价于“这条 response 属于本轮已提交的那个 request”）。**绝不允许**把另一条请求的 response 当作本轮 response；关联不成立 → 按 **post-submit generation/integrity error** 处理（不恢复草稿、不写 attachments、按 post-submit 清理）。
 - **request 超时前失败 = pre-submit**；**request 已发出之后**（response 超时 / HTTP 5xx / connection reset / `response.finished()` 抛错 / Stop / sessionInterrupted）**一律是 post-submit**。
-- **malformed completion payload 也是 post-submit**（request 一旦出现即为 COMMITTED，不因解析失败退回 PRE-SUBMIT）：`request.postData() === null`、`JSON.parse` 失败、payload 不是 object、`ref_file_ids` 不是 array、`ref_file_ids` 含非 string 元素、存在 duplicate file id、expected/actual mismatch —— **全部**归入 **POST-SUBMIT INTEGRITY ERROR**：不恢复 composer attachments、清理本轮 consumed snapshot 的 record/临时文件、**不写** `ChatMessage.attachments`、不影响 snapshot 之外的 attachment、写明确的 Host error 日志。
+- **malformed completion payload 也是 post-submit**（request 一旦出现即为 COMMITTED，不因解析失败退回 PRE-SUBMIT）：`request.postData() === null`、`JSON.parse` 失败、payload 不是 object、**`ref_file_ids` 字段缺失**、**`ref_file_ids === null`**、`ref_file_ids` 不是 array、`ref_file_ids` 含非 string 元素、存在 duplicate file id、expected/actual mismatch —— **全部**归入 **POST-SUBMIT INTEGRITY ERROR，即使本轮 expected = `[]` 也不例外**：不恢复 composer attachments、清理本轮 consumed snapshot 的 record/临时文件、**不写** `ChatMessage.attachments`、不影响 snapshot 之外的 attachment、写明确的 Host error 日志。
 - 实测（2026-09-24）：`click → request` 约 113 ms，`request → response headers` 约 31 ms，`response.finished()` 约 956 ms；**request 解析时 `request.postData()` 已可完整读取**，因此 `ref_file_ids` 校验可以在 commit 点同步完成，无需延迟。
 
 **`ref_file_ids` 精确校验（唯一性集合比较，不 fuzzy、不用 dedupe 掩盖）**：
@@ -775,6 +778,8 @@ pageDraftIdentities === hostDraftIdentities（集合完全相等）才允许发�
 expectedFileIds = consumedAttachmentIds → AttachmentRecord[] → deepSeekFileId[]
 
 规则（全部满足才算通过）：
+  0. `ref_file_ids` 必须在 payload 里**显式存在**且为 array —— 缺字段 / null 一律 malformed
+     （即使 expected = [] 也不接受：读不出来的请求不等于「没有引用任何文件」）
   1. expected 每一项都是合法非空 string
   2. actual 必须是 array，且元素全部是合法非空 string
   3. expected 不允许重复
@@ -865,3 +870,46 @@ expectedFileIds = consumedAttachmentIds → AttachmentRecord[] → deepSeekFileI
 7. **不新增生产依赖**：base64 编解码用浏览器 `FileReader` / Node `Buffer`。
 8. **外部手动草稿会被严格拒绝**（预期行为）：页面身份集合 === Host 集合是硬闸门，因此用户在 DeepSeek 页面自己拖入/粘贴的图片会让 `/chat` 返回 409，直到用户删掉它或 New chat。这是 18A 的明确取舍：**宁可拒发，也不发送无法追踪的图片**。
 9. **`ref_file_ids` 不一致时消息不带 attachments**（预期行为）：页面已提交、归属无法确证时按“宁缺毋假”处理——user 消息只保留文本，附件资源被清理，Host 记录 integrity error。若将来需要“部分成功”的可视表达，应作为独立 Phase 设计，不在 18A 引入。
+
+### 实现与实机验收（Phase 18A implemented，2026-09-24）
+
+**代码落点**
+
+| 文件 | 职责 |
+|---|---|
+| `src/host/attachments.ts` | magic MIME / 严格 base64 / 限额（20 MiB · 40 MiB · 5 张）/ 随机临时文件 / 幂等清理 |
+| `src/host/attachment-resources.ts` | Host 私有记录（`tempPath`/`previewIdentity`/`deepSeekFileId`）与按 id 精确清理 |
+| `src/host/draft-images.ts` | **自包含**页面函数（草稿 identity / 卡片 / 删除控件 / file input 选择）+ 纯校验助手 |
+| `src/host/send-attachments.ts` | 发送事务：snapshot、身份集合闸门、`ref_file_ids` 唯一性集合校验、commit 语义 |
+| `src/host/attachment-route.ts` | `/chat/attachment` 的 add / remove 流程（400 / 409 / 503 全边界） |
+| `src/client/attachment-ui.ts` + `ChatView.tsx` | attachment card（无像素）、图片按钮、三界面共用 |
+
+**实机验收结果（真实 DSH + DeepSeek 页面；8 个核心场景通过）**
+
+| 场景 | 结果 |
+|---|---|
+| 单张 PNG 上传 → attachment card `ready` | ✅ 真机 |
+| 图片 + 文本发送（`ref_file_ids` 精确匹配 → `user message.attachments` 写入、草稿消费） | ✅ 真机 |
+| 只发图片（`prompt === ""`） | ✅ 真机 |
+| 两张图一起发送（两个 file id 全部匹配） | ✅ 真机 |
+| 三张里删中间一张（目标消失、其它保留、下一次发送仍通过闸门） | ✅ 真机 |
+| Stop（`stopped:true`、`status:interrupted`、已发出内容保留、草稿不回滚） | ✅ 真机 |
+| New chat → 草稿清空 | ✅ 真机 |
+| Session 切换 → 草稿清空 | ✅ 真机 |
+
+**以下安全路径没有完整真机驱动，由单测覆盖**（不要读成「全部实机通过」）：
+
+- DeepSeek 页面**手动加入** Companion 未知图片 → 发送被 409：判定逻辑由 `evaluateDraftGate` 的「集合不相等」分支单测覆盖；真机需要人工在 DeepSeek 窗口操作。
+- DeepSeek 页面**手动删掉** Host 管理的 preview → 发送被 409：同样只由单测覆盖。
+- **失败卡片（`status: 'error'`）的完整 remove 流程**：`remove` 的几何定位 + 确认逻辑由 `draft-images` / `attachment-route` 单测覆盖；其中「审核失败后页面卡住草稿」的现象已在真机观察到，而**由人工点击 remove 走完这一流程**未真机执行。
+- `ref_file_ids` 的 malformed 分支（缺字段 / null / 非数组 / 重复）全部由单测覆盖（`tests/send-attachments.test.ts`）；真机只验证过正常路径（`[]` 与 `[file-…]`）。
+
+**实机验收纠正的设计假设（重要）**
+
+1. **页面函数必须自包含**。`page.evaluate(fn)` 会把函数体序列化进页面，函数体内引用任何模块级 helper / 常量都会变成 `ReferenceError`，而 `listDraftIdentities` 的 `catch` 会把它变成「页面没有草稿」的静默错误 —— 表现为上传成功但「差集为 0」，且发送闸门永远认为页面集合为空。现在 6 个页面函数各自内联 DOM 逻辑，并有一条**序列化契约测试**（`tests/draft-images.test.ts`）禁止模块级标识符与页面函数互相调用。
+2. **草稿扫描必须限定在 composer 内**。设计写的是「页面所有 `img[src^="blob:"]`」，但实机发现**已发送消息里的图片同样以 `blob:` 渲染**：图片发送成功后再发一条纯文本会被闸门判成「页面存在 Companion 不认识的草稿」而 409。现在扫描规则是「祖先（≤8 层）含 `textarea` 且不含消息容器」——即 composer 内的 blob，删除确认与 attach 差集用同一规则。
+3. **file input 不能取第一个**。整页可能有多个 `input[type=file]`（设计期只有 1 个）。现在按证据选择：`multiple` + 接受图片 + accept 清单最长；并列即安全失败（`ambiguous`）。失败时把「页面有几个 file input / 几个 blob」写进 Host 日志。
+4. **删除控件几何规则实测可用**：hover 卡片 → 右上角 `cursor:pointer` 的 `<svg>` → 点击 → 目标 identity 从 composer 消失且其它 identity 仍在。实机还暴露了一个实现缺陷（谓词返回 `{x,y}` 而点解析要求 `{found:true}`）导致删除永远 409，已修复。
+5. **审核失败的真实行为（设计风险 #3 已实测）**：上传受理 ≠ 最终可用。若 DeepSeek 侧审核/解码失败，completion 会返回**空回复**（Host 记为 `error`），而页面会**保留草稿卡片**；此时 Host 已按 commit 语义消费掉该草稿，于是页面集合 ≠ Host 集合 → 后续发送被严格闸门拒绝（409），需要用户手动删掉页面卡片或 New chat 才能继续。这是「宁可不发」策略的已知代价，**不在 18A 内自动恢复**。
+
+**未驱动项的处理原则**：这些路径的实现仍按定稿设计保留严格语义（安全失败优先），只是**没有用真机走完**；任何后续真机验证若发现与设计不符，应以真机结论为准更新本节。
