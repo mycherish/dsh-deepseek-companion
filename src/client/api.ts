@@ -7,10 +7,13 @@
  */
 import { connectionFrom } from '../shared/state.ts'
 import type {
+  ChatAttachment,
   ChatMessage,
   ChatSessionSummary,
   Citation,
   CompanionState,
+  ComposerAttachment,
+  ComposerAttachmentStatus,
   ComposerState,
   ConnectionState,
   CurrentSession,
@@ -194,6 +197,53 @@ export async function sendChatMessage(origin: string, message: string): Promise<
   return body.reply
 }
 
+/** POST route that adds / removes one draft image (Phase 18A). */
+const ATTACHMENT_PATH = '/api/deepseek-companion/chat/attachment'
+
+/**
+ * Ask the Host to take ONE image into the composer draft (Phase 18A). The Host
+ * validates the bytes (magic MIME, strict base64, limits), drives the REAL
+ * DeepSeek upload and returns the draft entry it recorded — `status` may be
+ * `uploading`, `ready` or `error`, and the card is rendered from Host state.
+ * The caller keeps the base64 only until this promise settles.
+ */
+export async function addChatAttachment(
+  origin: string,
+  input: { name: string; mimeType: string; dataBase64: string },
+): Promise<ComposerAttachment> {
+  const response = await fetch(`${origin}${ATTACHMENT_PATH}`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'add', ...input }),
+  })
+  const body = (await response.json().catch(() => null)) as { attachment?: unknown; error?: unknown } | null
+  if (!response.ok) {
+    throw new Error(typeof body?.error === 'string' ? body.error : `HTTP ${response.status}`)
+  }
+  const attachment = normalizeComposerAttachment(body?.attachment)
+  if (attachment === null) throw new Error('invalid attachment from Host')
+  return attachment
+}
+
+/**
+ * Ask the Host to drop ONE draft image (Phase 18A). The Host removes the real
+ * page card first and only then forgets the draft entry — a failure leaves both
+ * sides untouched, so this view never edits its own attachment list.
+ */
+export async function removeChatAttachment(origin: string, id: string): Promise<void> {
+  const response = await fetch(`${origin}${ATTACHMENT_PATH}`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'remove', id }),
+  })
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as { error?: unknown } | null
+    throw new Error(typeof body?.error === 'string' ? body.error : `HTTP ${response.status}`)
+  }
+}
+
 // --- state compatibility layer (Phase 08.2) -----------------------------------
 // The Client never trusts the wire shape blindly: every snapshot and every SSE
 // event goes through one normalizer, so the unified fields (`connection`,
@@ -216,6 +266,54 @@ function normalizeToggle(raw: unknown): DeepThinkState {
 
 function normalizeMessageStatus(raw: unknown): MessageStatus {
   return MESSAGE_STATUSES.includes(raw as MessageStatus) ? (raw as MessageStatus) : 'finished'
+}
+
+const COMPOSER_ATTACHMENT_STATUSES: ComposerAttachmentStatus[] = ['uploading', 'ready', 'error']
+
+/**
+ * One draft attachment, or `null` when it is not usable. Metadata only: an
+ * unknown field (say a preview URL a future Host might add) is dropped here, so
+ * no view can start rendering image bytes by accident (Phase 18A).
+ */
+function normalizeComposerAttachment(raw: unknown): ComposerAttachment | null {
+  const value = asRecord(raw)
+  if (typeof value.id !== 'string' || value.id === '') return null
+  if (typeof value.name !== 'string') return null
+
+  const status: ComposerAttachmentStatus = COMPOSER_ATTACHMENT_STATUSES.includes(
+    value.status as ComposerAttachmentStatus,
+  )
+    ? (value.status as ComposerAttachmentStatus)
+    : 'error'
+
+  const attachment: ComposerAttachment = {
+    id: value.id,
+    kind: 'image',
+    name: value.name,
+    mimeType: typeof value.mimeType === 'string' ? value.mimeType : '',
+    bytes: typeof value.bytes === 'number' && Number.isFinite(value.bytes) ? value.bytes : 0,
+    status,
+  }
+  if (status === 'error' && typeof value.error === 'string' && value.error !== '') {
+    attachment.error = value.error
+  }
+  return attachment
+}
+
+/** One already-sent attachment, or `null` when it is not usable (Phase 18A). */
+function normalizeChatAttachment(raw: unknown): ChatAttachment | null {
+  const value = asRecord(raw)
+  if (typeof value.id !== 'string' || value.id === '') return null
+
+  const attachment: ChatAttachment = {
+    id: value.id,
+    kind: 'image',
+    name: typeof value.name === 'string' ? value.name : null,
+  }
+  if (typeof value.mimeType === 'string' && value.mimeType !== '') attachment.mimeType = value.mimeType
+  if (typeof value.bytes === 'number' && Number.isFinite(value.bytes)) attachment.bytes = value.bytes
+  if (typeof value.remoteUrl === 'string' && value.remoteUrl !== '') attachment.remoteUrl = value.remoteUrl
+  return attachment
 }
 
 function normalizeCitations(raw: unknown): Citation[] {
@@ -250,6 +348,15 @@ function normalizeMessage(raw: unknown): ChatMessage | null {
   }
   const citations = normalizeCitations(value.citations)
   if (citations.length > 0) message.citations = citations
+  const attachments: ChatAttachment[] = []
+  if (Array.isArray(value.attachments)) {
+    for (const entry of value.attachments) {
+      const attachment = normalizeChatAttachment(entry)
+      if (attachment !== null) attachments.push(attachment)
+    }
+  }
+  // Absent means "no images in this message" — never an empty array (Phase 18A).
+  if (attachments.length > 0) message.attachments = attachments
   return message
 }
 
@@ -278,11 +385,20 @@ export function normalizeCompanionState(raw: unknown): CompanionState {
   }
 
   const composerRaw = asRecord(value.composer)
+  const attachments: ComposerAttachment[] = []
+  if (Array.isArray(composerRaw.attachments)) {
+    for (const entry of composerRaw.attachments) {
+      const attachment = normalizeComposerAttachment(entry)
+      if (attachment !== null) attachments.push(attachment)
+    }
+  }
   const composer: ComposerState = {
     sending: typeof composerRaw.sending === 'boolean' ? composerRaw.sending : sending,
     stopping: composerRaw.stopping === true,
     deepThink: 'deepThink' in composerRaw ? normalizeToggle(composerRaw.deepThink) : deepThink,
     search: 'search' in composerRaw ? normalizeToggle(composerRaw.search) : search,
+    // An older Host never sends drafts → an empty draft, never `undefined`.
+    attachments,
   }
 
   const connectionRaw = asRecord(value.connection)

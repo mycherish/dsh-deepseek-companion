@@ -115,6 +115,7 @@ test('兼容层: 垃圾输入降级为初始态（不抛、不产生 undefined �
       stopping: false,
       deepThink: { available: false, enabled: false },
       search: { available: false, enabled: false },
+      attachments: [],
     })
     assert.deepEqual(state.chat, { messages: [], sending: false })
   }
@@ -149,4 +150,142 @@ test('兼容层: 同一份 Host 状态在三个 surface 上归一化结果完全
   // 并且两个投影同源：composer 的开关就是 deepseek 里的那对值。
   assert.deepEqual(dock.composer.deepThink, dock.deepseek.deepThink)
   assert.deepEqual(dock.composer.search, dock.deepseek.search)
+})
+
+// --- Phase 18A: attachment metadata -------------------------------------------
+
+/** A Host state that carries a draft attachment and a sent one. */
+function attachmentState(): Record<string, unknown> {
+  return {
+    status: 'ready',
+    revision: 3,
+    instanceId: 'host-1',
+    deepseek: { status: 'logged_in', deepThink: { available: false, enabled: false }, search: { available: false, enabled: false } },
+    composer: {
+      sending: false,
+      stopping: false,
+      deepThink: { available: false, enabled: false },
+      search: { available: false, enabled: false },
+      attachments: [
+        { id: 'att-1', kind: 'image', name: 'a.png', mimeType: 'image/png', bytes: 1024, status: 'ready' },
+        { id: 'att-2', kind: 'image', name: 'b.png', mimeType: 'image/jpeg', bytes: 2048, status: 'error', error: 'upload failed' },
+      ],
+    },
+    chat: {
+      sending: false,
+      messages: [
+        {
+          id: 'm1',
+          role: 'user',
+          content: '看这两张',
+          format: 'text',
+          attachments: [
+            { id: 'att-1', kind: 'image', name: 'a.png', mimeType: 'image/png', bytes: 1024 },
+            { id: 'att-2', kind: 'image', name: 'b.png' },
+          ],
+        },
+      ],
+    },
+  }
+}
+
+test('18A 兼容层: 旧 Host 没有附件字段 → 空草稿、消息无 attachments（不是 undefined）', () => {
+  const state = normalizeCompanionState(legacyState())
+
+  assert.deepEqual(state.composer.attachments, [])
+  assert.equal(state.chat.messages[0]!.attachments, undefined)
+})
+
+test('18A 兼容层: 附件元数据原样保留（草稿带 status，已发送带 name/bytes）', () => {
+  const state = normalizeCompanionState(attachmentState())
+
+  assert.deepEqual(state.composer.attachments, [
+    { id: 'att-1', kind: 'image', name: 'a.png', mimeType: 'image/png', bytes: 1024, status: 'ready' },
+    {
+      id: 'att-2',
+      kind: 'image',
+      name: 'b.png',
+      mimeType: 'image/jpeg',
+      bytes: 2048,
+      status: 'error',
+      error: 'upload failed',
+    },
+  ])
+  assert.deepEqual(state.chat.messages[0]!.attachments, [
+    { id: 'att-1', kind: 'image', name: 'a.png', mimeType: 'image/png', bytes: 1024 },
+    { id: 'att-2', kind: 'image', name: 'b.png' },
+  ])
+})
+
+test('18A 兼容层: 垃圾附件条目被丢弃，可用条目保留（坏数据不拖垮视图）', () => {
+  const state = normalizeCompanionState({
+    status: 'ready',
+    composer: {
+      attachments: [
+        { id: 'ok', name: 'ok.png', mimeType: 'image/png', bytes: 10, status: 'uploading' },
+        { id: '', name: 'no-id.png', status: 'ready' },
+        { name: 'no-id-at-all.png', status: 'ready' },
+        null,
+        'nope',
+      ],
+    },
+    chat: {
+      messages: [
+        {
+          id: 'm1',
+          role: 'user',
+          content: 'hi',
+          format: 'text',
+          attachments: [{ id: 'a', kind: 'image', name: 'a.png' }, { id: '' }, 42],
+        },
+      ],
+    },
+  })
+
+  assert.deepEqual(state.composer.attachments, [
+    { id: 'ok', kind: 'image', name: 'ok.png', mimeType: 'image/png', bytes: 10, status: 'uploading' },
+  ])
+  assert.deepEqual(state.chat.messages[0]!.attachments, [{ id: 'a', kind: 'image', name: 'a.png' }])
+})
+
+test('18A 兼容层: 未知附件字段不会进入 Client 状态（无像素、无 blob URL、无 Host 路径）', () => {
+  const state = normalizeCompanionState({
+    status: 'ready',
+    composer: {
+      attachments: [
+        {
+          id: 'att-1',
+          kind: 'image',
+          name: 'a.png',
+          mimeType: 'image/png',
+          bytes: 1024,
+          status: 'ready',
+          // A Host from the future (or a hostile one) may send these — they must not survive.
+          dataBase64: 'AAAA',
+          previewUrl: 'blob:https://chat.deepseek.com/abc',
+          tempPath: '/tmp/att-1.png',
+          deepSeekFileId: 'file-123',
+        },
+      ],
+    },
+  })
+
+  const attachment = state.composer.attachments[0]!
+  assert.deepEqual(Object.keys(attachment).sort(), ['bytes', 'id', 'kind', 'mimeType', 'name', 'status'])
+  const payload = JSON.stringify(state.composer.attachments)
+  assert.equal(payload.includes('dataBase64'), false)
+  assert.equal(payload.includes('blob:'), false)
+  assert.equal(payload.includes('tempPath'), false)
+})
+
+test('18A 兼容层: 三界面归一化出完全相同的附件元数据', () => {
+  const payload = attachmentState()
+
+  const dock = normalizeCompanionState(payload)
+  const float = normalizeCompanionState(payload)
+  const popout = normalizeCompanionState(payload)
+
+  assert.deepEqual(dock.composer.attachments, float.composer.attachments)
+  assert.deepEqual(float.composer.attachments, popout.composer.attachments)
+  assert.deepEqual(dock.chat.messages[0]!.attachments, popout.chat.messages[0]!.attachments)
 })

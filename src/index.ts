@@ -1,12 +1,15 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-client-connection'
+import { handleAttachmentRequest } from './host/attachment-route.ts'
+import { createAttachmentResources } from './host/attachment-resources.ts'
 import { createDeepSeekBrowser, type DeepSeekBrowser } from './host/browser.ts'
 import { handleChatMessage } from './host/chat.ts'
 import { handleDeepThinkRequest } from './host/deep-think.ts'
 import { createPageGuard } from './host/guard.ts'
 import { handleNewChatRequest } from './host/new-chat.ts'
-import { browserProfileDir } from './host/paths.ts'
+import { attachmentUploadDir, browserProfileDir } from './host/paths.ts'
 import { handleSearchRequest } from './host/search.ts'
+import { prepareAttachmentTransaction } from './host/send-attachments.ts'
 import {
   createSessionSyncController,
   handleListSessionsRequest,
@@ -31,6 +34,8 @@ const STREAM_PATH = '/api/deepseek-companion/state/stream'
 const SHOW_PATH = '/api/deepseek-companion/browser/show'
 /** POST route to send one chat message and await the final reply (Phase 07C). */
 const CHAT_PATH = '/api/deepseek-companion/chat'
+/** POST route to add / remove one draft image (Phase 18A). */
+const ATTACHMENT_PATH = '/api/deepseek-companion/chat/attachment'
 /** POST route to flip DeepSeek's Deep Think toggle (Phase 07G). */
 const DEEP_THINK_PATH = '/api/deepseek-companion/deep-think'
 /** POST route to flip DeepSeek's web-search toggle (Phase 07H). */
@@ -57,6 +62,19 @@ export function apply(ctx: Context): void {
 
   // Per-profile browser profile (via ctx.baseUrl), overridable for tests.
   const browserProfileDirForCtx = browserProfileDir(process.env, ctx.baseUrl)
+
+  // Host-private attachment resources (Phase 18A): the temp files and the page
+  // identities behind the composer's image draft. Only metadata ever reaches the
+  // shared state — bytes, temp paths and page identities stay in the Host.
+  const resources = createAttachmentResources({
+    dir: attachmentUploadDir(process.env, ctx.baseUrl),
+    store,
+  })
+  // The directory is Host-owned, so a previous abnormally-ended run may have left
+  // temp files behind: empty it at startup (Phase 18A).
+  void resources.prepare().catch((error: unknown) => {
+    console.warn('[dsh-deepseek-companion] failed to prepare the attachment directory', error)
+  })
 
   ctx.effect(
     () =>
@@ -101,6 +119,9 @@ export function apply(ctx: Context): void {
     browser: () => browser,
     store,
     guard: pageGuard,
+    // The page moved to another conversation by itself: its composer is gone, so
+    // the draft tracked for it is dropped too (Phase 18A).
+    onDraftInvalidated: () => resources.resetDraft(),
   })
 
   ctx.effect(() => {
@@ -122,6 +143,11 @@ export function apply(ctx: Context): void {
       // Session navigation inside the DeepSeek window itself (Phase 08.1).
       (location, info) => {
         if (!disposed) sessionSync.onLocation(location, info)
+      },
+      // The page was closed and a fresh one opened: nothing the old page's draft
+      // was tied to exists any more (Phase 18A).
+      () => {
+        if (!disposed) void resources.resetDraft()
       },
     )
       .then((created) => {
@@ -145,6 +171,9 @@ export function apply(ctx: Context): void {
 
     return () => {
       disposed = true
+      // The page is about to go away, taking its drafts with it (Phase 18A).
+      // Fire-and-forget: teardown must not block on file I/O.
+      void resources.resetDraft()
       if (browser !== null) {
         void browser.dispose()
         browser = null
@@ -192,22 +221,57 @@ export function apply(ctx: Context): void {
           } catch {
             return Response.json({ error: 'invalid request body' }, { status: 400 })
           }
-          if (message === '') return Response.json({ error: 'message is empty' }, { status: 400 })
+          // Phase 18A: a round may be images only (`prompt === ""` on the page),
+          // but a round with neither text nor draft is still refused.
+          const draft = store.getState().composer.attachments
+          if (message === '' && draft.length === 0) {
+            return Response.json({ error: 'message is empty' }, { status: 400 })
+          }
           if (browser === null) return Response.json({ error: 'browser not ready' }, { status: 503 })
           // Capture a non-null reference so the send closure below type-checks.
           const currentBrowser = browser
+
+          // The image half of the round (Phase 18A). The identity comparison runs
+          // for EVERY send — text-only included: a page draft this Host does not
+          // manage makes the composer's real content unknowable, so the round is
+          // refused before the page is touched (composer, records and temp files
+          // all left untouched).
+          if (draft.length > 0) {
+            if (store.getState().chat.sending) {
+              return Response.json({ error: 'chat is busy' }, { status: 409 })
+            }
+            if (pageGuard.inProgress()) {
+              return Response.json({ error: 'page operation in progress' }, { status: 409 })
+            }
+          }
+          const prepared = await prepareAttachmentTransaction({
+            store,
+            recordOf: (id) => resources.get(id),
+            consume: (ids) => resources.consume(ids),
+            listDraftIdentities: () => currentBrowser.listDraftIdentities(),
+            onIntegrityError: (error) => {
+              console.warn('[dsh-deepseek-companion] attachment integrity error:', error)
+            },
+          })
+          if (!prepared.ok) {
+            console.warn('[dsh-deepseek-companion] send refused:', prepared.error)
+            return Response.json({ error: prepared.error }, { status: prepared.status })
+          }
+          const attachmentTransaction = prepared.transaction
+
           // Delegate to the tested send flow (claims the slot, appends user,
           // sends, appends assistant, resets sending in `finally`).
           const result = await handleChatMessage(
             store,
-            (text, onDelta, onReasoning, onCitations) =>
-              currentBrowser.sendMessage(text, onDelta, onReasoning, onCitations),
+            (text, onDelta, onReasoning, onCitations, onSubmitted) =>
+              currentBrowser.sendMessage(text, onDelta, onReasoning, onCitations, onSubmitted),
             message,
             // Refused while a page operation (new chat / switch) owns the page.
             pageGuard,
             // Phase 08.2: label the round `finished` or `interrupted` (stop /
             // external switch) — read after the send settled.
             () => currentBrowser.wasInterrupted(),
+            attachmentTransaction,
           )
           if (result.status === 500) {
             console.warn('[dsh-deepseek-companion] failed to send chat message', result.body.error)
@@ -219,6 +283,32 @@ export function apply(ctx: Context): void {
         },
       }),
     'deepseek-companion: chat route',
+  )
+
+  // Draft images (Phase 18A): ONE route with an `action` discriminator (`add` /
+  // `remove`). `add` validates the bytes itself (magic MIME, strict base64,
+  // limits) and drives the REAL DeepSeek upload; `remove` deletes the page card
+  // first and only then forgets the Host entry.
+  ctx.effect(
+    () =>
+      ctx.connection.fetch.register({
+        path: ATTACHMENT_PATH,
+        methods: ['POST'],
+        requestBody: 'buffered',
+        fetch: async (request) => {
+          const body: unknown = await request.json().catch(() => null)
+          const result = await handleAttachmentRequest({ store, resources, browser, guard: pageGuard }, body)
+          if (result.status >= 400) {
+            console.warn(
+              '[dsh-deepseek-companion] attachment request not applied:',
+              result.status,
+              result.body.error,
+            )
+          }
+          return Response.json(result.body, { status: result.status })
+        },
+      }),
+    'deepseek-companion: chat attachment route',
   )
 
   // Deep Think control (Phase 07G): flips the REAL DeepSeek composer toggle and
@@ -306,6 +396,9 @@ export function apply(ctx: Context): void {
             // The Host made this navigation itself: record where it landed, so
             // the watcher never syncs the same change a second time (08.1).
             sessionSync.markKnown({ kind: 'empty' })
+            // Phase 18A: a fresh conversation means a fresh composer — the old
+            // draft (and its temp files) is dropped with the old transcript.
+            await resources.resetDraft()
           } else {
             console.warn('[dsh-deepseek-companion] new chat request not applied:', result.status, result.body.error)
           }
@@ -353,6 +446,9 @@ export function apply(ctx: Context): void {
             // never re-syncs it (Phase 08.1).
             const known = knownLocationFromSwitchBody(body)
             if (known !== null) sessionSync.markKnown(known)
+            // Phase 18A: the composer belonged to the OLD conversation, so its
+            // draft is dropped rather than carried into the new one.
+            await resources.resetDraft()
           } else {
             console.warn('[dsh-deepseek-companion] chat switch not applied:', result.status, result.body.error)
           }

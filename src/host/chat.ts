@@ -7,6 +7,7 @@
  */
 import type { AssistantReply, Citation } from '../shared/state.ts'
 import type { PageOperationBlocker } from './guard.ts'
+import type { CompletionSubmission, SendAttachmentTransaction } from './send-attachments.ts'
 import type { CompanionStateStore } from './state.ts'
 
 export interface ChatSendResult {
@@ -21,6 +22,11 @@ export async function handleChatMessage(
     onDelta: (reply: AssistantReply) => void,
     onReasoning: (reply: AssistantReply) => void,
     onCitations: (citations: Citation[]) => void,
+    /**
+     * Phase 18A: called exactly once at the commit point (the completion request
+     * was observed). Absent for a browser that cannot report it.
+     */
+    onSubmitted?: (submitted: CompletionSubmission) => void | Promise<void>,
   ) => Promise<AssistantReply>,
   message: string,
   /** A page operation (new chat / history switch) owns the page right now → refuse without touching it. */
@@ -31,6 +37,13 @@ export async function handleChatMessage(
    * settled; it only decides the message's `status`, never the reply content.
    */
   wasInterrupted?: () => boolean,
+  /**
+   * The image half of this round (Phase 18A), present only when the composer
+   * held a draft. Its `onSubmitted` fires at the commit point with the id of the
+   * user message this round wrote — the ONLY moment `message.attachments` may be
+   * written, and the moment after which the draft is never restored.
+   */
+  attachmentTransaction?: SendAttachmentTransaction,
 ): Promise<ChatSendResult> {
   // A page operation owns the page — never start a send against it, and never
   // append a user message that could not be sent.
@@ -43,7 +56,7 @@ export async function handleChatMessage(
     return { status: 409, body: { error: 'chat is busy' } }
   }
   store.setChatSending(true)
-  store.appendChatMessage('user', message)
+  const user = store.appendChatMessage('user', message)
   // One empty assistant message is created up front; every delta updates the
   // SAME message, so the message count never grows while streaming. Its format
   // may switch text -> markdown once DeepSeek's raw Markdown becomes available.
@@ -59,6 +72,12 @@ export async function handleChatMessage(
       // `sending` is already false. Bound to THIS assistant message id, so a
       // following send can never write its sources here (Phase 07I).
       (citations) => store.updateChatCitations(assistant.id, citations),
+      // Phase 18A: the commit point, bound to THIS round's user message. The
+      // transaction decides whether the images may be written onto it, and it
+      // never runs when there was no attachment at all.
+      attachmentTransaction === undefined
+        ? undefined
+        : (submitted) => attachmentTransaction.onSubmitted(submitted, user.id),
     )
     // Force-write the final reply even if the last delta was throttled/dropped.
     // An EMPTY final reply is not written: that is what a user-requested stop can

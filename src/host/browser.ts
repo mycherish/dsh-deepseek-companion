@@ -11,6 +11,7 @@
  * clear "Executable doesn't exist" error and the caller maps it to `error`.
  * No automatic browser download, no shell install, no guessing old caches.
  */
+import { readFile } from 'node:fs/promises'
 import { chromium, type BrowserContext, type JSHandle, type Page } from 'playwright'
 import type {
   AssistantReply,
@@ -24,6 +25,21 @@ import type {
   DeepThinkState,
   SearchState,
 } from '../shared/state.ts'
+import {
+  chooseFileInput,
+  countPageInputsInPage,
+  describeFileInputsInPage,
+  diffDraftIdentities,
+  findDraftCardInPage,
+  findRemoveControlInPage,
+  isDraftIdentity,
+  normalizeUploadResponse,
+  readDraftIdentitiesInPage,
+  REMOVE_CONTROL_OFFSETS,
+  type DraftIdentityDiff,
+  type FileInputCandidate,
+} from './draft-images.ts'
+import { readCompletionSubmission, type CompletionSubmission } from './send-attachments.ts'
 import {
   parseCitationGroups,
   readDomBlocks,
@@ -78,9 +94,23 @@ const DEEPSEEK_URL = 'https://chat.deepseek.com'
 /** DeepSeek's authoritative "current user" endpoint. */
 const CURRENT_USER_PATH = '/api/v0/users/current'
 /** Completion endpoint the SPA posts to when sending a message. */
-const COMPLETION_PATH = '/chat/completion'
+const COMPLETION_PATH = '/api/v0/chat/completion'
+/** Image upload endpoint the SPA posts to when a file is attached. */
+const UPLOAD_PATH = '/api/v0/file/upload_file'
+/** How long one send may take to produce its completion REQUEST / response. */
+const COMPLETION_TIMEOUT = 60000
+/** How long one page upload may take to answer (Phase 18A). */
+const UPLOAD_TIMEOUT = 10000
+/** How long the page may take to draw the preview card of a fresh upload. */
+const DRAFT_PREVIEW_TIMEOUT = 3000
+/** How long the removal control may take to appear once its card is hovered. */
+const REMOVE_CONTROL_TIMEOUT = 3000
+/** How long one draft removal may take to actually take effect. */
+const REMOVE_SETTLE_TIMEOUT = 3000
 /** The single chat input (a plain `textarea`, no stable id/role/aria). */
 const INPUT_SELECTOR = 'textarea'
+/** The page's only file input (hidden; image and document uploads share it). */
+const FILE_INPUT_SELECTOR = 'input[type=file]'
 /** The send button (DeepSeek's `ds-button--primary`). */
 const SEND_BUTTON_SELECTOR = '.ds-button--primary'
 /**
@@ -216,6 +246,55 @@ function normalizeReply(value: unknown): AssistantReply {
   return { content: typeof raw.content === 'string' ? raw.content : '', format }
 }
 
+/**
+ * Whether a completion call (request or response) is DeepSeek's own send call.
+ * The REQUEST side of this predicate is the Phase 18A commit point: the moment
+ * `POST /api/v0/chat/completion` leaves the page, the round is submitted.
+ */
+function isCompletionCall(call: { method(): string; url(): string }): boolean {
+  if (call.method() !== 'POST') return false
+  try {
+    return new URL(call.url()).pathname === COMPLETION_PATH
+  } catch {
+    return false
+  }
+}
+
+/**
+ * One failed attach attempt: keep the card identity whenever the page's preview
+ * diff was clean, so a failed upload can still be removed precisely later
+ * (Phase 18A). An unclean diff keeps nothing — an identity that cannot be tied
+ * to this upload must never be recorded.
+ */
+function failedAttach(diff: DraftIdentityDiff, error: string): AttachImageResult {
+  return diff.ok ? { ok: false, error, previewIdentity: diff.identity } : { ok: false, error }
+}
+
+/** Message of an unknown thrown value. */
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
+/** Coerce a page-provided point into `{ x, y }`, or `null` when it is unusable. */
+function asPoint(value: unknown): { x: number; y: number } | null {
+  if (value === null || typeof value !== 'object') return null
+  const raw = value as { found?: unknown; x?: unknown; y?: unknown }
+  if (raw.found !== true) return null
+  if (typeof raw.x !== 'number' || typeof raw.y !== 'number') return null
+  if (!Number.isFinite(raw.x) || !Number.isFinite(raw.y)) return null
+  return { x: raw.x, y: raw.y }
+}
+
+/** What one `attachImage` attempt did (Phase 18A). */
+export type AttachImageResult =
+  | { ok: true; previewIdentity: string; deepSeekFileId: string }
+  | {
+      ok: false
+      error: string
+      /** Present when the page DID draw a card for the failed upload. */
+      previewIdentity?: string
+    }
+
 export interface DeepSeekBrowser {
   /** Run one initial check now (then re-checks automatically on navigation). */
   check(): Promise<DeepSeekStatus>
@@ -255,6 +334,32 @@ export interface DeepSeekBrowser {
    * just ended.
    */
   wasInterrupted(): boolean
+  /**
+   * Every image-draft preview the page currently shows (`img[src^="blob:"]`,
+   * DOM order). Read-only — the Host compares this set with its own draft
+   * before every send, so it can never send a draft it does not manage
+   * (Phase 18A).
+   */
+  listDraftIdentities(): Promise<string[]>
+  /**
+   * Drive DeepSeek's REAL hidden file input for ONE image and report the page
+   * blob identity of the draft card it produced, plus DeepSeek's own file id
+   * (Phase 18A). Success means "DeepSeek accepted the upload" — never "the
+   * audit finished" (`status: "PENDING"` is a normal answer).
+   *
+   * On failure `previewIdentity` is still returned whenever a card DID appear
+   * (the page draws one even for a failed upload), so the failed draft can be
+   * removed precisely later; when no card appeared the field is absent.
+   */
+  attachImage(input: { path: string; fileName: string; mimeType: string; bytes: number }): Promise<AttachImageResult>
+  /**
+   * Remove ONE draft card from the page (Phase 18A): locate it by
+   * `previewIdentity`, hover it, click ITS OWN removal control, then confirm the
+   * target identity is gone AND every other identity survived. `false` means
+   * nothing was changed for sure — a missing identity, a missing control or a
+   * stray SVG is a SAFE failure, never a fuzzy guess.
+   */
+  removeDraftAttachment(input: { previewIdentity: string }): Promise<boolean>
   /**
    * Start a NEW DeepSeek conversation by clicking the REAL sidebar control, then
    * confirm the SPA actually switched (empty-chat pathname + no message DOM
@@ -305,6 +410,15 @@ export interface DeepSeekBrowser {
      * never be called at all — the reply is already complete either way.
      */
     onCitations?: (citations: Citation[]) => void,
+    /**
+     * The commit point (Phase 18A): called EXACTLY ONCE, the moment the
+     * completion REQUEST was observed leaving the page — before the response is
+     * awaited. The payload is read from that very request, so an image send can
+     * prove which files the round really referenced. After this call the round is
+     * submitted: a later failure (response timeout, HTTP error, stop, external
+     * switch, payload mismatch) is POST-submit and never restores the draft.
+     */
+    onSubmitted?: (submitted: CompletionSubmission) => void | Promise<void>,
   ): Promise<AssistantReply>
   dispose(): Promise<void>
 }
@@ -353,6 +467,13 @@ export async function createDeepSeekBrowser(
    * in-flight send — the Host records it and never re-reads that transcript.
    */
   onSessionLocation?: (location: SessionLocation, info: { createdBySend: boolean }) => void,
+  /**
+   * A page that carries composer drafts was REPLACED (Phase 18A): the old page
+   * was closed and a fresh one was opened. Everything the Host tracked about the
+   * old page's draft (temp files, page identities) is stale from that moment on —
+   * the caller drops it instead of trying to migrate it.
+   */
+  onPageReplaced?: () => void,
 ): Promise<DeepSeekBrowser> {
   // Playwright resolves its own matched Chromium via `chromium.executablePath()`;
   // a missing browser surfaces as a clear launch error (mapped to `error`).
@@ -518,6 +639,8 @@ export async function createDeepSeekBrowser(
       attachListeners(page)
       // A recreated page needs its own session watcher (Phase 08.1).
       attachSessionWatcher(page)
+      // The previous page is gone — its draft cards went with it (Phase 18A).
+      onPageReplaced?.()
     }
     await page.goto(`${DEEPSEEK_URL}/sign_in`, { waitUntil: 'domcontentloaded', timeout: 30000 })
     await page.bringToFront()
@@ -712,6 +835,7 @@ export async function createDeepSeekBrowser(
     onDelta: (reply: AssistantReply) => void,
     onReasoning: (reply: AssistantReply) => void,
     onCitations?: (citations: Citation[]) => void,
+    onSubmitted?: (submitted: CompletionSubmission) => void | Promise<void>,
   ): Promise<AssistantReply> => {
     if (sending) throw new Error('a send is already in progress')
     sending = true
@@ -826,15 +950,34 @@ export async function createDeepSeekBrowser(
         },
       })
 
-      // Wait for the completion POST before clicking, then wait for its SSE
-      // stream to finish — the reliable "reply complete" signal (no polling).
+      // TWO waiters, both registered BEFORE the click (Phase 18A). The REQUEST is
+      // the commit point: the moment this round's content reaches the page the
+      // page owns it, so a response that never arrives can no longer be mistaken
+      // for "nothing was submitted". The response keeps its old role — the SSE
+      // stream's end is still the reliable "reply complete" signal.
+      const requestPromise = page.waitForRequest(isCompletionCall, { timeout: COMPLETION_TIMEOUT })
       const completionPromise = page.waitForResponse(
-        (response) => response.request().method() === 'POST' && response.url().includes(COMPLETION_PATH),
-        { timeout: 60000 },
+        (response) => isCompletionCall(response.request()),
+        { timeout: COMPLETION_TIMEOUT },
       )
+      // If the commit point itself fails, the response waiter must not surface as
+      // an unhandled rejection later — it is still awaited properly below.
+      completionPromise.catch(() => {})
+
       await page.fill(INPUT_SELECTOR, text)
       await page.locator(SEND_BUTTON_SELECTOR).first().click()
+
+      // ★ COMMIT POINT: the completion REQUEST left the page. Exactly one
+      // `onSubmitted` call, before the response is awaited — a deadline miss here
+      // (pre-submit) leaves the draft untouched; anything after it is post-submit.
+      const committedRequest = await requestPromise
+      if (onSubmitted !== undefined) await onSubmitted(readCompletionSubmission(committedRequest))
+
       const response = await completionPromise
+      // The response must belong to THIS round's request — never a stranger's.
+      if (response.request() !== committedRequest) {
+        throw new Error('completion response does not belong to this send')
+      }
       await response.finished()
 
       // An interruption means the page now shows a DIFFERENT conversation: the
@@ -1176,6 +1319,318 @@ export async function createDeepSeekBrowser(
     return messages
   }
 
+  /** Describe the page's file inputs (Phase 18A, read-only). */
+  const readFileInputs = async (): Promise<FileInputCandidate[]> => {
+    try {
+      const raw: unknown = await page.evaluate(describeFileInputsInPage, {})
+      return Array.isArray(raw) ? (raw as FileInputCandidate[]) : []
+    } catch {
+      return []
+    }
+  }
+
+  /** Every draft preview the page shows right now (Phase 18A, read-only). */
+  const listDraftIdentities = async (): Promise<string[]> => {
+    try {
+      const raw: unknown = await page.evaluate(readDraftIdentitiesInPage, { messageSelector: MESSAGE_SELECTOR })
+      if (!Array.isArray(raw)) return []
+      return raw.filter((entry): entry is string => typeof entry === 'string')
+    } catch {
+      return []
+    }
+  }
+
+  /**
+   * Bounded wait for the preview card one `setInputFiles` call produced, then the
+   * EXACT identity diff. "At least one new blob" is not enough: the diff must be
+   * exactly one added preview and nothing lost, otherwise the upload cannot be
+   * tied to a card and the attempt fails safely (Phase 18A).
+   */
+  const waitForNewDraftIdentity = async (before: readonly string[]): Promise<DraftIdentityDiff> => {
+    const known = [...before]
+    await page
+      .waitForFunction(
+        // Serialized into the page: module constants do not exist here. The
+        // composer scope mirrors `readDraftIdentitiesInPage` — a SENT image is
+        // rendered in the transcript and must never count as a draft.
+        (payload: { previous: string[]; messageSelector: string }) => {
+          const inComposer = (element: Element): boolean => {
+            let node: Element | null = element.parentElement
+            for (let depth = 0; depth < 8 && node !== null; depth += 1) {
+              if (node.querySelector('textarea') !== null) {
+                return payload.messageSelector === '' || node.querySelector(payload.messageSelector) === null
+              }
+              node = node.parentElement
+            }
+            return false
+          }
+          const srcs = Array.from(document.querySelectorAll('img'))
+            .filter((img) => inComposer(img))
+            .map((img) => img.getAttribute('src') ?? '')
+            .filter((src) => src.startsWith('blob:'))
+          return srcs.some((src) => !payload.previous.includes(src))
+        },
+        { previous: known, messageSelector: MESSAGE_SELECTOR },
+        { timeout: DRAFT_PREVIEW_TIMEOUT },
+      )
+      .catch(() => {
+        // Timeout is not fatal here: the exact diff below decides.
+      })
+    return diffDraftIdentities(known, await listDraftIdentities())
+  }
+
+  /**
+   * Attach ONE image through DeepSeek's own file input (Phase 18A).
+   *
+   * Page-first, guessed-never: the upload waiter is registered BEFORE the input
+   * is touched, the answer is validated field by field, and the draft identity
+   * comes from an exact DOM diff — never from a count and never from "the last
+   * blob on the page".
+   */
+  const attachImage = async (input: {
+    path: string
+    fileName: string
+    mimeType: string
+    bytes: number
+  }): Promise<AttachImageResult> => {
+    if (disposed) return { ok: false, error: 'browser disposed' }
+
+    let buffer: Buffer
+    try {
+      buffer = await readFile(input.path)
+    } catch (error) {
+      return { ok: false, error: `cannot read the attachment: ${errorText(error)}` }
+    }
+    if (buffer.length !== input.bytes) {
+      return { ok: false, error: 'attachment bytes changed on disk' }
+    }
+
+    const before = await listDraftIdentities()
+    // Which file input is the COMPOSER's? DeepSeek ships one, but the page may
+    // hold more (another feature, a dialog). It is chosen by its own evidence —
+    // `multiple` + accepts images + the long accept list — and a tie is a safe
+    // failure, never a guess.
+    const inputs = await readFileInputs()
+    const choice = chooseFileInput(inputs)
+    if (!choice.ok) {
+      // A page whose composer cannot be identified is worth a diagnostic line:
+      // it is the difference between "DeepSeek changed its UI" and "the page is
+      // in a state that has no composer at all".
+      const census: unknown = await page
+        .evaluate(countPageInputsInPage, {})
+        .catch(() => ({ totalInputs: -1, fileInputs: -1 }))
+      console.warn(
+        '[dsh-deepseek-companion] attachImage: no usable file input',
+        JSON.stringify({ census, inputs, blobPreviews: before.length }),
+      )
+      return { ok: false, error: choice.error }
+    }
+
+    // ① register the upload waiter BEFORE the input is driven.
+    const uploadPromise = page.waitForResponse(
+      (response) => response.request().method() === 'POST' && response.url().includes(UPLOAD_PATH),
+      { timeout: UPLOAD_TIMEOUT },
+    )
+    uploadPromise.catch(() => {})
+    try {
+      // ② drive the REAL hidden input (no hash class, no React internals, one
+      //    file per call — the Host serializes attaches anyway).
+      await page.locator(FILE_INPUT_SELECTOR).nth(choice.index).setInputFiles({
+        name: input.fileName,
+        mimeType: input.mimeType,
+        buffer,
+      })
+      // ③ the upload answer, validated field by field.
+      const response = await uploadPromise
+      const body: unknown = await response.json().catch(() => null)
+      const meta = normalizeUploadResponse({ status: response.status(), body })
+      // ④ the page's own card for this upload (bounded, exact diff).
+      const diff = await waitForNewDraftIdentity(before)
+      const where = `page: ${before.length} blob previews, ${inputs.length} file inputs (used #${choice.index})`
+
+      if (!meta.ok) return failedAttach(diff, `${meta.error} · ${where}`)
+      if (!diff.ok) return failedAttach(diff, `${diff.error} · ${where}`)
+      if (meta.meta.fileName !== input.fileName) {
+        return failedAttach(diff, `upload response file name mismatch (${meta.meta.fileName})`)
+      }
+      if (meta.meta.fileSize !== input.bytes) {
+        return failedAttach(diff, `upload response file size mismatch (${String(meta.meta.fileSize)})`)
+      }
+      return { ok: true, previewIdentity: diff.identity, deepSeekFileId: meta.meta.fileId }
+    } catch (error) {
+      // The upload failed (timeout, HTTP error, aborted input). The page may
+      // STILL have drawn a card — keep its identity so the failed draft can be
+      // removed precisely later; if the diff is not clean, keep nothing.
+      const diff = await waitForNewDraftIdentity(before)
+      return failedAttach(diff, errorText(error))
+    }
+  }
+
+  /**
+   * Remove ONE draft card (Phase 18A). The identity decides WHICH card; the
+   * control is located geometrically (DeepSeek gives it neither aria nor title)
+   * but must be a `cursor: pointer` SVG in that card's top-right quadrant — a
+   * random SVG is never clicked. Success requires the target identity to be gone
+   * AND every other identity to survive.
+   */
+  const removeDraftAttachment = async (input: { previewIdentity: string }): Promise<boolean> => {
+    if (disposed) return false
+    if (!isDraftIdentity(input.previewIdentity)) {
+      console.warn('[dsh-deepseek-companion] removeDraftAttachment: invalid identity')
+      return false
+    }
+
+    const others = (await listDraftIdentities()).filter((identity) => identity !== input.previewIdentity)
+    try {
+      const card: unknown = await page.evaluate(findDraftCardInPage, { identity: input.previewIdentity })
+      const point = asPoint(card)
+      if (point === null) {
+        console.warn('[dsh-deepseek-companion] removeDraftAttachment: card not found', JSON.stringify(card))
+        return false
+      }
+
+      // Hover the card: DeepSeek only renders the X while the card is hovered.
+      await page.mouse.move(point.x, point.y)
+
+      const control = await page
+        .waitForFunction(
+          // Serialized into the page; mirrors `findRemoveControlInPage` (which is
+          // the unit-tested rule set and the check used right before the click).
+          (payload: { identity: string; offsets: number[][] }) => {
+            const image = Array.from(document.querySelectorAll('img')).find(
+              (img) => img.getAttribute('src') === payload.identity,
+            )
+            if (image === undefined) return false
+            const card = image.closest('div[role=button]')
+            if (card === null) return false
+            const box = card.getBoundingClientRect()
+            for (const [dx, dy] of payload.offsets) {
+              const x = box.right - (dx ?? 0)
+              const y = box.top + (dy ?? 0)
+              if (x <= box.left || y >= box.bottom) continue
+              const hit = document.elementFromPoint(x, y)
+              if (hit === null) continue
+              const svg = hit.tagName.toLowerCase() === 'svg' ? hit : hit.closest('svg')
+              if (svg === null || svg === image) continue
+              if (svg !== hit && !svg.contains(hit)) continue
+              if (getComputedStyle(svg).cursor !== 'pointer') continue
+              const control = svg.getBoundingClientRect()
+              if (control.left < box.left + box.width / 2) continue
+              if (control.top > box.top + box.height / 2) continue
+              if (control.right > box.right + 1 || control.bottom > box.bottom + 1) continue
+              if (control.width >= box.width || control.height >= box.height) continue
+              if (!card.contains(svg)) continue
+              return { found: true, x, y }
+            }
+            return false
+          },
+          {
+            identity: input.previewIdentity,
+            offsets: REMOVE_CONTROL_OFFSETS.map(([dx, dy]) => [dx, dy]),
+          },
+          { timeout: REMOVE_CONTROL_TIMEOUT },
+        )
+        .catch(() => null)
+      if (control === null) {
+        console.warn('[dsh-deepseek-companion] removeDraftAttachment: control not found, card at', point.x, point.y)
+        await probeRemoveControl(input.previewIdentity)
+        return false
+      }
+
+      const target = asPoint(await control.jsonValue())
+      if (target === null) {
+        console.warn('[dsh-deepseek-companion] removeDraftAttachment: unusable control point', JSON.stringify(target))
+        return false
+      }
+      // The tested rule set confirms the point once more before the click.
+      // Probe lines go to the Host log only (the page-side `probe` callback is
+      // not serializable, so the points are collected by the wait above).
+      const confirmed: unknown = await page.evaluate(findRemoveControlInPage, {
+        identity: input.previewIdentity,
+        offsets: REMOVE_CONTROL_OFFSETS.map(([dx, dy]) => [dx, dy] as [number, number]),
+      })
+      const clickPoint = asPoint(confirmed) ?? target
+
+      await page.mouse.click(clickPoint.x, clickPoint.y)
+      // Confirm: THIS identity is gone and every other identity survived.
+      const settled = await page
+        .waitForFunction(
+          (payload: { target: string; others: string[]; messageSelector: string }) => {
+            const inComposer = (element: Element): boolean => {
+              let node: Element | null = element.parentElement
+              for (let depth = 0; depth < 8 && node !== null; depth += 1) {
+                if (node.querySelector('textarea') !== null) {
+                  return payload.messageSelector === '' || node.querySelector(payload.messageSelector) === null
+                }
+                node = node.parentElement
+              }
+              return false
+            }
+            const srcs = Array.from(document.querySelectorAll('img'))
+              .filter((img) => inComposer(img))
+              .map((img) => img.getAttribute('src') ?? '')
+              .filter((src) => src.startsWith('blob:'))
+            if (srcs.includes(payload.target)) return false
+            return payload.others.every((identity) => srcs.includes(identity))
+          },
+          { target: input.previewIdentity, others, messageSelector: MESSAGE_SELECTOR },
+          { timeout: REMOVE_SETTLE_TIMEOUT },
+        )
+        .then(() => true)
+        .catch(() => false)
+      if (!settled) {
+        console.warn('[dsh-deepseek-companion] removeDraftAttachment: confirmation failed at', clickPoint.x, clickPoint.y)
+      }
+      return settled
+    } catch (error) {
+      console.warn('[dsh-deepseek-companion] removeDraftAttachment threw:', errorText(error))
+      return false
+    }
+  }
+
+  /**
+   * Diagnostics for a failed removal (Host log only): where each candidate point
+   * actually lands. Kept separate from the removal itself so the rule stays pure.
+   */
+  const probeRemoveControl = async (identity: string): Promise<void> => {
+    const env = await page
+      .evaluate(
+        (payload: { identity: string; offsets: number[][] }) => {
+          const lines: string[] = []
+          const image = Array.from(document.querySelectorAll('img')).find(
+            (img) => img.getAttribute('src') === payload.identity,
+          )
+          if (image === undefined) return ['image not found']
+          const card = image.closest('div[role=button]')
+          if (card === null) return ['card not found']
+          const box = card.getBoundingClientRect()
+          lines.push(`card=(${Math.round(box.left)},${Math.round(box.top)},${Math.round(box.width)}x${Math.round(box.height)})`)
+          for (const [dx, dy] of payload.offsets) {
+            const x = box.right - (dx ?? 0)
+            const y = box.top + (dy ?? 0)
+            const hit = document.elementFromPoint(x, y)
+            if (hit === null) {
+              lines.push(`(${Math.round(x)},${Math.round(y)}) -> null`)
+              continue
+            }
+            const svg = hit.tagName.toLowerCase() === 'svg' ? hit : hit.closest('svg')
+            lines.push(
+              `(${Math.round(x)},${Math.round(y)}) -> ${hit.tagName.toLowerCase()}` +
+                (svg === null
+                  ? ' no-svg'
+                  : ` svg(cursor=${getComputedStyle(svg).cursor},${Math.round(svg.getBoundingClientRect().width)}x${Math.round(
+                      svg.getBoundingClientRect().height,
+                    )})`),
+            )
+          }
+          return lines
+        },
+        { identity, offsets: REMOVE_CONTROL_OFFSETS.map(([dx, dy]) => [dx, dy]) },
+      )
+      .catch(() => ['probe failed'])
+    console.warn('[dsh-deepseek-companion] removeDraftAttachment probe:', JSON.stringify(env))
+  }
+
   return {
     check,
     showLogin,
@@ -1187,6 +1642,9 @@ export async function createDeepSeekBrowser(
     sendMessage,
     stopGeneration,
     wasInterrupted: () => lastSendInterrupted,
+    listDraftIdentities,
+    attachImage,
+    removeDraftAttachment,
     newChat,
     listSessions,
     switchChat,

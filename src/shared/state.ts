@@ -55,9 +55,9 @@ export interface ComposerToggleState {
 }
 
 /**
- * The unified composer state (Phase 08.2): what the composer row needs to know,
- * in ONE group. `sending` / `stopping` are Host-owned; `deepThink` / `search`
- * are the same objects the legacy `deepseek` mirror carries, so the two
+ * The unified composer state (Phase 08.2 → 18A): what the composer row needs to
+ * know, in ONE group. `sending` / `stopping` are Host-owned; `deepThink` /
+ * `search` are the same objects the legacy `deepseek` mirror carries, so the two
  * projections can never drift apart.
  */
 export interface ComposerState {
@@ -67,6 +67,48 @@ export interface ComposerState {
   stopping: boolean
   deepThink: DeepThinkState
   search: SearchState
+  /**
+   * Draft image attachments of the current composer (Phase 18A). Host-owned and
+   * metadata-only: NEVER pixels, NEVER a temp path, NEVER a page blob URL.
+   */
+  attachments: ComposerAttachment[]
+}
+
+/** Upload lifecycle of one draft attachment (Phase 18A). */
+export type ComposerAttachmentStatus = 'uploading' | 'ready' | 'error'
+
+/**
+ * One draft image in the composer (Phase 18A). This is what the three views
+ * render as an attachment card — there is deliberately no preview/thumbnail
+ * field, so no surface can accidentally start shipping image bytes.
+ */
+export interface ComposerAttachment {
+  /** Host-minted id, unique for the plugin's lifetime. */
+  id: string
+  kind: 'image'
+  /** Display name only — never used to build a filesystem path. */
+  name: string
+  mimeType: string
+  bytes: number
+  status: ComposerAttachmentStatus
+  /** Human-readable failure reason; only present while `status === 'error'`. */
+  error?: string
+}
+
+/**
+ * One image that was really sent with a message (Phase 18A). The Host writes it
+ * only after the completion request was observed AND its `ref_file_ids` matched
+ * this round's snapshot — a message never claims images it cannot prove.
+ */
+export interface ChatAttachment {
+  id: string
+  kind: 'image'
+  /** Original file name; `null` when it is not known (Phase 18B reads `img.alt`). */
+  name: string | null
+  mimeType?: string
+  bytes?: number
+  /** Signed CDN URL for history restore — reserved for Phase 18B, never set in 18A. */
+  remoteUrl?: string
 }
 
 /**
@@ -136,6 +178,12 @@ export interface ChatMessage {
   status?: MessageStatus
   /** Conversation this message belongs to (Phase 08.2); absent until it is known. */
   sessionId?: string
+  /**
+   * Images sent with this message (Phase 18A). Written only once the completion
+   * request was observed and its `ref_file_ids` matched — a message with
+   * attachments is a verifiable statement, not an optimistic one.
+   */
+  attachments?: ChatAttachment[]
   /** Only present when DeepSeek produced reasoning for this reply. */
   reasoning?: ChatReasoning
   /**

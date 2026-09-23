@@ -546,12 +546,22 @@ export function createSessionSyncController(deps: {
   browser: () => SessionSyncBrowser | null
   store: CompanionStateStore
   guard: PageGuard
+  /**
+   * The page moved to another conversation on its own (Phase 18A): any composer
+   * draft the Host tracked belonged to the OLD page state and is dropped — a
+   * draft is never migrated across conversations.
+   */
+  onDraftInvalidated?: () => void | Promise<void>
 }): SessionSyncController {
   let lastKnown: SessionLocation | undefined
   let pending: SessionLocation | undefined
 
   const apply = async (location: SessionLocation): Promise<void> => {
     if (location.kind === 'other') return
+    // The page belongs to another conversation now; its composer no longer holds
+    // the draft this Host was tracking (Phase 18A). Drop it BEFORE the transcript
+    // work, so a failed read cannot leave a stale draft behind.
+    await deps.onDraftInvalidated?.()
     if (location.kind === 'empty') {
       // The page is really an empty chat (the location says so) — clear.
       deps.store.clearChatMessages()

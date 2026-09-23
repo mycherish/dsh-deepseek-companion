@@ -2,7 +2,9 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNod
 import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import {
+  addChatAttachment,
   fetchChatSessions,
+  removeChatAttachment,
   sendChatMessage,
   setDeepThink,
   setSearch,
@@ -12,6 +14,13 @@ import {
   subscribeCompanionState,
   switchChatSession,
 } from './api.ts'
+import {
+  IMAGE_MIME_TYPES,
+  attachmentStatusText,
+  canPickAttachment,
+  canSendRound,
+  formatBytes,
+} from './attachment-ui.ts'
 import { remarkCitations } from './remark-citations.ts'
 import { STOP_PHASE_LABEL, initialStopUiState, reduceStopUi, stopPhase } from './stop-state.ts'
 import { connectionFrom } from '../shared/state.ts'
@@ -21,6 +30,7 @@ import type {
   ChatReasoning,
   ChatSessionSummary,
   Citation,
+  ComposerAttachment,
   ComposerToggleState,
   ConnectionState,
   CurrentSession,
@@ -28,6 +38,8 @@ import type {
   DeepThinkState,
   SearchState,
 } from '../shared/state.ts'
+
+
 
 const rootStyle: CSSProperties = {
   display: 'flex',
@@ -109,6 +121,86 @@ const sendButtonStyle: CSSProperties = {
   fontSize: 13,
   fontWeight: 500,
 }
+
+/**
+ * Draft images are ATTACHMENT CARDS, never thumbnails (Phase 18A): the shared
+ * state carries metadata only (name / bytes / status), so every surface renders
+ * the same card and no image bytes ever travel over SSE.
+ */
+const attachmentRowStyle: CSSProperties = {
+  display: 'flex',
+  flexWrap: 'wrap',
+  gap: 6,
+  flexShrink: 0,
+}
+
+const attachmentCardStyle = (status: ComposerAttachment['status']): CSSProperties => ({
+  display: 'flex',
+  alignItems: 'center',
+  gap: 6,
+  maxWidth: 220,
+  padding: '4px 8px',
+  borderRadius: 8,
+  border: `1px solid ${status === 'error' ? 'var(--dsw-alias-border-l3)' : 'var(--dsw-alias-border-l2)'}`,
+  background: 'transparent',
+  color: status === 'error' ? 'var(--dsw-alias-label-secondary)' : 'var(--dsw-alias-label-primary)',
+  fontSize: 12,
+  lineHeight: '16px',
+})
+
+/** A sent image inside the transcript: the same metadata, no read-only controls. */
+const sentAttachmentStyle: CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: 4,
+  padding: '2px 6px',
+  marginRight: 6,
+  borderRadius: 6,
+  border: '1px solid var(--dsw-alias-border-l2)',
+  color: 'var(--dsw-alias-label-secondary)',
+  fontSize: 12,
+  lineHeight: '16px',
+}
+
+const attachmentNameStyle: CSSProperties = {
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
+  maxWidth: 120,
+}
+
+const attachmentMetaStyle: CSSProperties = {
+  color: 'var(--dsw-alias-label-secondary)',
+  flexShrink: 0,
+}
+
+const attachmentRemoveStyle = (disabled: boolean): CSSProperties => ({
+  border: 'none',
+  background: 'transparent',
+  color: 'var(--dsw-alias-label-secondary)',
+  cursor: disabled ? 'not-allowed' : 'pointer',
+  fontSize: 14,
+  lineHeight: '14px',
+  padding: '0 2px',
+  flexShrink: 0,
+})
+
+const attachButtonStyle = (disabled: boolean): CSSProperties => ({
+  padding: '7px 10px',
+  border: '1px solid var(--dsw-alias-border-l3)',
+  borderRadius: 8,
+  background: 'transparent',
+  color: 'var(--dsw-alias-label-primary)',
+  cursor: disabled ? 'not-allowed' : 'pointer',
+  opacity: disabled ? 0.5 : 1,
+  flexShrink: 0,
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: 4,
+  fontSize: 13,
+})
+
+
 
 /**
  * While a reply streams the same slot becomes the stop control (Phase 07J).
@@ -577,10 +669,22 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
   const [sessions, setSessions] = useState<ChatSessionSummary[] | null>(null)
   const [loadingSessions, setLoadingSessions] = useState(false)
   const [switching, setSwitching] = useState(false)
+  /**
+   * Draft images (Phase 18A): a mirror of the HOST's `composer.attachments`.
+   * Metadata only — the bytes and the page identities never leave the Host, and
+   * this view holds no image data of its own.
+   */
+  const [attachments, setAttachments] = useState<ComposerAttachment[]>([])
+  /** A picker→Host round trip is in flight (local UI debounce only). */
+  const [attaching, setAttaching] = useState(false)
+  /** The draft entry whose removal is in flight. */
+  const [removingId, setRemovingId] = useState<string | null>(null)
   const listRef = useRef<HTMLDivElement>(null)
   /** Floating history list and its trigger: a click inside either must NOT close it. */
   const historyPanelRef = useRef<HTMLDivElement>(null)
   const historyButtonRef = useRef<HTMLButtonElement>(null)
+  /** The hidden image input: `value` is reset after each pick, so the same file can be re-picked. */
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(
     () =>
@@ -593,6 +697,9 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
         // (Phase 08.2); the legacy mirrors carry the same values.
         setDeepThinkState(state.composer.deepThink)
         setSearchState(state.composer.search)
+        // The draft is Host state: a failed upload, a removal on another
+        // surface and a send that consumed it all arrive here the same way.
+        setAttachments(state.composer.attachments)
         // The reducer is the ONLY place that folds the Host's composer state
         // into the slot: `host-stopping` shows 停止中… on surfaces that did not
         // click, and `host-sending: false` is the only thing that ends it.
@@ -650,11 +757,85 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
     }
   }, [historyOpen])
 
+  /**
+   * The Client's copy of the send rule (Phase 18A): images-only rounds are fine,
+   * uploading / failed drafts are not. The Host re-checks everything — including
+   * the page's real draft set — before it clicks Send.
+   */
+  const canSend = canSendRound({
+    text: input,
+    attachments,
+    busy,
+    attaching,
+    connection: connection.status,
+  })
+  /** The picker is closed while the page is busy or a draft is still uploading. */
+  const pickerDisabled = !canPickAttachment({ pageBusy, attaching, attachments })
+
+  /**
+   * Read one picked file as base64. The string lives ONLY inside this call: it is
+   * handed to the Host and then dropped — never stored in React state (Phase 18A).
+   */
+  const readFileAsBase64 = (file: File): Promise<string> =>
+    new Promise((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onerror = () => reject(new Error('读取文件失败'))
+      reader.onload = () => {
+        const result = typeof reader.result === 'string' ? reader.result : ''
+        const comma = result.indexOf(',')
+        if (comma === -1) reject(new Error('读取文件失败'))
+        else resolve(result.slice(comma + 1))
+      }
+      reader.readAsDataURL(file)
+    })
+
+  /**
+   * Hand picked images to the Host, ONE per request (the Host serializes the page
+   * anyway). This view never edits the draft itself: the Host validates the real
+   * bytes, drives the DeepSeek upload and pushes the card state back.
+   */
+  const pickAttachments = async (files: FileList | null): Promise<void> => {
+    if (files === null || files.length === 0 || busy || attaching || pageBusy) return
+    setAttaching(true)
+    setError(null)
+    try {
+      for (const file of Array.from(files)) {
+        if (!IMAGE_MIME_TYPES.includes(file.type)) {
+          setError(`只支持 PNG / JPEG / WebP / GIF：${file.name}`)
+          continue
+        }
+        const dataBase64 = await readFileAsBase64(file)
+        await addChatAttachment(origin, { name: file.name, mimeType: file.type, dataBase64 })
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '添加图片失败')
+    } finally {
+      setAttaching(false)
+      // Allow re-picking the same file immediately.
+      if (fileInputRef.current !== null) fileInputRef.current.value = ''
+    }
+  }
+
+  /** Ask the Host to drop one draft image (Host + real page card together). */
+  const dropAttachment = async (id: string): Promise<void> => {
+    if (busy || removingId !== null) return
+    setRemovingId(id)
+    setError(null)
+    try {
+      await removeChatAttachment(origin, id)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '移除图片失败')
+    } finally {
+      setRemovingId(null)
+    }
+  }
+
   const send = async (): Promise<void> => {
+    // One gate for both the button and the keyboard (Phase 18A): it folds the
+    // unified `connection` (Phase 08.2), the streaming state, the local upload
+    // window, the draft's own readiness and the "images only" allowance.
+    if (!canSend) return
     const text = input.trim()
-    // The unified connection is the gate (Phase 08.2): `online` already means
-    // "browser ready AND logged in", so the three surfaces agree on one field.
-    if (text === '' || busy || connection.status !== 'online') return
     setInput('')
     setSubmitting(true)
     setError(null)
@@ -838,6 +1019,19 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
           if (message.role === 'assistant' && message.content === '' && reasoning === undefined) return null
           return (
             <div key={message.id} style={messageRowStyle(message.role, message.format)}>
+              {/* Images that were really sent with this message (Phase 18A):
+                  written by the Host only after the commit point + a verified
+                  `ref_file_ids`. Metadata chips again — no thumbnails. */}
+              {message.attachments !== undefined && message.attachments.length > 0 ? (
+                <div style={attachmentRowStyle}>
+                  {message.attachments.map((attachment) => (
+                    <span key={attachment.id} style={sentAttachmentStyle} title={attachment.name ?? '图片'}>
+                      {(attachment.name ?? '图片') +
+                        (attachment.bytes !== undefined ? ` · ${formatBytes(attachment.bytes)}` : '')}
+                    </span>
+                  ))}
+                </div>
+              ) : null}
               {/* Thinking always sits ABOVE the answer. */}
               {reasoning !== undefined ? <ReasoningBlock reasoning={reasoning} /> : null}
               {message.content !== '' ? (
@@ -927,7 +1121,58 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
             {startingNew ? '新建中…' : '新建聊天'}
           </button>
         </div>
+        {/* Draft cards (Phase 18A): name + size + status + remove, rendered from
+            Host state alone. No thumbnail, no pixels, no page blob URL. */}
+        {attachments.length > 0 ? (
+          <div style={attachmentRowStyle}>
+            {attachments.map((attachment) => (
+              <div key={attachment.id} style={attachmentCardStyle(attachment.status)} title={attachment.name}>
+                <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+                  <path
+                    d="M3.5 2h9A1.5 1.5 0 0 1 14 3.5v9A1.5 1.5 0 0 1 12.5 14h-9A1.5 1.5 0 0 1 2 12.5v-9A1.5 1.5 0 0 1 3.5 2Zm0 1a.5.5 0 0 0-.5.5v9a.5.5 0 0 0 .5.5h9a.5.5 0 0 0 .5-.5v-9a.5.5 0 0 0-.5-.5h-9Z"
+                    fill="currentColor"
+                  />
+                  <circle cx="6" cy="6.5" r="1.3" fill="currentColor" />
+                  <path d="M13 11.2 9.7 8.4 5.4 12.9h7.1c.3 0 .5-.2.5-.5v-1.2Z" fill="currentColor" opacity="0.55" />
+                </svg>
+                <span style={attachmentNameStyle}>{attachment.name}</span>
+                <span style={attachmentMetaStyle}>
+                  {formatBytes(attachment.bytes)} · {attachmentStatusText(attachment)}
+                </span>
+                <button
+                  type="button"
+                  style={attachmentRemoveStyle(busy || removingId !== null)}
+                  disabled={busy || removingId !== null}
+                  title="从草稿中移除这张图片"
+                  aria-label={`移除 ${attachment.name}`}
+                  onClick={() => void dropAttachment(attachment.id)}
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+          </div>
+        ) : null}
         <div style={inputRowStyle}>
+          {/* The picker (Phase 18A). Disabled while the page is busy or a draft
+              image is still uploading; the Host validates everything again. */}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept={IMAGE_MIME_TYPES.join(',')}
+            multiple
+            hidden
+            onChange={(event) => void pickAttachments(event.target.files)}
+          />
+          <button
+            type="button"
+            style={attachButtonStyle(pickerDisabled)}
+            disabled={pickerDisabled}
+            title="添加图片（PNG / JPEG / WebP / GIF）"
+            onClick={() => fileInputRef.current?.click()}
+          >
+            {attaching ? '上传中…' : '图片'}
+          </button>
           <textarea
             style={inputStyle}
             value={input}
@@ -947,7 +1192,7 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
             type="button"
             style={busy ? stopButtonStyle : sendButtonStyle}
             onClick={() => (busy ? void stop() : void send())}
-            disabled={busy ? stopping : submitting || connection.status !== 'online'}
+            disabled={busy ? stopping : !canSend}
           >
             {STOP_PHASE_LABEL[busy ? phase : 'send']}
           </button>

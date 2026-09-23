@@ -39,6 +39,25 @@ export function browserProfileDir(env: NodeJS.ProcessEnv = process.env, baseUrl?
   return join(resolveDshHome(env), 'deepseek-companion-browser')
 }
 
+/**
+ * Resolve the plugin-owned attachment temp directory (Phase 18A).
+ *
+ * Same priority as `browserProfileDir`, one directory over:
+ * 1. `DEEPSEEK_COMPANION_UPLOADS` — explicit override (tests / custom deploy).
+ * 2. `<profileDir>/deepseek-companion-uploads` — per-profile isolation, so the
+ *    `web` and `companion-test` profiles never share draft files.
+ * 3. `$DSH_HOME/deepseek-companion-uploads` — fallback when `baseUrl` is absent.
+ */
+export function attachmentUploadDir(env: NodeJS.ProcessEnv = process.env, baseUrl?: string): string {
+  const override = env.DEEPSEEK_COMPANION_UPLOADS
+  if (override !== undefined && override.trim().length > 0) return resolve(override)
+
+  const profileDir = profileDirFromBaseUrl(baseUrl)
+  if (profileDir !== undefined) return join(profileDir, 'deepseek-companion-uploads')
+
+  return join(resolveDshHome(env), 'deepseek-companion-uploads')
+}
+
 /** Convert `ctx.baseUrl` (a profile directory `file://` URL) to a filesystem path. */
 function profileDirFromBaseUrl(baseUrl: string | undefined): string | undefined {
   if (baseUrl === undefined || baseUrl.length === 0) return undefined

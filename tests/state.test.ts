@@ -429,6 +429,7 @@ test('08.2 三界面一致: 一次 send 生命周期内三个 surface 收到完�
     stopping: false,
     deepThink: { available: false, enabled: false },
     search: { available: false, enabled: false },
+    attachments: [],
   })
 })
 

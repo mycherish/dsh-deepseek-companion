@@ -9,12 +9,15 @@
 import { randomUUID } from 'node:crypto'
 import { connectionFrom } from '../shared/state.ts'
 import type {
+  ChatAttachment,
   ChatFormat,
   ChatMessage,
   ChatMessageInput,
   ChatReasoning,
   Citation,
   CompanionState,
+  ComposerAttachment,
+  ComposerAttachmentStatus,
   CurrentSession,
   DeepSeekStatus,
   DeepThinkState,
@@ -56,7 +59,13 @@ function sameSession(a: CurrentSession, b: CurrentSession): boolean {
  */
 function withComposer(
   state: CompanionState,
-  next: { sending?: boolean; stopping?: boolean; deepThink?: DeepThinkState; search?: SearchState },
+  next: {
+    sending?: boolean
+    stopping?: boolean
+    deepThink?: DeepThinkState
+    search?: SearchState
+    attachments?: ComposerAttachment[]
+  },
 ): CompanionState {
   const deepThink = next.deepThink ?? state.deepseek.deepThink
   const search = next.search ?? state.deepseek.search
@@ -68,8 +77,40 @@ function withComposer(
       stopping: next.stopping ?? state.composer.stopping,
       deepThink,
       search,
+      // Attachments ride along untouched unless a caller replaces them — a
+      // switch flip or a send must never drop the user's draft (Phase 18A).
+      attachments: next.attachments ?? state.composer.attachments,
     },
   }
+}
+
+/** Structural equality for one draft attachment (metadata only). */
+function sameComposerAttachment(a: ComposerAttachment, b: ComposerAttachment): boolean {
+  return (
+    a.id === b.id &&
+    a.kind === b.kind &&
+    a.name === b.name &&
+    a.mimeType === b.mimeType &&
+    a.bytes === b.bytes &&
+    a.status === b.status &&
+    a.error === b.error
+  )
+}
+
+/** Structural equality for two sent-attachment lists. */
+function sameChatAttachments(a: ChatAttachment[], b: ChatAttachment[]): boolean {
+  if (a.length !== b.length) return false
+  return a.every((entry, index) => {
+    const other = b[index]!
+    return (
+      entry.id === other.id &&
+      entry.kind === other.kind &&
+      entry.name === other.name &&
+      entry.mimeType === other.mimeType &&
+      entry.bytes === other.bytes &&
+      entry.remoteUrl === other.remoteUrl
+    )
+  })
 }
 
 /** Recompute the unified connection projection from its two real inputs. */
@@ -131,6 +172,30 @@ export interface CompanionStateStore {
    * can never outlive its round.
    */
   setComposerStopping(stopping: boolean): void
+  /**
+   * Add one draft image to the composer (Phase 18A). The Host mints the id and
+   * the entry starts as `uploading`; the route drives it to `ready` / `error`.
+   */
+  addComposerAttachment(input: { name: string; mimeType: string; bytes: number }): ComposerAttachment
+  /** Move one draft attachment through its lifecycle (status / error text). */
+  updateComposerAttachment(
+    id: string,
+    patch: { status?: ComposerAttachmentStatus; error?: string | null },
+  ): void
+  /** Drop exactly one draft attachment (the page card is removed by the caller). */
+  removeComposerAttachment(id: string): void
+  /**
+   * Drop exactly these draft attachments in ONE write (send commit: only the
+   * consumed snapshot leaves the composer, nothing else — Phase 18A).
+   */
+  removeComposerAttachments(ids: readonly string[]): void
+  /** Drop the whole draft (new chat / switch / page rebuild / dispose). */
+  clearComposerAttachments(): void
+  /**
+   * Attach the verified images to one message (Phase 18A). Called ONLY after the
+   * completion request was observed and its `ref_file_ids` matched.
+   */
+  setChatMessageAttachments(id: string, attachments: ChatAttachment[]): void
   /** Drop every chat message (new DeepSeek conversation, Phase 07L). */
   clearChatMessages(): void
   /**
@@ -154,7 +219,7 @@ export function createCompanionStateStore(): CompanionStateStore {
     connection: connectionFrom('checking', false),
     currentSession: { id: null, title: null },
     deepseek: { status: 'checking', deepThink, search },
-    composer: { sending: false, stopping: false, deepThink, search },
+    composer: { sending: false, stopping: false, deepThink, search, attachments: [] },
     chat: { messages: [], sending: false },
   }
   const listeners = new Set<StateListener>()
@@ -342,6 +407,83 @@ export function createCompanionStateStore(): CompanionStateStore {
       if (stopping && !state.chat.sending) return
       if (state.composer.stopping === stopping) return
       state = withComposer(state, { stopping })
+      notify(state)
+    },
+
+    addComposerAttachment(input: { name: string; mimeType: string; bytes: number }): ComposerAttachment {
+      const attachment: ComposerAttachment = {
+        id: randomUUID(),
+        kind: 'image',
+        name: input.name,
+        mimeType: input.mimeType,
+        bytes: input.bytes,
+        status: 'uploading',
+      }
+      if (disposed) return attachment
+      state = withComposer(state, { attachments: [...state.composer.attachments, attachment] })
+      notify(state)
+      return attachment
+    },
+
+    updateComposerAttachment(id, patch) {
+      if (disposed) return
+      const index = state.composer.attachments.findIndex((attachment) => attachment.id === id)
+      if (index === -1) return
+      const existing = state.composer.attachments[index]!
+      const next: ComposerAttachment = {
+        ...existing,
+        ...(patch.status !== undefined ? { status: patch.status } : {}),
+      }
+      if (patch.error !== undefined) {
+        // A recovered attachment carries no stale failure text.
+        if (patch.error !== null && patch.error !== '') next.error = patch.error
+        else delete next.error
+      } else if (patch.status === 'ready') {
+        delete next.error
+      }
+      if (sameComposerAttachment(existing, next)) return
+      const attachments = state.composer.attachments.slice()
+      attachments[index] = next
+      state = withComposer(state, { attachments })
+      notify(state)
+    },
+
+    removeComposerAttachment(id: string) {
+      if (disposed) return
+      const attachments = state.composer.attachments.filter((attachment) => attachment.id !== id)
+      if (attachments.length === state.composer.attachments.length) return
+      state = withComposer(state, { attachments })
+      notify(state)
+    },
+
+    removeComposerAttachments(ids: readonly string[]) {
+      if (disposed) return
+      if (ids.length === 0) return
+      // One filter, one notify: only the given ids leave, everything else stays.
+      const consumed = new Set(ids)
+      const attachments = state.composer.attachments.filter((attachment) => !consumed.has(attachment.id))
+      if (attachments.length === state.composer.attachments.length) return
+      state = withComposer(state, { attachments })
+      notify(state)
+    },
+
+    clearComposerAttachments() {
+      if (disposed) return
+      if (state.composer.attachments.length === 0) return
+      state = withComposer(state, { attachments: [] })
+      notify(state)
+    },
+
+    setChatMessageAttachments(id: string, attachments: ChatAttachment[]) {
+      if (disposed) return
+      const index = state.chat.messages.findIndex((message) => message.id === id)
+      if (index === -1) return
+      const existing = state.chat.messages[index]!
+      const current = existing.attachments
+      if (current !== undefined && sameChatAttachments(current, attachments)) return
+      const messages = state.chat.messages.slice()
+      messages[index] = { ...existing, attachments }
+      state = { ...state, chat: { ...state.chat, messages } }
       notify(state)
     },
 
