@@ -395,7 +395,7 @@ Sidebar sessions（a[href*="/a/chat/s/"]）
 - **Host 更新顺序**：页面切换成功 → transcript 读取成功 → `replaceChatMessages`（一次替换、一次 notify、`sending` 与 composer/login 状态不动）。**任一步失败都保留现有 transcript**；重新读到等价内容（id 不同）时静默不推送。旧 citation hydration / 旧 message update 因目标 id 已不存在而自然 no-op。
 - **旧 citation 描述修正**：07I 曾记录「实时生成后 badge 无 href，只有重新打开会话才能读到 URL」。**当前 DeepSeek 前端已改变**：08-0/08 实测**实时生成完成后的 badge 已带 `a[href]`（20/20）**，切换离开再回来后同样 20/20。Host 既有的 `scheduleCitationHydration` 因此现在能真正产出 citations。
 - **citation 重建的已知限制（严格规则的正常结果，不是缺陷）**：历史重建对单个搜索回复实测出现三种不映射情形——① 未水合的角标在 DOM 中渲染为隐藏的 `-` 字形（`normalizeBlockText` 现已**对称剔除 `-`**，使文本仍能精确匹配），但该块 badge 数为 0 < group 数 → 正确放弃；② **Markdown 表格**是一整块而 DOM 按单元格（`td`/`th`）拆成多块 → 无法匹配；③ 相邻 marker 合并假设不总成立（实测 3 groups vs 2 badges）→ 严格规则放弃。文本匹配本身链路正常（实测 `exactMatch` 成功），失败点始终在「数量/水合」条件，符合「不猜」原则。
-- **Client**：控件行新增「历史会话」按钮 + 输入区上方的轻量列表面板（标题 + 「当前」标记，点击切换）；`sending`/`newChat`/`switching` 期间统一禁用；Client **不缓存任何其它会话的 messages**，列表也不落地——Host 是 transcript 唯一权威来源。
+- **Client**：控件行新增「历史会话」按钮 + **覆盖式浮层列表**（标题 + 「当前」标记，点击切换）。浮层是 `position: absolute`，锚在 **composer 区块（控件行 + 输入行）**之上，`bottom: 100%` 向上展开覆盖消息区——**完全不占布局高度、不挤压消息区，也不遮挡控件行**（「收起历史」在浮层展开时仍可点）；背景用 `--dsw-alias-bg-overlay` 实底；关闭方式为点条目 / 点浮层外（`mousedown` 外部判定）/ Esc，监听仅在打开期间存在。`sending`/`newChat`/`switching` 期间统一禁用；Client **不缓存任何其它会话的 messages**，列表也不落地——Host 是 transcript 唯一权威来源。
 - **实机验证（Phase 08）**：A→B→A 切换 200/200（同一会话再次切换 200 且不点击）；B 恢复 15 条（roles 交替、Markdown 406/397/379/346/2311、thinking 800–96、尾部 3 条为 08-0 中断产生的孤立 user 消息）；切换后继续发送 200（正文 + reasoning 流式）；`Stop` 200 并保留部分内容；生成中切换 → 409 `chat is busy` 且消息不变。
 - token / cookie 不离开 browser context。
 

@@ -191,15 +191,46 @@ const historyButtonStyle = (disabled: boolean): CSSProperties => ({
   fontFamily: 'inherit',
 })
 
-const historyPanelStyle: CSSProperties = {
+/**
+ * Phase 08 UI fix: the history list is an OVERLAY, not a flex sibling — it
+ * floats ABOVE the transcript instead of squeezing it, so opening it costs the
+ * conversation no height at all. Anchored to the composer row (`bottom: 100%`),
+ * which keeps it in place whatever the panel height is; closed by picking an
+ * entry, clicking outside, or Esc.
+ */
+const historyOverlayStyle: CSSProperties = {
+  position: 'absolute',
+  left: 0,
+  right: 0,
+  bottom: '100%',
+  marginBottom: 8,
+  zIndex: 20,
   display: 'flex',
   flexDirection: 'column',
   gap: 2,
-  maxHeight: 180,
+  maxHeight: 'min(260px, 50vh)',
   overflowY: 'auto',
-  padding: 4,
+  padding: 6,
   border: '1px solid var(--dsw-alias-border-l3)',
-  borderRadius: 8,
+  borderRadius: 10,
+  // DSH's overlay token is opaque in both themes; the fallbacks keep the panel
+  // opaque even if a token is ever missing (a see-through list over the
+  // transcript would be worse than a plain background).
+  background: 'var(--dsw-alias-bg-overlay, var(--dsw-alias-bg-layer-1, Canvas))',
+  boxShadow: '0 6px 20px rgba(0, 0, 0, 0.22)',
+}
+
+/**
+ * The composer BLOCK (controls row + input row) is the floating list's
+ * positioning context. Anchoring there makes the list open ABOVE the controls,
+ * so 「收起历史」 and the rest of the row stay visible — and clickable to close
+ * the list — instead of being covered by it.
+ */
+const composerAreaStyle: CSSProperties = {
+  position: 'relative',
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 8,
   flexShrink: 0,
 }
 
@@ -207,6 +238,10 @@ const historyItemStyle = (active: boolean, disabled: boolean): CSSProperties => 
   display: 'flex',
   alignItems: 'center',
   gap: 6,
+  // The overlay is a flex column with a max height: without this, a long list
+  // gets its entries SHRUNK to fit and every label is clipped vertically. The
+  // entries keep their height; the overlay scrolls instead.
+  flexShrink: 0,
   padding: '4px 8px',
   border: 'none',
   borderRadius: 6,
@@ -242,6 +277,7 @@ const historyHintStyle: CSSProperties = {
   color: 'var(--dsw-alias-label-secondary)',
   fontSize: 12,
   lineHeight: '18px',
+  flexShrink: 0,
 }
 
 /** One DeepSeek composer switch, mirrored from the Host (never optimistic). */
@@ -531,6 +567,9 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
   const [loadingSessions, setLoadingSessions] = useState(false)
   const [switching, setSwitching] = useState(false)
   const listRef = useRef<HTMLDivElement>(null)
+  /** Floating history list and its trigger: a click inside either must NOT close it. */
+  const historyPanelRef = useRef<HTMLDivElement>(null)
+  const historyButtonRef = useRef<HTMLButtonElement>(null)
 
   useEffect(
     () =>
@@ -562,6 +601,30 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
     const list = listRef.current
     if (list !== null) list.scrollTop = list.scrollHeight
   }, [messages, busy])
+
+  // The history list floats ABOVE the transcript (Phase 08 UI fix), so closing
+  // it must be forgiving: an outside click or Esc puts it away, while a click
+  // inside the list (an entry) is left to the entry itself. The listeners only
+  // exist while the list is open; the 「历史会话」 button keeps toggling as before.
+  useEffect(() => {
+    if (!historyOpen) return undefined
+    const onMouseDown = (event: MouseEvent): void => {
+      const target = event.target
+      if (!(target instanceof Node)) return
+      if (historyPanelRef.current?.contains(target) === true) return
+      if (historyButtonRef.current?.contains(target) === true) return
+      setHistoryOpen(false)
+    }
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') setHistoryOpen(false)
+    }
+    document.addEventListener('mousedown', onMouseDown)
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.removeEventListener('mousedown', onMouseDown)
+      document.removeEventListener('keydown', onKeyDown)
+    }
+  }, [historyOpen])
 
   const send = async (): Promise<void> => {
     const text = input.trim()
@@ -764,93 +827,98 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
         {busy ? <div style={messageRowStyle('assistant', 'text')}>正在回复…</div> : null}
       </div>
       {error !== null ? <div style={errorStyle}>{error}</div> : null}
-      <div style={controlsRowStyle}>
-        <ComposerTogglePill
-          label="深度思考"
-          state={deepThink}
-          disabled={toggleDisabled(deepThink, togglingDeepThink)}
-          title={deepThink.available ? '控制 DeepSeek 网页的「深度思考」开关' : 'DeepSeek 页面当前没有该开关'}
-          onToggle={(next) => void toggleMode('deepThink', next)}
-        />
-        <ComposerTogglePill
-          label="智能搜索"
-          state={search}
-          disabled={toggleDisabled(search, togglingSearch)}
-          title={search.available ? '控制 DeepSeek 网页的「智能搜索」开关' : 'DeepSeek 页面当前没有该开关'}
-          onToggle={(next) => void toggleMode('search', next)}
-        />
-        {deepThink.available || search.available ? null : <span style={toggleHintStyle}>开关不可用</span>}
-        {/* History sessions (Phase 08): read-only list; switching goes through
-            the same Host page guard as new chat. */}
-        <button
-          type="button"
-          style={historyButtonStyle(pageBusy || loadingSessions)}
-          disabled={pageBusy || loadingSessions}
-          title="查看并切换 DeepSeek 历史会话"
-          onClick={toggleHistory}
-        >
-          {historyOpen ? '收起历史' : '历史会话'}
-        </button>
-        {/* New chat (Phase 07L): disabled while a reply streams, so a
-            generation is never yanked out from under the page. */}
-        <button
-          type="button"
-          style={newChatButtonStyle(pageBusy)}
-          disabled={pageBusy}
-          title="开始新的 DeepSeek 会话（清空当前聊天）"
-          onClick={() => void startNew()}
-        >
-          {startingNew ? '新建中…' : '新建聊天'}
-        </button>
-      </div>
-      {/* History list (Phase 08): titles + the current marker. Every entry is
-          disabled while a page operation is in flight; the transcript is always
-          the Host's push, never a local copy. */}
-      {historyOpen ? (
-        <div style={historyPanelStyle}>
-          {sessions === null ? <div style={historyHintStyle}>{loadingSessions ? '读取中…' : '暂无数据'}</div> : null}
-          {sessions !== null && sessions.length === 0 ? (
-            <div style={historyHintStyle}>没有可用的历史会话</div>
-          ) : null}
-          {(sessions ?? []).map((session) => (
-            <button
-              key={session.id}
-              type="button"
-              style={historyItemStyle(session.active, pageBusy)}
-              disabled={pageBusy || session.active}
-              title={session.active ? '当前会话' : session.title}
-              onClick={() => void switchTo(session.id)}
-            >
-              <span style={historyTitleStyle}>{session.title === '' ? '未命名会话' : session.title}</span>
-              {session.active ? <span style={historyActiveStyle}>当前</span> : null}
-            </button>
-          ))}
+      <div style={composerAreaStyle}>
+        {/* History list (Phase 08 UI fix): an OVERLAY floating ABOVE the
+            controls row, so opening it costs the transcript no height AND the
+            controls stay usable (「收起历史」 keeps toggling it). Every entry is
+            disabled while a page operation is in flight; the transcript itself
+            is always the Host's push, never a local copy. */}
+        {historyOpen ? (
+          <div ref={historyPanelRef} style={historyOverlayStyle}>
+            {sessions === null ? <div style={historyHintStyle}>{loadingSessions ? '读取中…' : '暂无数据'}</div> : null}
+            {sessions !== null && sessions.length === 0 ? (
+              <div style={historyHintStyle}>没有可用的历史会话</div>
+            ) : null}
+            {(sessions ?? []).map((session) => (
+              <button
+                key={session.id}
+                type="button"
+                style={historyItemStyle(session.active, pageBusy)}
+                disabled={pageBusy || session.active}
+                title={session.active ? '当前会话' : session.title}
+                onClick={() => void switchTo(session.id)}
+              >
+                <span style={historyTitleStyle}>{session.title === '' ? '未命名会话' : session.title}</span>
+                {session.active ? <span style={historyActiveStyle}>当前</span> : null}
+              </button>
+            ))}
+          </div>
+        ) : null}
+        <div style={controlsRowStyle}>
+          <ComposerTogglePill
+            label="深度思考"
+            state={deepThink}
+            disabled={toggleDisabled(deepThink, togglingDeepThink)}
+            title={deepThink.available ? '控制 DeepSeek 网页的「深度思考」开关' : 'DeepSeek 页面当前没有该开关'}
+            onToggle={(next) => void toggleMode('deepThink', next)}
+          />
+          <ComposerTogglePill
+            label="智能搜索"
+            state={search}
+            disabled={toggleDisabled(search, togglingSearch)}
+            title={search.available ? '控制 DeepSeek 网页的「智能搜索」开关' : 'DeepSeek 页面当前没有该开关'}
+            onToggle={(next) => void toggleMode('search', next)}
+          />
+          {deepThink.available || search.available ? null : <span style={toggleHintStyle}>开关不可用</span>}
+          {/* History sessions (Phase 08): read-only list; switching goes through
+              the same Host page guard as new chat. */}
+          <button
+            ref={historyButtonRef}
+            type="button"
+            style={historyButtonStyle(pageBusy || loadingSessions)}
+            disabled={pageBusy || loadingSessions}
+            title="查看并切换 DeepSeek 历史会话"
+            onClick={toggleHistory}
+          >
+            {historyOpen ? '收起历史' : '历史会话'}
+          </button>
+          {/* New chat (Phase 07L): disabled while a reply streams, so a
+              generation is never yanked out from under the page. */}
+          <button
+            type="button"
+            style={newChatButtonStyle(pageBusy)}
+            disabled={pageBusy}
+            title="开始新的 DeepSeek 会话（清空当前聊天）"
+            onClick={() => void startNew()}
+          >
+            {startingNew ? '新建中…' : '新建聊天'}
+          </button>
         </div>
-      ) : null}
-      <div style={inputRowStyle}>
-        <textarea
-          style={inputStyle}
-          value={input}
-          placeholder="输入消息…"
-          onChange={(event) => setInput(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter' && !event.shiftKey) {
-              event.preventDefault()
-              void send()
-            }
-          }}
-        />
-        {/* One slot, two roles: while a reply streams this is the stop control
-            (Phase 07J). Both roles read `chat.sending` from the Host, so Dock /
-            Float / Pop-out always agree. */}
-        <button
-          type="button"
-          style={busy ? stopButtonStyle : sendButtonStyle}
-          onClick={() => (busy ? void stop() : void send())}
-          disabled={busy ? stopping : submitting || status !== 'logged_in'}
-        >
-          {STOP_PHASE_LABEL[busy ? phase : 'send']}
-        </button>
+        <div style={inputRowStyle}>
+          <textarea
+            style={inputStyle}
+            value={input}
+            placeholder="输入消息…"
+            onChange={(event) => setInput(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' && !event.shiftKey) {
+                event.preventDefault()
+                void send()
+              }
+            }}
+          />
+          {/* One slot, two roles: while a reply streams this is the stop control
+              (Phase 07J). Both roles read `chat.sending` from the Host, so Dock /
+              Float / Pop-out always agree. */}
+          <button
+            type="button"
+            style={busy ? stopButtonStyle : sendButtonStyle}
+            onClick={() => (busy ? void stop() : void send())}
+            disabled={busy ? stopping : submitting || status !== 'logged_in'}
+          >
+            {STOP_PHASE_LABEL[busy ? phase : 'send']}
+          </button>
+        </div>
       </div>
     </div>
   )
