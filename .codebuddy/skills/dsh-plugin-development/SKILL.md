@@ -177,6 +177,29 @@ overlay 与 rightbar 宽度故意独立，绝不相同步，也不把 localStora
 - 页面 *读取* 也要限定作用域：整文档扫描（如所有 `img[src^="blob:"]`）会把已发送消息里的图片也算进来，必须限定到 composer 等具体容器。
 - 几何点击前必须双重校验（命中元素特征 + 点击后目标状态），并给出安全失败。
 
+## Playwright 生命周期与恢复事实（2026-09-24 故障注入确认）
+
+Persistent context（`chromium.launchPersistentContext`）与普通 launch 的语义**不同**，恢复/重建必须按下面的事实写：
+
+- `context.browser()` **非 null**（`isConnected()` / `version()` 可用），但 **`browser.process()` 不存在** → Playwright 侧拿不到 Chromium 的 PID；测试要 kill 进程只能走进程树（`pgrep -P`）。
+- **`context.close()` 等于浏览器关闭**：同时触发 `context:close` + `browser:disconnected`，`isConnected()===false`，`newPage()` 抛 `TargetClosedError`。没有「只重建 context」这一层。
+- 事件可靠性（实测）：
+  | 故障 | `page.close` | `page.crash` | `context.close` | `browser.disconnected` |
+  |---|---|---|---|---|
+  | `page.close()` | ✅ | ✖ | ✖ | ✖ |
+  | renderer crash | ✖ | ✅（~300ms） | ✖ | ✖ |
+  | `context.close()` | ✖ | ✖ | ✅ | ✅ |
+  | `kill -9` 主进程 | ✅ | ✖ | ✖ | ✅（~30ms） |
+- **renderer crash 不可用「状态」发现**：`page.isClosed()===false`、`page.url()` 仍返回旧 URL、`browser.isConnected()===true`；只有 `page.on('crash')` 事件（操作报错文本是 `Page crashed` / `Target crashed`）。**crash 的页面不可复用**：`goto` / `reload` 都抛 `Page crashed` → 必须 `page.close()` + `context.newPage()`。
+- **pending waiter 快速失败**：kill 后 pending 的 `waitForResponse` / `response.finished()` 在 **~30 ms 内** reject（`TargetClosedError`），**不会**等满 timeout → Host 的 `sending` / guard 能在 finally 里立刻归零。
+- **`context.exposeFunction` 是 context 级**：同 context 内新建的 page 仍有该函数（重建 page 不必重装）；但**浏览器重建后必须重装**，否则发送「成功」却永远收不到页面回调。
+- **profile 锁不需要人工清理**：`SingletonLock/Cookie/Socket` 存在时，同一 `profileDir` 在 `close()`（即使未 await）或 `kill -9` 之后**立即**重启都成功（555–711 ms，登录态保留）；**禁止删除 lock 文件**。若另一个实例仍**存活**，第二次 launch **176 ms 快速失败**，错误信息误导（报成 `Target … has been closed`）→ 只能靠有限重试 + 如实报 offline 处理。
+- **判定禁止基于错误文案**：文案会变（`TargetClosedError` / `Page crashed` / `Target crashed`），一律用 `isClosed()` / `isConnected()` / crash 事件标记判定。
+- **「活着但不可用」的页面必须靠分类发现**：`about:blank` 之类页面 `isClosed()===false`、`isConnected()===true`，但功能不可用（业务操作要等满 locator timeout）→ 恢复的判定要用「生命周期状态 + origin + **bounded DOM readiness（≤2s，禁止无上限轮询）**」分类（healthy / login-required / invalid-page / page-dead / browser-dead），**sign-in 页面天生没有 composer，不能据此判 invalid**。
+- **page 替换后必须抑制过期回调**：给每次 page 替换 / 浏览器重建递增 `pageEpoch` / `browserEpoch`，listener 与异步操作在注册时捕获 epoch、回调用 `captured !== active` 早退；尤其是 `framenavigated`、auth response、delta 回调与「send 结束时的最终 DOM 读取」。比较页面**对象引用**不可靠（crash 未 close 的旧 page 仍是活引用）。
+- **每一步恢复动作都要有自己的 timeout**（close / newPage / goto / 登录探测 / DOM readiness / 单次尝试总上限），否则「有限重试」会被某一步的无限等待架空。
+- 恢复/重建必须 **single-flight**（一个 in-flight promise + 有界重试 + `finally` 清锁），并与「页面操作互斥」（PageGuard）**分开**：前者是浏览器生命周期，后者是谁可以点页面。
+
 ## 后续 Browser 约束（工程约定）
 
 Browser Engine 使用 Playwright（已接入）：Browser 生命周期属于 Host；selector 集中管理；使用有限 timeout/retry；登录走 DeepSeek 官方页面；不记录 Cookie/Token/密码；Browser/Profile 数据不得进入 Git。
