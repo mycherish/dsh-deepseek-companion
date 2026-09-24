@@ -913,3 +913,402 @@ expectedFileIds = consumedAttachmentIds → AttachmentRecord[] → deepSeekFileI
 5. **审核失败的真实行为（设计风险 #3 已实测）**：上传受理 ≠ 最终可用。若 DeepSeek 侧审核/解码失败，completion 会返回**空回复**（Host 记为 `error`），而页面会**保留草稿卡片**；此时 Host 已按 commit 语义消费掉该草稿，于是页面集合 ≠ Host 集合 → 后续发送被严格闸门拒绝（409），需要用户手动删掉页面卡片或 New chat 才能继续。这是「宁可不发」策略的已知代价，**不在 18A 内自动恢复**。
 
 **未驱动项的处理原则**：这些路径的实现仍按定稿设计保留严格语义（安全失败优先），只是**没有用真机走完**；任何后续真机验证若发现与设计不符，应以真机结论为准更新本节。
+
+## Browser Recovery（Phase 20 · **设计提案 — 未实现**）
+
+> 本节记录 2026-09-24 的**调查 + 真实故障注入**结论与**设计提案**。**没有任何实现代码**：Phase 20 仍为 investigation / design（见 `docs/roadmap.md`）。
+>
+> 证据来源：Playwright **1.62.0** + 其自带 Chromium **151.0.7922.34**，用 `companion-test` profile 的**临时副本**（`/tmp`，独立进程）做真实故障注入；**未使用 web profile**，未记录 token / cookie，结束后清理全部进程与副本。
+
+### 1. 现状：Browser 生命周期（源码事实）
+
+```
+index.ts ctx.effect
+  └─ createDeepSeekBrowser(profileDir, onStatus, onDeepThink, onSearch, onSessionLocation, onPageReplaced)
+       ├─ chromium.launchPersistentContext(profileDir, { headless:false, viewport })  ← persistent context（唯一 context）
+       ├─ let page = context.pages()[0] ?? await context.newPage()                     ← 可变闭包变量，方法调用时读取
+       ├─ await context.exposeFunction('__onReplyDelta' | '__onReasoningDelta')        ← context 级桥（page 无关）
+       ├─ attachListeners(page)       : page.on('load') / page.on('response', …/users/current)
+       ├─ attachSessionWatcher(page)  : page.on('framenavigated') → 会话位置 → onSessionLocation
+       └─ { check, showLogin, …, dispose }
+     成功 → browser = created · setBrowserReady(true) · await created.check()
+     失败 → warn + setBrowserReady(false) + status 'error'   ← **之后永不重试**（只有 plugin reload 才会再试）
+```
+
+| 事实 | 结论 |
+|---|---|
+| **事件监听** | `browser.on('disconnected')`、`context.on('close')`、`page.on('close')`、`page.on('crash')` **全部缺失**（只有 `load` / `response` / `framenavigated`） |
+| 探活 | 无周期探活；`page.isClosed()` 只在 `showLogin()` 里用了一次 |
+| page 引用 | 可变闭包 `page` → **Level-1 重建只要重新赋值 `page`，其余方法自动自愈**（它们都在调用时读 `page`） |
+| context 引用 | `const context` → Level-3 必须改成可变，并**重装 context 级桥** |
+| `showLogin()` | 仅当 `page.isClosed()` 才新开 page（+ attachListeners + attachSessionWatcher + `onPageReplaced`）→ **crash 页面 `isClosed() === false`，它救不了 crash** |
+| `dispose()` | `disposed = true` + 清 delta receiver + `await context.close()`；index.ts 里 **不 await**（`void browser.dispose()`） |
+| 路由 | `browser === null → 503`；页面操作 guard 一律 `finally` 释放；`/chat` 一律 `finally` 清 `chat.sending` |
+
+**没有任何一处会在故障后改变 `connection`**：`setBrowserReady` / `setDeepSeekStatus` 只由启动成败与 `runDetect()`（load / `/users/current` response）驱动 → 浏览器死掉后 Host 仍报 `online`，Client 的发送按钮**仍然可点**，点下去才失败（错误文案是原始 Playwright 英文错误）。
+
+### 2. 故障注入结果（真实测量，2026-09-24）
+
+**事件可靠性**
+
+| 故障 | `page.on('close')` | `page.on('crash')` | `context.on('close')` | `browser.on('disconnected')` |
+|---|---|---|---|---|
+| `page.close()` | ✅ | ✖ | ✖ | ✖ |
+| renderer crash（`chrome://crash`） | ✖（只有 `ctx.close()` 时才补触发） | ✅（~300 ms） | ✖ | ✖ |
+| `context.close()` | ✖ | ✖ | ✅ | ✅ |
+| `kill -9` Chromium 主进程 | ✅ | ✖ | ✖ | ✅（**+28~38 ms**） |
+
+**状态与错误（关键）**
+
+| 观测 | `page.close()` | renderer crash | `context.close()` | `kill -9` |
+|---|---|---|---|---|
+| `page.isClosed()` | `true` | **`false`（不变）** | `true` | `true` |
+| `page.url()` | 抛错 | **仍返回旧 URL（陈旧）** | 抛错 | 抛错 |
+| `browser.isConnected()` | `true` | **`true`** | `false` | `false`（+28 ms） |
+| `context.pages().length` | `0` | `1` | `0`（不抛） | `0` |
+| `context.newPage()` | ✅ 260 ms | ✅ | ✖ `TargetClosedError` | ✖ `TargetClosedError` |
+| 页面操作报错 | `TargetClosedError: …: Target page, context or browser has been closed` | `page.goto: Page crashed` / `page.evaluate: Target crashed` / `locator.count: Target crashed` | `TargetClosedError` | `TargetClosedError` |
+| 关闭全部 page | 浏览器仍活着，`newPage()` 可用 | — | — | — |
+
+- **崩溃页不能复用**：crash 后 `page.goto()` / `page.reload()` 都抛 `Page crashed`，`evaluate` / locator 抛 `Target crashed`；`page.close()` 可用，随后 `context.newPage()` 正常 → **crash 的恢复路径必须是 close + newPage**。
+- **pending waiter 会快速失败，不会挂到超时**：`kill -9` 时 pending 的 `waitForResponse` 在 **28 ms** 内 reject；`response.finished()`（真实流式中）在 **22 ms** 内 reject，均为 `TargetClosedError`。**因此 `chat.sending` / guard 都能立刻归零，不存在「卡到 60 s 超时」的情况。**
+- **Host 不崩**：kill 后 Node 侧（= DSH Host 的等价物）继续运行，只有等待页面操作的 promise reject；无进程级崩溃。
+
+**时间（用于 retry/backoff）**
+
+| 操作 | 实测 |
+|---|---|
+| `launchPersistentContext`（首次 / 热重启） | 1453–1567 ms / 555–711 ms |
+| `context.newPage()` | 260 ms |
+| `goto(HOME)` + `domcontentloaded` + 检测 | ~2–4 s |
+| 第二次启动（同 profile、第一个实例存活） | **176 ms 快速失败**，错误信息**误导**：`…launchPersistentContext: Target page, context or browser has been closed` |
+| 同 profile 立即重启（`close()` 未 await / SIGKILL 之后） | **成功**（621 / 555 ms） |
+
+**persistent context 特有事实**：`context.browser()` 非 `null`（`isConnected()` 可用、`version()` = 151.0.7922.34），但 **`browser.process()` 不存在** → Playwright 侧拿不到 PID（测试要靠进程树）。
+
+### 3. 故障类别与当前行为
+
+| # | 故障 | 当前行为 | Host state | Client 看到 | 现状可否自动恢复 | 需重建 |
+|---|---|---|---|---|---|---|
+| A | **page 被关闭** | 无事件 → 无状态变化；页面操作快速抛 `TargetClosedError` | `browserReady=true` · status `logged_in` | 仍 `online`、按钮可点 → 发送后显示原始 Playwright 错误 | ✖（只有用户手动「打开登录窗口」能救） | **page** |
+| B | **page crash** | 无监听；`isClosed()===false` 使 `showLogin()` 也不触发重建；操作抛 `Target crashed` | 同上 | 同上 | ✖ | **page（close + newPage）** |
+| C | **context 被关闭** | `browser:disconnected` 触发但无人监听 | 同上 | 同上 | ✖ | **browser（= context）** |
+| D | **browser / 进程死亡** | `disconnected` 28 ms 触发、无人监听；pending waiter 快速 reject | 同上 | 同上 | ✖ | **browser** |
+| E | **页面跳到非预期路由** | `load` → `runDetect` → `/users/current` 失败 → status `error` → `offline` | status `error` | 状态变为离线（当前无横幅渲染） | 部分自愈：未知路由 / 已登录时的 `/sign_in` 都被 DeepSeek **重定向回 `/`**（实测） | 无需重建 |
+| F | **页面活着但 DOM 永不可用** | 同 E（无周期探活）；发送会**等满 locator timeout（~30 s）** 才失败 | 视 `load` 是否触发 | 长时间等待后失败 | ✖ | page（或先探活再决定） |
+| G | **网络短暂异常** | completion 失败 → 500 + assistant `error`；**与浏览器故障无关** | 不变 | 正常错误提示 | —（**不应**触发重建） | 无 |
+| H | **DSH 活着、Playwright 子进程死** | 等价于 D；Host 进程存活（等价 Node 进程实测未崩） | 同 D | 同 D | ✖ | browser |
+
+> **E / F 两类（非预期路由 / 页面活着但 DOM 不可用）在 §5 统一收口为 `C. PAGE_INVALID`**：`about:blank` 这类「活着但不可用」的页面不允许继续走 30 s locator 慢失败，而 sign-in 页面（天生没有 composer）不算 invalid。
+
+### 4. 恢复层级（提案）
+
+**Level 2 不存在**：本项目用 `launchPersistentContext`，**只有一个 context，且它就是浏览器会话**。实测 `context.close()` 同时触发 `context:close` + `browser:disconnected`、`isConnected()===false`、`newPage()` 抛 `TargetClosedError` → 「重建 context」与「重建 browser」是同一件事。
+
+```
+Level 1 — 重建 page（browser/context 健康）
+  page.isClosed() || crashed  →  close()（crash 页必须 close）→  context.newPage()
+  →  attachListeners(newPage) + attachSessionWatcher(newPage)
+  →  onPageReplaced()            （Phase 18A：草稿随旧页失效 → 清 composer + records + temp files）
+  →  goto(HOME) → runDetect() → syncComposerMode()
+  ✔ 不需要重装 exposeFunction（实测：同 context 内新 page 仍有 __onReplyDelta）
+
+Level 3 — 重建 browser（disconnected / isConnected()===false / Level 1 失败）
+  closeQuietly(旧 context)         （best effort，忽略一切错误）
+  →  context = await chromium.launchPersistentContext(**同一个 profileDir**, 同参数)（bounded retry）
+  →  await context.exposeFunction('__onReplyDelta' | '__onReasoningDelta')   ★ 必须重装
+  →  page = context.pages()[0] ?? await context.newPage()
+  →  attachListeners + attachSessionWatcher + onPageReplaced()
+  →  goto(HOME) → runDetect() → syncComposerMode()
+  ✖ 不重装桥 → 发送会「成功」但**永远收不到流式增量**（实测 Level-3 后 window.__onReplyDelta === undefined，重装后恢复）
+```
+
+**profile 与登录态**：`DEEPSEEK_COMPANION_PROFILE` → `<profileDir>/deepseek-companion-browser` → `$DSH_HOME/deepseek-companion-browser` 优先级**不变**，Level-3 必须复用同一目录。实测：`kill -9` 后立刻用同目录重启 → **555–711 ms 成功，`/users/current` 仍 200（登录态保留）**；`SingletonLock / SingletonCookie / SingletonSocket` 存在但**不阻塞重启** → **禁止删除 lock 文件**。
+
+### 5. 页面健康分类与恢复入口（提案）
+
+**「活着但不可用」的页面不能靠 `isClosed()` 发现**：实测 `about:blank` 时 `page.isClosed() === false`、`browser.isConnected() === true`，但 composer 不存在 → 发送要**等满 locator timeout（~30 s）**才失败。因此 `probe()` 是**五分类**，`ensureReady()` 在任何页面操作前按分类决策：
+
+| 分类 | 判定（只用生命周期状态 / URL / bounded DOM，**禁止 message matching**） | 动作 |
+|---|---|---|
+| **A. HEALTHY_CHAT** | `!isClosed()` · 无 crash 标记 · `isConnected()` · origin 是 DeepSeek · 非 sign-in · composer readiness 通过 | 直接执行（零额外 IO） |
+| **B. LOGIN_REQUIRED** | 生命周期健康 + origin 是 DeepSeek，但 **URL 是 sign-in 路由**（`/sign_in`，或页面已渲染 sign-in 表单 / `detectStatus` 结论为 `logged_out`） | **不 recovery**；`connection → login_required`；`currentSession` / messages **保留** |
+| **C. PAGE_INVALID** | `!isClosed()` · 无 crash 标记 · `isConnected()`，但 **origin 不是 DeepSeek**（`about:blank` / `chrome://…` / 其它站点）**或** DeepSeek origin 下 **bounded readiness 内拿不到核心 composer DOM** | **Level 1**（close → newPage → attach → goto(recoverTarget) → detect） |
+| **D. PAGE_DEAD** | `page.isClosed()` **或** crash 标记（`page.on('crash')` 已置位） | **Level 1** |
+| **E. BROWSER_DEAD** | `!browser.isConnected()` **或** 收到 `disconnected` **或** Level 1 自身抛 `TargetClosedError` | **Level 3** |
+
+规则：
+
+- **bounded readiness**：composer 就绪只用**一次带上限的等待**（`waitForSelector` / `waitForFunction`，**≤2 s**），**绝不**无上限轮询；超时即判 **C**，而不是让业务操作自己去撞 30 s locator timeout。
+- **sign_in 绝不判成 invalid**：先判生命周期与 origin，再判 sign-in 路由；sign-in 页面**天生没有 composer**，「composer 缺失」对它是**期望行为** → 归 **B**（不 recovery）。
+- **origin 优先**：非 DeepSeek origin 一律 **C**（在 `about:blank` 上做 DOM 探测没有意义）。
+- **判定是「操作前的即时分类」，不是周期轮询**：没有 background timer、没有「探活 → 失败 → 重建」的循环。
+- **零成本热路径**：A 的判定只需 `isConnected()` / `isClosed()` / crash 标记 / `page.url()`（全同步、无 IO）。只有以下情况才做 ≥0 次 IO 的 readycheck：① origin 不是 DeepSeek；② 页面刚被重建 / 刚 `goto` 完成（composer 存在性未知）；③ **上一次页面操作以 DOM 相关超时失败**（这同时覆盖故障类别 F「页面活着但 DOM 永不可用」，无需常驻探活）。
+- 只有 **A / B** 允许进入业务路径；**C / D / E** 先走 single-flight 恢复，恢复失败 → `connection = offline`。
+
+入口仍是两个（与 §6 的 single-flight 共用同一个 promise）：
+
+```ts
+// 每个页面操作前的唯一入口：A/B 直接返回（零额外 IO），C/D/E 触发 single-flight 恢复
+ensureReady(): Promise<{ kind: 'HEALTHY_CHAT' | 'LOGIN_REQUIRED' | 'PAGE_INVALID' | 'PAGE_DEAD' | 'BROWSER_DEAD'; status: DeepSeekStatus }>
+// 事件驱动入口（listener 内调用，防重入）
+recover(reason: 'page-closed' | 'page-crashed' | 'context-closed' | 'browser-disconnected' | 'invalid-page' | 'probe-failed'): Promise<void>
+// 只读探针（不恢复）：供 ensureReady() 与诊断使用
+probe(): Promise<{ kind: …; pageAlive: boolean; crashed: boolean; connected: boolean }>
+```
+
+- **触发源 = 事件 + 惰性分类**：事件（`page close` / `page crash` / `browser disconnected`）负责「立刻知道」；`ensureReady()` 的分类负责「事件漏了也能自愈」。**crash 必须靠事件**（`isClosed()` 检测不出来）。
+- **禁止 message matching**：文案会变（`TargetClosedError` / `Page crashed` / `Target crashed`），判定只用生命周期状态 / URL / bounded DOM。
+
+### 6. 并发模型：single-flight（与 PageGuard 分开）
+
+```
+recoveryPromise: Promise<…> | null      // 非 null 时所有调用者 await 同一个 promise
+epoch: number                            // 每次成功重建 +1
+```
+
+- 5 个请求同时发现 page 死了 → **只启动一次 Chromium**，其余 await 同一个 promise。
+- 恢复中又收到 `disconnected`（新浏览器立刻又死）→ 置 `pendingRecovery = true`，当前 promise settle 后**在同一预算内**再跑一次，而不是无限递归。
+- 恢复结束（含失败）**一定**在 `finally` 清 `recoveryPromise` → **锁不会泄漏**。
+- **与 PageGuard 的关系：分开，不复用。**
+  - PageGuard = 「现在谁可以点这个页面」= 同步 `tryClaim` + `finally release`，持有者是 route（新建 / 切换 / 外部同步）。
+  - Recovery = 「浏览器生命周期」= 异步 single-flight promise，**不 claim PageGuard**（页面已死时，任何持有 guard 的操作都已经在快速失败）。
+  - 唯一耦合：恢复的「goto + detect」阶段若 `guard.inProgress()` 为真（罕见：某 locator 超时仍在跑），**有界等待**（≤3 s）再继续；等待不改变 guard 归属。
+
+### 7. 重试与退避（提案，基于实测）
+
+- **Level 1**：最多 2 次（`newPage` 260 ms）；仍失败 → 升级 Level 3（**同一次 recovery 内升级**，不新开预算）。
+- **Level 3**：最多 3 次，退避 `0 / 250 / 750 ms`（launch 555–1567 ms；实测「同 profile 立刻重启」成功率 100% → 不需要长退避；**不做无限 polling**）。
+- 分类：
+  - 重试耗尽 → `browserReady=false` + status `error` → `connection = offline`（**不是** `login_required`）。
+  - 重启成功但 `runDetect()` 返回 `logged_out` → `login_required`（页面真实结论）。
+  - 网络导致的 `goto` 超时 → **不重建**（重建也修不好），报 `offline`，避免重建风暴。
+- plugin reload（旧 `context.close()` 未 await）与「用户手动跑第二个实例」：实测前者**不阻塞重启**（621 ms 成功），后者 **176 ms 快速失败**且信息误导 → 只能靠「重试 3 次 + 失败后如实报 offline」处理，**不得**据此把用户引导到重新登录。
+
+**每一步自身都必须 bounded**（否则「有限重试」没有意义）：
+
+| 步骤 | 上限（建议） | 依据 / 说明 |
+|---|---|---|
+| `closeQuietly(旧 page / 旧 context)` | **≤2 s** | 超时即放弃（吞掉错误）；旧进程仍活着时 launch 会 176 ms 快速失败，重试会处理 |
+| `context.newPage()` | **≤5 s** | 实测 260 ms，留足余量 |
+| `page.goto(目标)` | **≤30 s**（`domcontentloaded`） | 与现有 `check()` / `showLogin()` 的 30 s 预算一致；**不再追加** `networkidle` 长等待 |
+| login detection（`detectStatus` → `/users/current`） | **≤10 s** | 复用现有 detect 的预算 |
+| composer readiness（判 A / C） | **≤2 s** | 唯一 DOM 判据，见 §5 |
+| **单次 recovery 尝试总上限** | **≤45 s** | 超出即判本次失败 → 进入下一次（或耗尽 → `offline`） |
+| **整个 recovery 的全局预算** | **60 s**（`RECOVERY_TOTAL_BUDGET`，定稿） | 从 `recoveryPromise` 创建起算；下面的次数上限受它二次约束 |
+
+- 任何一步都要有**自己的** timeout 与 `catch`；**禁止**出现「某一步无限等待」把有限重试架空。
+- **全局 wall-clock 预算（定稿）：`RECOVERY_TOTAL_BUDGET = 60 s`** —— 从 single-flight `recoveryPromise` 创建开始计时。Level 1 / Level 3 的**全部**重试、backoff（0 / 250 / 750 ms）与每一步（closeQuietly / newPage / goto / login detection / composer readiness）**共享同一个 60 s 总预算**。每一步的实际 timeout 取 `effectiveTimeout = min(stepTimeout, remainingRecoveryBudget)`；`remaining ≤ 0` 时**立即停止 retry** → `connection = offline`，保持 last-known `currentSession` / `messages`，并在 `finally` 里清空 `recoveryPromise`、`pendingRecovery` 与全部锁。
+- **Level 1 ≤2 / Level 3 ≤3 / 退避表只是「次数上限」**：真正执行的次数还受 60 s 总预算约束——不允许 3 次 attempt × 45 s 被拉成数分钟的恢复，也不允许任何一步以「自己的完整 step timeout」越过剩余预算。
+- 恢复期间的时间预算对外可见：`recovering` 若逼近 / 超过 60 s 总预算就应如实转 `offline`，而不是继续挂着。
+
+### 8. Listener 生命周期与 stale-event 抑制（epoch）
+
+**attach 去重**：
+
+- **每个 page 对象只 attach 一次**：用 `WeakSet<Page>` 记录已挂载 page；`attachListeners` / `attachSessionWatcher` 入口先查表。
+- 旧 page 死掉后其 listener 不再产生事件（实测 close / crash 后无后续事件）→ 但 **crash 且未 close 的 page 仍是「活对象」**，所以重建时**必须** `close()` 旧 page，并在逻辑上注销。
+- Level-3 后**全部重挂**：`load` / `response` / `framenavigated` + 两个 `exposeFunction`（后者是 context 级，实测 Level-3 后必须重装）。
+
+**stale-event 抑制（最小改造，不动 chat 架构）**：
+
+```
+pageEpoch: number      // 每次 page 被替换（Level 1 / Level 3）+1
+browserEpoch: number   // 每次 Level 3 +1
+```
+
+- **所有 listener 与异步操作在注册 / 启动时捕获当时的 epoch**；回调或续接（continuation）进入时先比较：
+
+```ts
+const myPage = pageEpoch              // 注册时捕获
+…回调内…
+if (disposed || myPage !== pageEpoch) return   // 过期事件：不 forward、不写 store、不产出业务状态
+```
+
+- **必须覆盖的路径**（每一条都对应一个真实的污染面）：
+
+| 路径 | 若不过滤会怎样 |
+|---|---|
+| 旧 page 的 `framenavigated` | 旧页导航改写 `currentSession`，把重建后的真实位置覆盖掉 |
+| 旧 page 的 `response(…/users/current)` | 旧页的 auth 结论覆盖新页的 `status` |
+| 旧 send 的 `__onReplyDelta` 回调 | 旧页/旧 send 的增量写进新页的 assistant 消息 |
+| 旧 send 的 `__onReasoningDelta` 回调 | 同上（reasoning 内容串台） |
+| 旧 send 结束时的**最终 DOM 读取**（final reply read / citation hydration / `JSHandle`） | 旧页（已 close/crash）的读取结果被当成这一轮的真实回复 |
+
+- **`currentDeltaReceiver` / `currentReasoningReceiver`**：page 替换时**立即置 null**，新 send 自己重新赋值 —— 旧 send 的接收器不会再被调用（这是 §9「send 中崩溃」语义的实现基础）。
+- **`dispose()` 也走 epoch**（+1）→ 关闭后的所有过期回调天然被忽略。
+- **不允许**用「比较 page 对象引用」代替 epoch：crash 且未 close 的旧 page 仍是活跃对象引用，只有 epoch 能表达「它已经不是当前页面」。
+
+### 9. 故障期间的操作语义
+
+| 场景 | 语义 |
+|---|---|
+| **sendMessage 中崩溃** | pending waiter 22–28 ms 内 reject → `chat.ts` 的 `finally` 清 `chat.sending`，assistant 消息 `status='error'`（已流出的内容保留）。**绝不自动重发用户消息。** |
+| **Stop 中崩溃** | `stopGeneration` 快速失败 → 503/500；`chat.sending` 仍由 send 流程收尾 → 不会永久 `stopping` |
+| **attachment 上传中崩溃** | `upload_file` waiter reject → 该 attachment `status='error'`（页面预览若已出现则保留 `previewIdentity`）；composer 不静默清空 |
+| **attachment 已 ready 但页面丢失** | **沿用 Phase 18A 规则**：page 重建 = 草稿失效 → `onPageReplaced()` → 清 `composer.attachments` + records + temp files |
+| **newChat / switch 中崩溃** | guard `finally` 释放（页面操作快速失败）→ 无永久忙；transcript **保持不动**（page-first 原则） |
+| **外部会话同步中崩溃** | `run()` 的 `catch` 吞掉错误 + `finally` 释放 guard；`lastKnown` 不更新，下次导航可重试 |
+| **共性要求** | 所有 `finally` 必须释放：`chat.sending`、`composer.stopping`、PageGuard、**recoveryPromise**；恢复本身不引入新的「永久忙」 |
+
+### 10. 恢复期与恢复后的 session / transcript 策略
+
+**核心原则（20A 收口）：recovery 不改写 Host 的 session / transcript 事实。`offline` 表示「浏览器状态不可验证」，不代表「没有会话」。**
+
+1. **恢复开始前**：`recoverTarget = { ...currentSession }`（last-known snapshot）+ Host `messages` 原样保留、`currentSession` 原样保留。
+2. **恢复期间**：`currentSession` 与 `messages` **一律不动**；只有 `connection` 变化（`recovering` → 最终态）。
+3. **只有以下三种情况允许改 `currentSession`**：
+   - **恢复成功且确认原会话**：页面 URL 真实落在 `/a/chat/s/<recoverTarget.id>` → **保持原 id**（不写、无变化）。
+   - **恢复成功，且 DeepSeek 页面自己把已不存在的会话重定向到 `/`**（URL 事实）→ `currentSession = {id:null}`；**是否清 messages 留给 20B reconciliation**（20A 不清）。
+   - **`login_required`**（页面真实是 sign-in）→ `currentSession` / `messages` **全部保留**，`connection = login_required`；**绝不因为退出登录销毁用户仍在看的历史**。
+4. **恢复失败 / 恢复导航失败 / 网络失败 / 重试耗尽**：`connection = offline`，`currentSession` **保持 recoverTarget**，`messages` 保持，**不猜页面位置**。
+5. **禁止的组合**：`currentSession = {id:null}` + 仍带 `sessionId` 的历史消息（语义冲突，本设计不再产生）。
+6. `recoverTarget.id === null`（崩溃前就在新会话）：`goto('/')`，`currentSession` 保持 `{id:null}`，messages 保持。
+
+**与 Phase 08.2 的兼容性**：`currentSession` 在 08.2 的语义是「当前（**最后确认的**）会话」，不是实时探针；实时可用性由 `connection` 表达。因此「`offline` / `recovering` + 保留 `currentSession` / `messages`」**不新增 currentSession 的 unknown 状态、不修改 MessageStatus**，也不与 `setCurrentSession` 的既有写点冲突；唯一扩大的枚举是 `connection.status`，其正式新值 `recovering` 见 §11（定稿）。
+
+#### 10.1 recovery-generated navigation 与 session watcher
+
+Recovery 自己会产生 `newPage` / `goto('/')` / `goto('/a/chat/s/<id>')`。这些**不是用户导航**，绝不能被 `sessionSync` 当成「用户切会话」而触发 `apply()`（那会 `clearChatMessages()` / `replaceChatMessages()`）。
+
+**最终方案（定稿，唯一方案；三层防护职责不同、互不替代，全部实现——不存在「至少一种」的选项）**：
+
+1. **recovery 开始**：置 `recoveryNavigationActive = true`（或等价的 recovery-navigation token / epoch）。
+2. **Recovery 自己产生的** `newPage` / `goto('/')` / `goto('/a/chat/s/<id>')` 会照常触发 `attachSessionWatcher` 的 `framenavigated`，但该导航属于当前 recovery → watcher **不调用 `sessionSync.onLocation()`**、不 `clearChatMessages()`、不 `replaceChatMessages()`、不产生 external switch、不排队 `pending`。
+3. **recovery 成功并取得最终真实 location 后**：调用 `sessionSync.markKnown(actualLocation)` —— 只把 `lastKnown` 对齐到页面真实位置，**不触发 transcript rebuild**。
+4. **然后清** `recoveryNavigationActive`（`finally`，含失败路径）。
+5. `pageEpoch` / `browserEpoch`（§8）继续拦截**旧 page** 的 `framenavigated` / auth response / delta / reasoning / final DOM read。
+
+| 三层防护（定稿） | 职责 |
+|---|---|
+| `recoveryNavigationActive` suppression | 挡**当前新 page** 上由 Recovery 自己制造的合法导航 |
+| `sessionSync.markKnown(actualLocation)` | 对齐 `sessionSync.lastKnown`（不 rebuild transcript） |
+| `pageEpoch` / `browserEpoch` | 挡**旧 Browser / Page** 的 stale callbacks |
+
+**20A 的可见结果**：浏览器崩了 → 自动恢复 → 用户不刷新 DSH → **Host 现有 transcript 不被误清** → 恢复成功后页面回到 `recoverTarget` 的 URL（原会话尽量重新打开）→ 用户可以**继续发送**。
+
+> 20B 才做：`readTranscript()` 回填、补齐「服务端已完成但 Host 未收到」的 assistant reply、会话被删除后的 transcript 最终决策、更完整的 title refresh、以及「正在恢复 DeepSeek…」文案。
+
+### 11. connection 状态模型（定稿）
+
+`ConnectionStatus` **正式新增 `recovering`**（不是加一套 `browser.status` 子对象）。实现阶段的类型设计写死为：
+
+```ts
+type ConnectionStatus =
+  | 'online'          // Browser/Page 已验证可正常使用
+  | 'offline'         // Recovery 失败 / 预算耗尽 / 网络或 Browser 状态无法恢复
+  | 'login_required'  // Browser/Page 健康，但 DeepSeek 明确要求登录
+  | 'recovering'      // single-flight recovery 正在执行
+```
+
+- **`recovering` 的精确语义**：single-flight `recoveryPromise` 在飞行中（含 Level 1/3）＝ **Client 操作禁用**（所有既有 `connection !== 'online'` 门禁天然生效）＝ **不代表 login lost** ＝ **不改 `currentSession` / `messages`**。
+- 转移：`recovering → online`（重启 + detect = logged_in）；`recovering → login_required`（重启成功但页面真实未登录，logged_out）；`recovering → offline`（重试次数耗尽 / §7 的 60 s 总预算耗尽 / 网络不可用 / 浏览器不可用，browserReady=false）。
+- **为什么不用 `offline` 兜**：现在的 `offline` 等于「需要用户动手（重启 DSH / 重新登录）」，而恢复中的真实语义是「最多几十秒就回来，别动手」；用 `offline` 会给出错误引导，并在重试成功时产生 `online → offline → online` 的闪烁。
+- **不会无意义闪烁**：只在**真的在恢复**时进入 `recovering`；恢复结束直接落到最终状态。
+- **Client（实现阶段必须做的一件事）**：`src/client/api.ts` 的 `CONNECTION_STATUSES` 加入 `'recovering'`（旧 Client 收到未知值退回 fallback，向后兼容）。除此之外**不需要改**：`canSendRound` / `canPickAttachment` 等既有 `connection === 'online'` 校验对 `recovering` 继续成立（自动禁用发送 / 图片 / 新建 / 切换，Host 仍做最终校验）。
+- **枚举边界（与 08.2 兼容）**：不新增 currentSession 的 unknown 状态、不修改 MessageStatus——`ConnectionStatus` 是唯一扩大的枚举。
+- **`offline` 的最终语义 = 「浏览器状态不可验证」**（恢复失败 / 预算耗尽 / 网络不可用 / 浏览器不可用）。它**不**表示「没有会话」：此时 `currentSession` 与 `messages` 一律保持 last-known（见 §10），Client 仍显示用户此前看到的历史。
+- `login_required` 同理：**保留** transcript 与 `currentSession`，只表达「页面需要登录」。
+
+### 12. Client 最小 UX
+
+- **不加 UI 组件**：不加 toast、error center、重试按钮。恢复期间靠既有 gate（`connection !== 'online'`）把发送 / 图片 / 新建 / 切换置灰；Host 的 409/503 仍是最终真相。
+- Client 目前**没有渲染任何连接横幅**，所以 `recovering` 对用户表现为「按钮变灰」。若要一行可见文案，最小做法是复用 composer 占位符显示「正在恢复 DeepSeek…」（现有 theme token，无新组件）——**是否要做，留给 Review 决定**。
+- 恢复完成后状态回到 `online`，**无需刷新 DSH**。
+
+### 13. 测试计划（只设计，不实现）
+
+**20A — 纯逻辑 / 单测（无需浏览器）**
+
+1. **健康分类矩阵**：`isConnected` / `isClosed` / crash 标记 / origin / sign-in / composer readiness 的组合 → 恰好落到 A–E 之一。
+2. **`about:blank` + `isConnected()===true`** → `PAGE_INVALID`（**C**）→ 触发 Level 1，**且不进入任何 30 s locator 等待**（断言：分类在 bounded 预算内返回）。
+3. **sign_in 页面** → `LOGIN_REQUIRED`（**B**）→ **不触发 recovery**、`connection=login_required`。
+4. **DeepSeek origin 但 composer readiness 超时**（bounded 内始终没有 composer DOM）→ `PAGE_INVALID` → Level 1。
+5. **`browser.process()` 不存在 / 无 PID 也能分类**（persistent context 特例，别写依赖 PID 的判定）。
+6. Level 选择：page 死 / invalid + context 健康 → Level 1；`!isConnected()` → Level 3；Level 1 自身抛 `TargetClosedError` → 同一次内升级 Level 3。
+7. 重试预算：Level 1 ≤2、Level 3 ≤3、退避 `0/250/750`、耗尽 → `offline`（有限次，无无限循环）。
+8. **每一步 bounded**：`closeQuietly` / `newPage` / `goto` / login detection / composer readiness / 单次尝试总上限，各自超时都能让该次尝试**结束**（断言逐步 timeout，不出现「某一步挂住」）；且每步实际等待还须取 `min(stepTimeout, remainingRecoveryBudget)`（见 N9）。
+9. 分类结果分支：重启成功但 `logged_out` → `login_required`；`goto` 网络超时 → **不重建**、`offline`。
+10. **single-flight**：5 个并发 `ensureReady()` 只调用一次重建；失败后 `recoveryPromise` 清空（锁不泄漏）；恢复中再次 `disconnected` → 预算内再跑一次而非递归。
+11. listener 去重：同一 page 重复 attach 不产生第二次 `load` 回调。
+12. **epoch 过滤**：旧 page 的 `framenavigated` / `response(auth)` 在 epoch 变化后触发 → **被忽略**，不改 `currentSession` / `status`。
+13. **旧 send 的 delta / reasoning 回调**（rebuild 后触发）→ 不写新页的 assistant 消息、不污染状态。
+14. **旧 send 的最终 DOM 读取**（rebuild 后 resolve）→ 不得当作本轮 reply。
+15. Level-3 **只对新 context** 生效的 `exposeFunction`：新 context 必须重装（未重装即断言失败），旧 context 的绑定不参与。
+16. **恢复成功但导航失败 / 重试耗尽**：`connection=offline`、`currentSession` **保持 recoverTarget**、messages 保持（**断言不出现 `currentSession=null`**）。
+17. **`login_required` after recovery**：`currentSession` / messages 保持。
+18. **recovery-generated navigation**：`goto('/')` 与 `goto('/a/chat/s/A')` 都不触发 `apply()`（不 `clearChatMessages()`、不 `replaceChatMessages()`）；`recoveryNavigation` 窗口 `finally` 一定清除。
+19. 恢复期间的 send：assistant `status='error'`、`chat.sending=false`、**不自动重发**。
+20. 恢复期间的 Stop：`stopping` 归零、无永久忙。
+21. 恢复期间的 attachment 上传 → `status='error'`；已 ready 的草稿在页面重建后被清空（18A 规则）+ temp file 清理幂等。
+22. `newChat` / `switch` / 外部同步在恢复期间：guard 必被释放（finally 断言）。
+23. `connectionFrom`：`recovering` 进入/退出矩阵（含旧 state 兼容）；`recovering` 不产生 `online→offline→online` 抖动。
+24. dispose / plugin shutdown 在恢复中：不残留 promise、不产生未捕获 rejection、epoch +1 生效。
+
+**connection / recovery-navigation / 全局预算（定稿补充，只设计不实现）**
+
+N1. `connectionFrom` / state normalize 支持 `recovering`：三种最终态都能从 `recovering` 导出；`CONNECTION_STATUSES` 白名单含 `'recovering'`；旧 Client 收到未知值的 fallback 路径不误判。
+N2. `recovering` 期间快照断言：`currentSession`、`messages`、`MessageStatus` 全部不变（`recovering` 只表达 connection）。
+N3. **recovery navigation `/`**：watcher 收到 `framenavigated → /`，但 `sessionSync.onLocation` 未执行、无 `apply({kind:'empty'})`、`clearChatMessages()` 未被调用（在 `recoveryNavigationActive` 窗口内）。
+N4. **recovery navigation `/a/chat/s/A`**：watcher 收到，但**不产生 external switch**、不排队 `pending`、transcript 不被 replace。
+N5. **recovery 成功**：`sessionSync.markKnown(actualLocation)` **恰好执行一次**，且只改 `lastKnown`（不 rebuild transcript）。
+N6. **recovery 结束（窗口清除）后用户真实点击会话 B**：watcher 恢复正常，`sessionSync` 正常执行——suppression 不泄漏。
+N7. **stale old-page event**：即使 recoveryNavigation 窗口已清除，旧 page 的 `framenavigated` / auth response / delta / final DOM read 仍被 epoch mismatch 过滤（N3–N6 只保护新 page，旧 page 靠 epoch）。
+N8. **60 s 全局预算耗尽**：不再进入下一次 retry；`connection=offline`；`currentSession` / `messages` 保持 recoverTarget；`recoveryPromise` / `pendingRecovery` 在 `finally` 中清空。
+N9. **单步 timeout > 剩余预算**：实际等待取 `min(stepTimeout, remainingRecoveryBudget)`（如剩余 3 s 时 `goto` 最多等 3 s），不使用完整 step timeout。
+
+**20A — 真实环境（companion-test profile + 故障注入）**
+
+25. `page.close()` → 自动 Level 1 → `online`，三界面一致。
+26. `chrome://crash` → 自动 close + newPage → 恢复（含「crash 页不可复用」断言）。
+27. **`about:blank` 真机**（页面人为导航到空页）→ 判 invalid → Level 1 恢复 → **不再出现 30 s 慢失败**。
+28. **kill -9** → ~30 ms 内 `disconnected` → Level 3 → 登录态保留、`/users/current` 200。
+29. 流式中 kill → assistant `error`、部分内容保留、`sending` 归零、**不重发**。
+30. 恢复后立刻发送 → 正常 streaming（证明 delta 桥与 listener 都装回）。
+31. **恢复后 Host transcript 未被清**（与崩溃前逐条一致）+ 页面回到原会话 URL。
+32. 恢复期间 SSE 不中断（Client 不刷新即看到 `recovering → online`）。
+33. 回归：纯文本 / 图片发送 / Stop / New chat / 切换 / 外部同步 / 18A 事务语义全部不变。
+
+**20B（仅登记，不实现）**：`readTranscript()` 回填、补齐服务端已完成的 reply、会话删除后的 transcript 最终决策、title refresh、恢复文案。
+
+### 14. 风险与未知
+
+1. **恢复后页面与会话可能不再匹配**：20A 已经把「不改 Host 事实」定死（§10），因此恢复后**可能出现**「Host 显示会话 A 的历史、页面停在 `/`」——这只发生在**页面自己把已删除的会话重定向到 `/`** 的场景（此时 `currentSession` 按规则置 null，messages 保留待 20B 决策）。其余情况（恢复失败 / offline）一律保留 last-known，不猜。
+2. **恢复窗口内仍然失败的请求**：恢复需要 1–4 s，这期间的 `/chat` 会得到 409/503（`recovering`）。**不排队、不自动重试**，由用户重发（避免隐式重发用户消息）。
+3. **crash 的自动发现依赖事件**：`crash` 是唯一可靠信号（`isClosed()` 为 false）；若事件丢失，只能等下一次操作失败 → `ensureReady()` 记录「上次操作是否以 DOM/locator 失败」，下一次操作即升级为 bounded readiness 探测并归入 **C**（不依赖 message matching）。
+4. **多实例 / 双 DSH**：第二个实例在 profile 被占用时 176 ms 快速失败且错误信息误导 → 重试耗尽后只能报 `offline`，用户可能误以为登录失效（文档需写明）。
+5. **恢复风暴**：若 crash 反复发生（页面自身 bug），会不断重建。缓解：**每个恢复周期最多 3 次**，且不引入周期探活（避免「探活 → 失败 → 重建」循环）。
+6. **未测**：Windows / Linux 的进程 kill 行为、headless 模式、多 page 窗口管理（本项目恒为单 page）。
+7. **明确不做**：Proxy、多账号、browser pool、多 DeepSeek page、Phase 18B、durable message persistence、自动重发。
+
+### 15. Phase 20A / 20B 边界（实现范围收口）
+
+**20A — Browser Lifecycle Recovery（可独立交付）**
+
+必须包含：
+
+- `page.on('close')` / `page.on('crash')` / `browser.on('disconnected')` 监听（+ `context.on('close')` 可选，与 disconnected 同义）
+- **alive-but-invalid page 探测**（§5 的 A–E 分类，含 bounded composer readiness）
+- **Level 1 / Level 3 重建**（Level 3 必须重装 `exposeFunction`）
+- **single-flight recovery**（一个 in-flight promise + `pendingRecovery` 再入）
+- **bounded retry**（§7 的次数上限 + 逐步 timeout + `RECOVERY_TOTAL_BUDGET = 60 s` 全局预算）
+- **`recovering` connection 状态**（`ConnectionStatus` 正式新值，§11 定稿）
+- **listener ownership + `pageEpoch` / `browserEpoch`**（§8 的 stale-event 抑制）
+- page 重建时 **attachment draft invalidation**（沿用 18A：`onPageReplaced()`）
+- **`recoverTarget` snapshot** 与「恢复期不改 `currentSession` / `messages`」策略（§10）
+- **recovery-generated navigation 三层防护（§10.1 定稿，全部实现）**：`recoveryNavigationActive` suppression + `sessionSync.markKnown(actualLocation)` + epoch（各自职责见 §10.1 表）
+- 恢复到 `recoverTarget` 的 URL（原会话尽量重新打开）
+- **dispose safety**（恢复中 dispose / plugin shutdown 不留悬空 promise）
+- **绝不自动 resend**
+
+20A 的验收句：**浏览器崩了 → 自动恢复 → 用户不刷新 DSH → Host 现有 transcript 不被误清 → 原 session 尽量重新打开 → 用户可继续发送。**
+
+**20B — Session Reconciliation & UX（后续设计）**
+
+- recovery 成功后的 `readTranscript()` 回填
+- 补齐「服务端已完成但 Host 未收到」的 assistant reply
+- 会话已删除 / 被重定向到 `/` 之后的 **transcript 最终决策**（是否清、怎么展示）
+- 更完整的 session title refresh
+- 「正在恢复 DeepSeek…」文案（若仍需要）
+
+**边界纪律**：20A 不实现 20B 的任何一项；20B 不重做 20A 的生命周期。
