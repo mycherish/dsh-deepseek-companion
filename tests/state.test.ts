@@ -320,6 +320,70 @@ test('08.2 connectionFrom: Host 与 Client 共用同一张映射表', () => {
   assert.deepEqual(connectionFrom('error', true), { status: 'offline', browserReady: true })
 })
 
+// --- Phase 20A: recovering（恢复中的连接态） --------------------------------------
+
+test('20A recovering: setRecovering(true) → status=recovering，且不改 currentSession/messages', () => {
+  const store = createCompanionStateStore()
+  store.setBrowserReady(true)
+  store.setDeepSeekStatus('logged_in')
+  store.setCurrentSession({ id: 'sess-a', title: '会话 A' })
+  store.appendChatMessage('user', '你好')
+  const before = store.getState()
+
+  store.setRecovering(true)
+  const after = store.getState()
+  assert.deepEqual(after.connection, { status: 'recovering', browserReady: true })
+  assert.deepEqual(after.currentSession, before.currentSession, 'recovering 不碰 currentSession')
+  assert.deepEqual(after.chat.messages, before.chat.messages, 'recovering 不碰 messages')
+})
+
+test('20A recovering: setRecovering(false) 回落到派生值（online / login_required / offline）', () => {
+  const store = createCompanionStateStore()
+  store.setBrowserReady(true)
+  store.setDeepSeekStatus('logged_in')
+  store.setRecovering(true)
+  assert.equal(store.getState().connection.status, 'recovering')
+
+  store.setRecovering(false)
+  assert.deepEqual(store.getState().connection, { status: 'online', browserReady: true })
+
+  // 恢复结束落在 logged_out → login_required（transcript 仍保留）。
+  store.setDeepSeekStatus('logged_out')
+  assert.deepEqual(store.getState().connection, { status: 'login_required', browserReady: true })
+})
+
+test('20A recovering: 恢复期间 setDeepSeekStatus / setBrowserReady 不打断 recovering', () => {
+  const store = createCompanionStateStore()
+  store.setBrowserReady(true)
+  store.setDeepSeekStatus('logged_in')
+  store.setRecovering(true)
+
+  // 恢复中登录态/就绪态可能被内部检测更新，但 status 仍是 recovering。
+  store.setDeepSeekStatus('error')
+  assert.equal(store.getState().connection.status, 'recovering')
+  store.setBrowserReady(false)
+  assert.deepEqual(store.getState().connection, { status: 'recovering', browserReady: false })
+
+  // 结束后回到派生值。
+  store.setRecovering(false)
+  assert.deepEqual(store.getState().connection, { status: 'offline', browserReady: false })
+})
+
+test('20A recovering: 相同值不重复通知（setRecovering 幂等）', () => {
+  const store = createCompanionStateStore()
+  store.setBrowserReady(true)
+  store.setDeepSeekStatus('logged_in')
+  const seen: string[] = []
+  store.subscribe((state) => seen.push(state.connection.status))
+  seen.length = 0
+
+  store.setRecovering(true)
+  store.setRecovering(true) // 幂等
+  store.setRecovering(false)
+  store.setRecovering(false) // 幂等
+  assert.deepEqual(seen, ['recovering', 'online'])
+})
+
 // --- Phase 08.2: currentSession（当前会话） ------------------------------------
 
 test('08.2 currentSession: 记录 id/title，相同值不重复通知', () => {

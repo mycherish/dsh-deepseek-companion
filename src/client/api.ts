@@ -252,7 +252,7 @@ export async function removeChatAttachment(origin: string, id: string): Promise<
 // the fallback — never a second source on top of the new ones.
 
 const DEEPSEEK_STATUSES: DeepSeekStatus[] = ['checking', 'logged_in', 'logged_out', 'error']
-const CONNECTION_STATUSES: ConnectionState['status'][] = ['online', 'offline', 'login_required']
+const CONNECTION_STATUSES: ConnectionState['status'][] = ['online', 'recovering', 'offline', 'login_required']
 const MESSAGE_STATUSES: MessageStatus[] = ['streaming', 'finished', 'interrupted', 'error']
 
 function asRecord(value: unknown): Record<string, unknown> {

@@ -104,6 +104,15 @@ export function apply(ctx: Context): void {
   // only plugin dispose does.
   let browser: DeepSeekBrowser | null = null
 
+  // Single readiness gate (Phase 20A): every page-touching route calls this
+  // before doing browser work. `null` means the browser is (still) unavailable —
+  // the route answers 503 and the recovery keeps running on its own.
+  const readyBrowser = async (): Promise<DeepSeekBrowser | null> => {
+    if (browser === null) return null
+    const status = await browser.ensureReady()
+    return status === 'error' ? null : browser
+  }
+
   // One page is shared by every route, so the Host arbitrates its use (Phase
   // 07L → 08): while a page operation (new chat / history switch) is in flight,
   // sends are refused and a second page operation is refused. Bookkeeping only
@@ -149,6 +158,21 @@ export function apply(ctx: Context): void {
       () => {
         if (!disposed) void resources.resetDraft()
       },
+      // Browser recovery (Phase 20A): drive `connection = recovering`, snapshot
+      // the last-known session to reopen, and align `sessionSync.lastKnown` with
+      // the page's real location once the rebuild settles.
+      {
+        onRecovering: (recovering) => {
+          if (!disposed) store.setRecovering(recovering)
+        },
+        getRecoverTarget: () => {
+          const session = store.getState().currentSession
+          return session.id !== null ? ({ kind: 'session', id: session.id } as const) : ({ kind: 'empty' } as const)
+        },
+        onMarkKnown: (location) => {
+          if (!disposed) sessionSync.markKnown(location)
+        },
+      },
     )
       .then((created) => {
         if (disposed) {
@@ -191,9 +215,10 @@ export function apply(ctx: Context): void {
         methods: ['POST'],
         requestBody: 'buffered',
         fetch: async () => {
-          if (browser === null) return Response.json({ ok: false }, { status: 503 })
+          const ready = await readyBrowser()
+          if (ready === null) return Response.json({ ok: false }, { status: 503 })
           try {
-            await browser.showLogin()
+            await ready.showLogin()
             return Response.json({ ok: true })
           } catch (error) {
             console.warn('[dsh-deepseek-companion] failed to show DeepSeek login', error)
@@ -227,9 +252,11 @@ export function apply(ctx: Context): void {
           if (message === '' && draft.length === 0) {
             return Response.json({ error: 'message is empty' }, { status: 400 })
           }
-          if (browser === null) return Response.json({ error: 'browser not ready' }, { status: 503 })
           // Capture a non-null reference so the send closure below type-checks.
-          const currentBrowser = browser
+          // `ensureReady` returns immediately on the healthy hot path, and awaits
+          // the single-flight recovery when the page needs it (Phase 20A).
+          const currentBrowser = await readyBrowser()
+          if (currentBrowser === null) return Response.json({ error: 'browser not ready' }, { status: 503 })
 
           // The image half of the round (Phase 18A). The identity comparison runs
           // for EVERY send — text-only included: a page draft this Host does not
@@ -297,7 +324,9 @@ export function apply(ctx: Context): void {
         requestBody: 'buffered',
         fetch: async (request) => {
           const body: unknown = await request.json().catch(() => null)
-          const result = await handleAttachmentRequest({ store, resources, browser, guard: pageGuard }, body)
+          const ready = await readyBrowser()
+          if (ready === null) return Response.json({ error: 'browser not ready' }, { status: 503 })
+          const result = await handleAttachmentRequest({ store, resources, browser: ready, guard: pageGuard }, body)
           if (result.status >= 400) {
             console.warn(
               '[dsh-deepseek-companion] attachment request not applied:',
@@ -324,7 +353,9 @@ export function apply(ctx: Context): void {
           // Delegate to the tested flow: validates the body, refuses while busy,
           // clicks the real toggle and always writes back the page's real state.
           const body: unknown = await request.json().catch(() => null)
-          const result = await handleDeepThinkRequest(store, browser, body)
+          const ready = await readyBrowser()
+          if (ready === null) return Response.json({ error: 'browser not ready' }, { status: 503 })
+          const result = await handleDeepThinkRequest(store, ready, body)
           if (result.status === 500) {
             console.warn('[dsh-deepseek-companion] failed to set Deep Think', result.body.error)
           }
@@ -346,7 +377,9 @@ export function apply(ctx: Context): void {
         requestBody: 'buffered',
         fetch: async (request) => {
           const body: unknown = await request.json().catch(() => null)
-          const result = await handleSearchRequest(store, browser, body)
+          const ready = await readyBrowser()
+          if (ready === null) return Response.json({ error: 'browser not ready' }, { status: 503 })
+          const result = await handleSearchRequest(store, ready, body)
           if (result.status === 500) {
             console.warn('[dsh-deepseek-companion] failed to set Search', result.body.error)
           }
@@ -391,7 +424,9 @@ export function apply(ctx: Context): void {
         // field; a buffered body is simply ignored.
         requestBody: 'buffered',
         fetch: async () => {
-          const result = await handleNewChatRequest(store, browser, pageGuard)
+          const ready = await readyBrowser()
+          if (ready === null) return Response.json({ error: 'browser not ready' }, { status: 503 })
+          const result = await handleNewChatRequest(store, ready, pageGuard)
           if (result.status === 200) {
             // The Host made this navigation itself: record where it landed, so
             // the watcher never syncs the same change a second time (08.1).
@@ -420,9 +455,11 @@ export function apply(ctx: Context): void {
         methods: ['GET'],
         requestBody: 'buffered',
         fetch: async () => {
+          const ready = await readyBrowser()
+          if (ready === null) return Response.json({ error: 'browser not ready' }, { status: 503 })
           // The active sidebar entry also refreshes `currentSession` (title
           // included) — Phase 08.2.
-          const result = await handleListSessionsRequest(browser, store)
+          const result = await handleListSessionsRequest(ready, store)
           if (result.status !== 200) {
             console.warn('[dsh-deepseek-companion] failed to list chat sessions:', result.body.error)
           }
@@ -440,7 +477,9 @@ export function apply(ctx: Context): void {
         requestBody: 'buffered',
         fetch: async (request) => {
           const body: unknown = await request.json().catch(() => null)
-          const result = await handleSwitchChatRequest(store, browser, pageGuard, body)
+          const ready = await readyBrowser()
+          if (ready === null) return Response.json({ error: 'browser not ready' }, { status: 503 })
+          const result = await handleSwitchChatRequest(store, ready, pageGuard, body)
           if (result.status === 200) {
             // The Host switched itself: record the destination so the watcher
             // never re-syncs it (Phase 08.1).

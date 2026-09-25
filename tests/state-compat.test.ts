@@ -289,3 +289,18 @@ test('18A 兼容层: 三界面归一化出完全相同的附件元数据', () =>
   assert.deepEqual(float.composer.attachments, popout.composer.attachments)
   assert.deepEqual(dock.chat.messages[0]!.attachments, popout.chat.messages[0]!.attachments)
 })
+
+test('20A 兼容层: 新 Host 的 connection.status=recovering 原样保留（不降级）', () => {
+  const state = normalizeCompanionState({
+    status: 'ready',
+    revision: 9,
+    instanceId: 'host-1',
+    connection: { status: 'recovering', browserReady: true },
+    deepseek: { status: 'error', deepThink: { available: false, enabled: false }, search: { available: false, enabled: false } },
+    composer: { sending: false, stopping: false, deepThink: { available: false, enabled: false }, search: { available: false, enabled: false } },
+    chat: { sending: false, messages: [] },
+  })
+
+  // recovering 属于白名单 → 不退回 deepseek 派生（否则会变成 offline）。
+  assert.deepEqual(state.connection, { status: 'recovering', browserReady: true })
+})

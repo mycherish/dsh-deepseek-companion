@@ -113,12 +113,19 @@ function sameChatAttachments(a: ChatAttachment[], b: ChatAttachment[]): boolean 
   })
 }
 
-/** Recompute the unified connection projection from its two real inputs. */
+/**
+ * Recompute the unified connection projection from its inputs. A `recovering`
+ * override (Phase 20A) wins over the derived status for as long as a
+ * single-flight recovery is executing; the moment it clears, the projection
+ * falls back to the real `deepseek.status` + `browserReady`.
+ */
 function withConnection(
   state: CompanionState,
   status: DeepSeekStatus,
   browserReady: boolean = state.connection.browserReady,
+  recovering: boolean = false,
 ): CompanionState {
+  if (recovering) return { ...state, connection: { status: 'recovering', browserReady } }
   return { ...state, connection: connectionFrom(status, browserReady) }
 }
 
@@ -145,6 +152,13 @@ export interface CompanionStateStore {
    * makes the connection potentially usable — the login probe decides the rest.
    */
   setBrowserReady(ready: boolean): void
+  /**
+   * Override the derived connection with `recovering` while a single-flight
+   * recovery (Phase 20A) is executing. Cleared the moment recovery settles, at
+   * which point the projection returns to the real `deepseek.status` /
+   * `browserReady`. Never touches `currentSession` / `messages`.
+   */
+  setRecovering(recovering: boolean): void
   /**
    * Record where the DeepSeek page is (Phase 08.2). Sources are standard DOM /
    * URL only (page pathname, sidebar href). A `title: null` update for the SAME
@@ -224,6 +238,8 @@ export function createCompanionStateStore(): CompanionStateStore {
   }
   const listeners = new Set<StateListener>()
   let disposed = false
+  /** Phase 20A: non-persisted recovery override, owned by the store only. */
+  let recovering = false
 
   const notify = (next: CompanionState): void => {
     for (const listener of [...listeners]) {
@@ -276,14 +292,22 @@ export function createCompanionStateStore(): CompanionStateStore {
       if (disposed) return
       if (state.deepseek.status === status) return
       // The legacy mirror and the unified connection view move together.
-      state = withConnection({ ...state, deepseek: { ...state.deepseek, status } }, status)
+      state = withConnection({ ...state, deepseek: { ...state.deepseek, status } }, status, state.connection.browserReady, recovering)
       notify(state)
     },
 
     setBrowserReady(ready: boolean) {
       if (disposed) return
       if (state.connection.browserReady === ready) return
-      state = withConnection(state, state.deepseek.status, ready)
+      state = withConnection(state, state.deepseek.status, ready, recovering)
+      notify(state)
+    },
+
+    setRecovering(next: boolean) {
+      if (disposed) return
+      if (recovering === next) return
+      recovering = next
+      state = withConnection(state, state.deepseek.status, state.connection.browserReady, recovering)
       notify(state)
     },
 

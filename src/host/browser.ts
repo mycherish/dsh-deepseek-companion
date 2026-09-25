@@ -79,6 +79,15 @@ import {
   type NewChatOptions,
 } from './new-chat.ts'
 import { cleanupReasoningReader, installReasoningReader, readAndCleanupReasoning } from './reasoning.ts'
+import {
+  backoffForAttempt,
+  classifyPageHealth,
+  createRecoveryBudget,
+  maxAttemptsFor,
+  type PageHealth,
+  type RecoveryBudget,
+  type RecoveryLevel,
+} from './recovery.ts'
 import { cleanupReplyReader, installReplyReader, readAndCleanupReply } from './reply.ts'
 import { decideStopAction, emptyReplyError } from './stop.ts'
 import { createThrottle } from './throttle.ts'
@@ -298,6 +307,13 @@ export type AttachImageResult =
 export interface DeepSeekBrowser {
   /** Run one initial check now (then re-checks automatically on navigation). */
   check(): Promise<DeepSeekStatus>
+  /**
+   * Single entry point every page operation calls first (Phase 20A): returns
+   * immediately (zero cost) when the page is healthy, otherwise runs the
+   * single-flight recovery and resolves with the page's real status once it
+   * settles. Never starts more than one recovery, and never auto-resends.
+   */
+  ensureReady(): Promise<DeepSeekStatus>
   /** Focus the live DeepSeek page, reopening the sign-in page if it was closed. */
   showLogin(): Promise<void>
   /** Read DeepSeek's REAL Deep Think toggle state (Phase 07G). */
@@ -456,6 +472,25 @@ async function detectStatus(page: Page): Promise<DeepSeekStatus> {
   }
 }
 
+/**
+ * Host callbacks the recovery engine (Phase 20A) needs. All optional so existing
+ * callers keep working; the Host wires the three it owns.
+ */
+export interface RecoveryCallbacks {
+  /** Recovery entered / left the in-flight state → drive `connection = recovering`. */
+  onRecovering?: (recovering: boolean) => void
+  /** Snapshot of the last-known current session to reopen after a rebuild. */
+  getRecoverTarget?: () => SessionLocation
+  /** Align `sessionSync.lastKnown` with the page's real location after recovery. */
+  onMarkKnown?: (location: SessionLocation) => void
+  /**
+   * Diagnostics only (Phase 20A fault injection / debugging): getters for the
+   * live page and context, so a test harness can trigger `page.close()` / crash /
+   * kill. Routes never touch this — it is not part of the feature surface.
+   */
+  onDiagnostics?: (diagnostics: { getPage: () => Page; getContext: () => BrowserContext }) => void
+}
+
 export async function createDeepSeekBrowser(
   profileDir: string,
   onStatus: (status: DeepSeekStatus) => void,
@@ -474,15 +509,41 @@ export async function createDeepSeekBrowser(
    * the caller drops it instead of trying to migrate it.
    */
   onPageReplaced?: () => void,
+  recovery: RecoveryCallbacks = {},
 ): Promise<DeepSeekBrowser> {
   // Playwright resolves its own matched Chromium via `chromium.executablePath()`;
   // a missing browser surfaces as a clear launch error (mapped to `error`).
-  const context: BrowserContext = await chromium.launchPersistentContext(profileDir, {
+  let context: BrowserContext = await chromium.launchPersistentContext(profileDir, {
     headless: false,
     viewport: { width: 1280, height: 800 },
   })
 
   let page: Page = context.pages()[0] ?? (await context.newPage())
+
+  // Diagnostics only (fault injection): getters, not raw objects, so a rebuild's
+  // fresh page/context stay reachable through the same handles.
+  recovery.onDiagnostics?.({ getPage: () => page, getContext: () => context })
+
+  // --- Phase 20A recovery state -----------------------------------------------
+  // `disposed` is declared up here so every lifecycle listener and the recovery
+  // engine can read it; `pageEpoch` / `browserEpoch` are the stale-event fences.
+  let disposed = false
+  /** +1 whenever the page is replaced (Level 1 or Level 3) — fences old-page events. */
+  let pageEpoch = 0
+  /** +1 on every Level 3 rebuild — fences old-context/browser events. */
+  let browserEpoch = 0
+  /** Set by `page.on('crash')`; a crashed page reports `isClosed() === false`. */
+  let crashed = false
+  /** This page was confirmed healthy and nothing invalidated it since (§5). */
+  let knownHealthy = false
+  /** Recovery's own navigation is in flight — the watcher must not sync it (§10.1). */
+  let recoveryNavigationActive = false
+  /** Single-flight recovery promise; non-null while a recovery is executing (§6). */
+  let recoveryPromise: Promise<DeepSeekStatus> | null = null
+  /** A failure arrived WHILE recovering — handled after the current round (§6). */
+  let pendingRecovery = false
+  /** Every page already mounted, so a page object is never double-wired (§8). */
+  const mountedPages = new WeakSet<Page>()
 
   // Re-entrancy guard: `detectStatus()` itself fetches `/users/current`, which
   // fires the `response` listener below. The flag prevents a
@@ -494,6 +555,16 @@ export async function createDeepSeekBrowser(
     detecting = true
     try {
       const status = await detectStatus(page)
+      // A successful login probe on DeepSeek's home page is the cheapest healthy
+      // confirmation: the page loaded a usable conversation surface.
+      if (status === 'logged_in') {
+        try {
+          const url = page.url()
+          if (url.startsWith(DEEPSEEK_URL) && !url.includes('/sign_in')) knownHealthy = true
+        } catch {
+          // a page that cannot report its URL is not healthy
+        }
+      }
       onStatus(status)
       return status
     } finally {
@@ -575,42 +646,64 @@ export async function createDeepSeekBrowser(
     return mode
   }
 
-  // Wire the detection triggers to a page. Re-run after a full navigation
-  // (login OAuth redirects across pages fire `load`) and after the SPA
-  // re-fetches `/users/current` (in-app login/logout use history.pushState and
-  // do NOT fire `load`). We only treat that response as a "state may have
-  // changed" trigger and never read its body here — the token stays inside the
-  // page context, where `detectStatus()` reads it.
-  const attachListeners = (target: Page): void => {
+  // Wire every page-level trigger once per page object (Phase 08 + 20A). A page
+  // is mounted exactly once (`WeakSet`), so repeated recovery can never stack
+  // duplicate listeners; every callback first checks `disposed` and the epoch it
+  // was mounted under, so a stale page can never forward state after a rebuild.
+  const mountPage = (target: Page): void => {
+    if (mountedPages.has(target)) return
+    mountedPages.add(target)
+    const myEpoch = pageEpoch
+
     target.on('load', () => {
+      if (disposed || myEpoch !== pageEpoch) return
       void runDetect()
       // A full load can rebuild the composer: mirror both switches' real state.
       void syncComposerMode()
     })
     target.on('response', (response) => {
+      if (disposed || myEpoch !== pageEpoch) return
       if (!response.url().includes(CURRENT_USER_PATH)) return
       void runDetect()
     })
+    target.on('framenavigated', (frame) => {
+      if (disposed || myEpoch !== pageEpoch) return
+      if (frame !== target.mainFrame()) return
+      // Recovery's own goto must never look like a user switch (§10.1).
+      if (recoveryNavigationActive) return
+      handleLocationNavigation(sessionLocationFromPath(frame.url()))
+    })
+    target.on('close', () => {
+      if (disposed || myEpoch !== pageEpoch) return
+      // The live page closed underneath us (external close) → recover.
+      void triggerRecovery('page-closed')
+    })
+    target.on('crash', () => {
+      if (disposed || myEpoch !== pageEpoch) return
+      crashed = true
+      knownHealthy = false
+      void triggerRecovery('page-crashed')
+    })
   }
 
-  attachListeners(page)
-
   // Bridge from the page's MutationObserver back to the Host. Registered on the
-  // CONTEXT once, so every page (current AND future — including a page
-  // recreated after close) automatically has `window.__onReplyDelta`; the
-  // context re-injects it on every document load, so one install survives
-  // navigation and there is never a duplicate registration across sends.
+  // CONTEXT — once at launch and again after every Level 3 rebuild (a NEW
+  // context does NOT inherit the old one's functions, verified by fault
+  // injection). `current*Receiver` is the per-send target; recovery nulls them
+  // so a stale send can never write into a rebuilt page's assistant message.
   let currentDeltaReceiver: ((reply: AssistantReply) => void) | null = null
   let currentReasoningReceiver: ((reply: AssistantReply) => void) | null = null
 
-  await context.exposeFunction('__onReplyDelta', (reply: unknown) => {
-    currentDeltaReceiver?.(normalizeReply(reply))
-  })
-  // Separate bridge for reasoning: one registration on the context, so every
-  // page (current and future) has it and sends never re-register.
-  await context.exposeFunction('__onReasoningDelta', (reply: unknown) => {
-    currentReasoningReceiver?.(normalizeReply(reply))
-  })
+  const installBridges = async (): Promise<void> => {
+    await context.exposeFunction('__onReplyDelta', (reply: unknown) => {
+      currentDeltaReceiver?.(normalizeReply(reply))
+    })
+    await context.exposeFunction('__onReasoningDelta', (reply: unknown) => {
+      currentReasoningReceiver?.(normalizeReply(reply))
+    })
+  }
+
+  await installBridges()
 
   const check = async (): Promise<DeepSeekStatus> => {
     try {
@@ -635,12 +728,14 @@ export async function createDeepSeekBrowser(
   // them to a 500 response.
   const showLogin = async (): Promise<void> => {
     if (page.isClosed()) {
+      pageEpoch += 1
       page = await context.newPage()
-      attachListeners(page)
-      // A recreated page needs its own session watcher (Phase 08.1).
-      attachSessionWatcher(page)
+      mountPage(page)
       // The previous page is gone — its draft cards went with it (Phase 18A).
       onPageReplaced?.()
+      // A fresh page has not been confirmed healthy yet (§5).
+      knownHealthy = false
+      crashed = false
     }
     await page.goto(`${DEEPSEEK_URL}/sign_in`, { waitUntil: 'domcontentloaded', timeout: 30000 })
     await page.bringToFront()
@@ -692,8 +787,6 @@ export async function createDeepSeekBrowser(
   let sendSession: SendSessionState | null = null
   /** Last location handed to the Host (de-duplicates repeated navigations). */
   let lastForwardedLocation: SessionLocation | undefined
-  /** Set by `dispose()`: background work must stop touching the page. */
-  let disposed = false
 
   /**
    * One main-frame navigation inside DeepSeek (Phase 08.1).
@@ -732,15 +825,246 @@ export async function createDeepSeekBrowser(
     onSessionLocation?.(location, { createdBySend })
   }
 
-  /** Watch one page's main frame for session navigation. */
-  const attachSessionWatcher = (target: Page): void => {
-    target.on('framenavigated', (frame) => {
-      if (frame !== target.mainFrame()) return
-      handleLocationNavigation(sessionLocationFromPath(frame.url()))
+  // --- Phase 20A recovery engine (§4–§12) --------------------------------------
+
+  type RecoveryReason = 'page-closed' | 'page-crashed' | 'context-closed' | 'browser-disconnected'
+
+  /** Whether a thrown Playwright error means the context/browser died (→ Level 3). */
+  const isTargetClosedError = (error: unknown): boolean => {
+    const message = error instanceof Error ? error.message : String(error)
+    return /target closed|targetclosed|has been closed|page crashed|target crashed/i.test(message)
+  }
+
+  /** Bound a promise by `ms`; a zero/negative budget rejects immediately. */
+  const bound = <T>(promise: Promise<T>, ms: number): Promise<T> =>
+    new Promise<T>((resolve, reject) => {
+      if (ms <= 0) {
+        reject(new Error('recovery step budget exhausted'))
+        return
+      }
+      const timer = setTimeout(() => reject(new Error('recovery step timed out')), ms)
+      promise.then(
+        (value) => {
+          clearTimeout(timer)
+          resolve(value)
+        },
+        (error) => {
+          clearTimeout(timer)
+          reject(error)
+        },
+      )
+    })
+
+  /** Synchronous health snapshot — zero DOM work (design §5 hot path). */
+  const syncHealth = (): PageHealth => {
+    let connected = true
+    try {
+      connected = context.browser()?.isConnected() ?? false
+    } catch {
+      connected = false
+    }
+    let originOk = false
+    let signIn = false
+    try {
+      const url = page.url()
+      originOk = url.startsWith(DEEPSEEK_URL)
+      signIn = url.includes('/sign_in')
+    } catch {
+      // a page that cannot report its URL is handled by `pageClosed`/`crashed`
+    }
+    return classifyPageHealth({
+      connected,
+      pageClosed: page.isClosed(),
+      crashed,
+      originOk,
+      signIn,
+      knownHealthy,
     })
   }
 
-  attachSessionWatcher(page)
+  /** Navigate the fresh page to the recover target, then report its REAL location. */
+  const gotoRecoverTarget = async (target: SessionLocation, budget: RecoveryBudget): Promise<SessionLocation> => {
+    const url = target.kind === 'session' ? `${DEEPSEEK_URL}/a/chat/s/${target.id}` : DEEPSEEK_URL
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: budget.effectiveTimeout('goto') })
+    await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {})
+    return sessionLocationFromPath(page.url())
+  }
+
+  const detectWithBudget = async (budget: RecoveryBudget): Promise<DeepSeekStatus> =>
+    bound(detectStatus(page), budget.effectiveTimeout('loginDetection')).catch(() => 'error')
+
+  /** Bounded composer readiness: the page must expose a chat input to be usable. */
+  const composerReady = async (budget: RecoveryBudget): Promise<boolean> =>
+    page
+      .waitForSelector(INPUT_SELECTOR, { timeout: budget.effectiveTimeout('composerReadiness') })
+      .then(() => true)
+      .catch(() => false)
+
+  const settleAfterRebuild = async (status: DeepSeekStatus, location: SessionLocation, budget: RecoveryBudget): Promise<DeepSeekStatus> => {
+    recovery.onMarkKnown?.(location)
+    crashed = false
+    knownHealthy = status === 'logged_in' && location.kind !== 'other' && (await composerReady(budget))
+    return status
+  }
+
+  /** Level 1: replace the dead/invalid page, keep the context/browser (§9). */
+  const rebuildPage = async (target: SessionLocation, budget: RecoveryBudget): Promise<DeepSeekStatus> => {
+    pageEpoch += 1
+    currentDeltaReceiver = null
+    currentReasoningReceiver = null
+    onPageReplaced?.()
+    await bound(page.close().catch(() => {}), budget.effectiveTimeout('closeQuietly')).catch(() => {})
+    page = await bound(context.newPage(), budget.effectiveTimeout('newPage'))
+    mountPage(page)
+    const location = await gotoRecoverTarget(target, budget)
+    const status = await detectWithBudget(budget)
+    return settleAfterRebuild(status, location, budget)
+  }
+
+  /** Level 3: rebuild the persistent context/browser on the SAME profile (§10). */
+  const rebuildBrowser = async (target: SessionLocation, budget: RecoveryBudget): Promise<DeepSeekStatus> => {
+    browserEpoch += 1
+    pageEpoch += 1
+    currentDeltaReceiver = null
+    currentReasoningReceiver = null
+    onPageReplaced?.()
+    await bound(context.close().catch(() => {}), budget.effectiveTimeout('closeQuietly')).catch(() => {})
+    context = await bound(
+      chromium.launchPersistentContext(profileDir, { headless: false, viewport: { width: 1280, height: 800 } }),
+      budget.effectiveTimeout('newPage'),
+    )
+    mountBrowserLifecycle()
+    await installBridges()
+    page = context.pages()[0] ?? (await context.newPage())
+    mountPage(page)
+    const location = await gotoRecoverTarget(target, budget)
+    const status = await detectWithBudget(budget)
+    return settleAfterRebuild(status, location, budget)
+  }
+
+  /**
+   * The recovery loop (design §7): bounded retries, backoff, and a 60s wall-clock
+   * budget shared by every attempt. Level 1 upgrades to Level 3 when the context
+   * itself died; the whole loop stops the moment the budget is exhausted.
+   */
+  const runRecovery = async (reason: RecoveryReason): Promise<DeepSeekStatus> => {
+    recovery.onRecovering?.(true)
+    recoveryNavigationActive = true
+    const budget = createRecoveryBudget()
+    const target = recovery.getRecoverTarget?.() ?? ({ kind: 'empty' } as const)
+    let finalStatus: DeepSeekStatus = 'error'
+    try {
+      let level: RecoveryLevel = reason === 'browser-disconnected' || reason === 'context-closed' ? 3 : 1
+      let attempt = 0
+      for (;;) {
+        if (disposed || budget.exhausted()) break
+        if (attempt > 0) {
+          await new Promise((resolve) => setTimeout(resolve, Math.min(backoffForAttempt(attempt + 1), budget.remaining())))
+          if (budget.exhausted()) break
+        }
+        attempt += 1
+        try {
+          const status = level === 1 ? await rebuildPage(target, budget) : await rebuildBrowser(target, budget)
+          if (status === 'logged_in' || status === 'logged_out') {
+            finalStatus = status
+            break
+          }
+          // 'error' → retryable within this level
+        } catch (error) {
+          if (level === 1 && isTargetClosedError(error)) {
+            level = 3
+            attempt = 0
+            continue
+          }
+        }
+        if (attempt >= maxAttemptsFor(level)) {
+          if (level === 1) {
+            level = 3
+            attempt = 0
+            continue
+          }
+          break // Level 3 exhausted → offline
+        }
+      }
+    } finally {
+      recoveryNavigationActive = false
+      recovery.onRecovering?.(false)
+    }
+    // The recovery has settled: report the page's real state (never optimistic).
+    if (finalStatus === 'logged_in') onStatus('logged_in')
+    else if (finalStatus === 'logged_out') onStatus('logged_out')
+    else onStatus('error')
+    return finalStatus
+  }
+
+  /** Single-flight recovery entry (§6): concurrent callers share one promise. */
+  const recover = (reason: RecoveryReason): Promise<DeepSeekStatus> => {
+    if (disposed) return Promise.resolve('error')
+    if (recoveryPromise !== null) {
+      pendingRecovery = true
+      return recoveryPromise
+    }
+    const promise = runRecovery(reason)
+    recoveryPromise = promise
+    void promise.finally(() => {
+      recoveryPromise = null
+      const again = pendingRecovery
+      pendingRecovery = false
+      // A failure arrived WHILE recovering (§6). Only run another round when the
+      // page is still not usable — a kill fires BOTH `page close` and `disconnected`,
+      // and the first round (Level 3) may already have healed everything.
+      if (again && !disposed) {
+        const health = syncHealth()
+        if (health !== 'healthy_chat' && health !== 'login_required') {
+          void recover(reason)
+        }
+      }
+    })
+    return promise
+  }
+
+  const triggerRecovery = (reason: RecoveryReason): void => {
+    void recover(reason)
+  }
+
+  /** Wire the context/browser lifecycle once (re-wired after each Level 3). */
+  const mountBrowserLifecycle = (): void => {
+    const myEpoch = browserEpoch
+    const browserObj = context.browser()
+    if (browserObj !== null) {
+      browserObj.on('disconnected', () => {
+        if (disposed || myEpoch !== browserEpoch) return
+        knownHealthy = false
+        void triggerRecovery('browser-disconnected')
+      })
+    }
+    context.on('close', () => {
+      if (disposed || myEpoch !== browserEpoch) return
+      knownHealthy = false
+      void triggerRecovery('context-closed')
+    })
+  }
+
+  /**
+   * Every route's single readiness gate (design §13): healthy → resolve now;
+   * `login_required` → report logged out without recovering; anything else →
+   * run the single-flight recovery and resolve with the settled status.
+   */
+  const ensureReady = async (): Promise<DeepSeekStatus> => {
+    if (disposed) return 'error'
+    // A recovery is already running — await it instead of racing another (§6).
+    // This also avoids misreading an intermediate page (the fresh page is briefly
+    // `about:blank` before its goto) as a new failure.
+    if (recoveryPromise !== null) return recoveryPromise
+    const health = syncHealth()
+    if (health === 'healthy_chat') return 'logged_in'
+    if (health === 'login_required') return 'logged_out'
+    return recover(health === 'browser_dead' ? 'browser-disconnected' : health === 'page_dead' ? 'page-closed' : 'page-crashed')
+  }
+
+  // Mount the initial browser + page lifecycle listeners.
+  mountBrowserLifecycle()
+  mountPage(page)
 
   /**
    * Best-effort citation hydration (Phase 07I).
@@ -842,6 +1166,9 @@ export async function createDeepSeekBrowser(
     stopRequested = false
     sessionInterrupted = false
     lastSendInterrupted = false
+    // Capture the page this round is bound to (Phase 20A §3): if a rebuild
+    // replaces it mid-send, the final DOM read must never touch the new page.
+    const sendEpoch = pageEpoch
     // Which conversation does this round write into? A send started from `/`
     // gets its session created by DeepSeek a moment later — `classifyDuringSend`
     // accepts exactly that first id and treats any LATER change as external.
@@ -987,7 +1314,10 @@ export async function createDeepSeekBrowser(
       let replyHandle: JSHandle | null = null
       let finalReasoning: AssistantReply
       let finalReply: AssistantReply
-      if (sessionInterrupted) {
+      if (sessionInterrupted || sendEpoch !== pageEpoch) {
+        // Either the page left this conversation, or a recovery replaced the
+        // page mid-send (§3). In both cases the NEW page's DOM must never be
+        // read on this round's behalf — finish with the last streamed frame.
         finalReasoning = lastReasoning ?? { content: '', format: 'text' }
         finalReply = lastReply ?? { content: '', format: 'text' }
         // Tear the readers down WITHOUT reading.
@@ -1633,6 +1963,7 @@ export async function createDeepSeekBrowser(
 
   return {
     check,
+    ensureReady,
     showLogin,
     getDeepThinkState: () => readToggle(DEEP_THINK_OPTIONS),
     setDeepThinkEnabled,
@@ -1650,8 +1981,12 @@ export async function createDeepSeekBrowser(
     switchChat,
     readTranscript,
     async dispose() {
-      // Stop any in-flight background work before the page goes away.
+      // Stop any in-flight background work before the page goes away. The epoch
+      // fences make every pending listener callback a no-op, and `disposed` stops
+      // the recovery engine from launching a fresh Chromium (design §12).
       disposed = true
+      pageEpoch += 1
+      browserEpoch += 1
       currentDeltaReceiver = null
       currentReasoningReceiver = null
       await context.close().catch(() => {})

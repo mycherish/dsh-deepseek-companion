@@ -10,17 +10,20 @@
 export type DeepSeekStatus = 'checking' | 'logged_in' | 'logged_out' | 'error'
 
 /**
- * Unified connection status (Phase 08.2). One field for the three questions the
- * views used to answer from three different sources:
+ * Unified connection status (Phase 08.2, extended by Phase 20A).
  *
- *   - `online`          — the browser is up AND DeepSeek reports a logged-in user
- *   - `login_required`  — the browser is up and DeepSeek answered "logged out"
- *   - `offline`         — not usable: browser not created (yet), probing, or failed
+ *   - `online`          — Browser/Page verified usable (logged-in DeepSeek page)
+ *   - `recovering`      — single-flight recovery is executing (Phase 20A): Client
+ *                         operations are disabled; does NOT mean login lost; never
+ *                         changes `currentSession` / `messages` / `MessageStatus`.
+ *   - `login_required`  — Browser/Page healthy but DeepSeek explicitly wants login
+ *   - `offline`         — not usable: browser not created (yet), probing, or the
+ *                         recovery failed / exhausted its budget / is unreachable
  *
  * `offline` deliberately covers `checking`/`error`/no-browser: a client that
  * wants the finer distinction still reads the legacy `deepseek.status`.
  */
-export type ConnectionStatus = 'online' | 'offline' | 'login_required'
+export type ConnectionStatus = 'online' | 'recovering' | 'offline' | 'login_required'
 
 /** The unified connection projection (Phase 08.2). */
 export interface ConnectionState {
