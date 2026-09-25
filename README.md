@@ -21,7 +21,9 @@ DeepSeek Web Companion plugin for [DeepSeek Harness](https://github.com/deepseek
 
 已完成 **Phase 18A 图片发送**：在 Companion 里选择 PNG / JPEG / WebP / GIF → 经真实 DeepSeek 页面上传 → composer 显示 attachment card（**不显示像素缩略图**）→ 随文本或单独发送；发送时用 completion 请求的 `ref_file_ids` 精确校验，绝不谎报图片已发送。8 个核心场景已在真实环境验收；外部页面手动挂图/删图与失败卡片的删除流程由单测覆盖（详见 [docs/architecture.md](docs/architecture.md) 的实现小节）。**历史会话里的图片恢复（18B）尚未实现**（历史消息里的图片仍不显示）。其余 Phase 见 [docs/roadmap.md](docs/roadmap.md)。
 
-> 尚未实现：文件（文档）附件、历史会话里的图片恢复（18B）、浏览器恢复、代理、Task Brief 等 —— 详见路线图，不要再把未实现能力当作业已可用。
+已完成 **Phase 20A Browser Recovery**：DeepSeek 页面 / Chromium 异常关闭、崩溃、失联或失效后，Host 自动恢复（重建 page 或重启 persistent browser，复用同一 profile 保留登录态），不需要刷新 / 重启 DSH；恢复期间 `connection` 显示 `recovering` 并禁用发送，恢复完成后继续聊天，**绝不自动重发用户消息**。真实故障注入（page close / crash / about:blank / kill Chromium / 流式中 kill / 并发）已全部通过（详见 [docs/architecture.md](docs/architecture.md) 的 Phase 20 §0）。会话回填与恢复文案（20B）尚未实现。
+
+> 尚未实现：文件（文档）附件、历史会话里的图片恢复（18B）、浏览器恢复后的会话回填（20B）、代理、Task Brief 等 —— 详见路线图，不要再把未实现能力当作业已可用。
 
 ## 开发
 

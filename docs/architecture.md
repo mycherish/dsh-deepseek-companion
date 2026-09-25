@@ -914,11 +914,47 @@ expectedFileIds = consumedAttachmentIds → AttachmentRecord[] → deepSeekFileI
 
 **未驱动项的处理原则**：这些路径的实现仍按定稿设计保留严格语义（安全失败优先），只是**没有用真机走完**；任何后续真机验证若发现与设计不符，应以真机结论为准更新本节。
 
-## Browser Recovery（Phase 20 · **设计提案 — 未实现**）
+## Browser Recovery（Phase 20 · **20A 已实现并验证**）
 
-> 本节记录 2026-09-24 的**调查 + 真实故障注入**结论与**设计提案**。**没有任何实现代码**：Phase 20 仍为 investigation / design（见 `docs/roadmap.md`）。
+> 本节记录 2026-09-24 的**调查 + 真实故障注入**结论、**定稿设计**，以及 Phase 20A 的**实现与验收**。
 >
-> 证据来源：Playwright **1.62.0** + 其自带 Chromium **151.0.7922.34**，用 `companion-test` profile 的**临时副本**（`/tmp`，独立进程）做真实故障注入；**未使用 web profile**，未记录 token / cookie，结束后清理全部进程与副本。
+> **实现状态**：Phase **20A 已实现并验证**；20B（session reconciliation + UX）仍 pending。实现与设计对应关系、真实故障注入结果、与定稿设计的偏差、已知限制见下方 **§0 实现状态**。证据来源：Playwright **1.62.0** + 其自带 Chromium **151.0.7922.34**，用 `companion-test` profile 的**临时副本**（`/tmp`，独立进程）做真实故障注入；**未使用 web profile**，未记录 token / cookie，结束后清理全部进程与副本。
+
+### 0. 实现状态（20A 已实现并验证，2026-09-24）
+
+| 设计小节 | 实现位置 |
+|---|---|
+| §5 健康分类 / §7 预算 | `src/host/recovery.ts`（纯函数 `classifyPageHealth` / `createRecoveryBudget` / `maxAttemptsFor` / `backoffForAttempt`，单测覆盖） |
+| §11 `recovering` | `src/shared/state.ts`（`ConnectionStatus`）+ `src/host/state.ts`（`setRecovering`）+ `src/client/api.ts`（`CONNECTION_STATUSES`） |
+| §3 epoch / §8 listener ownership | `src/host/browser.ts`：`pageEpoch` / `browserEpoch` + `mountPage`（`WeakSet` 去重 + 每个回调先查 `disposed` / epoch） |
+| §6 single-flight | `recover()` / `runRecovery()`：`recoveryPromise` + `pendingRecovery`（settle 后仍不健康才再跑） |
+| §10.1 navigation suppression | `recoveryNavigationActive`（`mountPage` 的 `framenavigated` 分支）+ `recovery.onMarkKnown` |
+| §9 / §10 Level 1/3 | `rebuildPage()` / `rebuildBrowser()`（Level 3 重装 `exposeFunction` + 复用同一 `profileDir`） |
+| §8 recoverTarget / 状态保留 | `recovery.getRecoverTarget`（index.ts 由 `currentSession` 构造）+ 恢复期不改 `currentSession` / `messages` |
+| §13 route 接线 | `index.ts` 的 `readyBrowser()`：chat / attachment / deep-think / search / new-chat / sessions / switch / show 在 page 操作前 `ensureReady()` |
+
+**真实故障注入结果**（`companion-test` profile 副本，2026-09-24）：
+
+| 场景 | 结果 | 恢复耗时 |
+|---|---|---|
+| A `page.close()` → Level 1 | ✅ recovering → online，transcript 未清，markKnown 恰好一次 | ~1.2 s |
+| B renderer crash → Level 1 | ✅ close + newPage 恢复（crash 页不可复用） | ~1.5 s |
+| C `about:blank` → PAGE_INVALID → Level 1 | ✅ 不等 30 s locator timeout | ~1.3 s |
+| D kill Chromium → Level 3 | ✅ 同 profile 登录态保留、bridge 重装 | ~1.6 s |
+| E 流式中 kill（commit point 后） | ✅ send `rejected`（324 ms，不卡 60 s）、不自动重发、恢复后 logged_in | — |
+| F 5 并发 `ensureReady` | ✅ 只一次 recovery（`recovering` true→false 仅一轮） | ~1.3 s |
+| G ready attachment + Level 1/3 page loss | ✅ 真实上传 PNG → page.close 与 kill 各一次：composer draft、AttachmentRecord、temp file 全部清空，currentSession / transcript 保留 | — |
+| H 已打开的 Client/SSE 跨 recovery | ✅ 真实 DSH Client（未刷新，navigation 恒为 1）：SSE 观测到 `online → recovering → online`，恢复后同一 Client 发消息 streaming 正常、切开关状态保持 | — |
+| I recovery 后 session watcher 恢复 | ✅ 真实页面点击 A→B→A→New chat：recovery 的 goto(A) 被 suppression 挡住（locationLog 未增长）、markKnown(A) 恰好一次、watcher 完整恢复 | — |
+
+**与定稿设计的偏差（如实登记）**：
+
+1. **`pendingRecovery` 再触发前先查健康态**：设计 §6 说「同一预算内再跑一次」；实测 kill 会**同时**触发 `page close` + `disconnected` 两个事件，第一轮 Level 3 已经治好一切，直接再跑会多一轮多余 rebuild。实现改为 settle 后先 `syncHealth()`，仍不健康才再跑。
+2. **`lastOpDomFailed` 细粒度标志未实现**：设计 §5 的「最近操作因 DOM/locator failure 才 probe」由 `knownHealthy` 的一次性确认 + 生命周期事件置 false 覆盖（crash / close / disconnected / 新 page / 恢复成功重确认）；未单独维护「上次 DOM 失败」标志，一个 DOM 级失败由下一次 `ensureReady` 的同步生命体征或操作自身的快速失败兜住。
+3. **Level 1 → Level 3 升级时 `onPageReplaced` 触发两次**：kill 场景先按 `page-closed` 走 Level 1（触发一次 draft invalidation），`newPage` 抛 `TargetClosedError` 后升级 Level 3（再触发一次）。draft invalidation 幂等，无副作用。
+4. **`onDiagnostics` 诊断钩子**：`RecoveryCallbacks.onDiagnostics` 仅为 fault injection / 调试暴露 `getPage` / `getContext`，不进入任何 route。
+
+**已知限制**：20B 的 `readTranscript` 回填、删除会话后的 transcript 最终决策、恢复文案未做（见 §15 边界）。
 
 ### 1. 现状：Browser 生命周期（源码事实）
 

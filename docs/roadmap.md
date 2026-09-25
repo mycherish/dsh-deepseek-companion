@@ -26,9 +26,9 @@
 - Phase 19 — Conversation History（**已在 Phase 08 / 08.1 提前交付**：侧栏列表 + 切换 + 外部导航同步）
 - Phase 20 — Browser Recovery（浏览器/页面故障后自动恢复，不需要重启 DSH）
   - 状态：**调查 + 真实故障注入 + 设计提案完成（investigation / design，未实现）**；不做 Proxy / 多账号 / browser pool / 多 page / durable persistence / 自动重发
-  - **20A — Browser Lifecycle Recovery**：page close/crash/disconnected 监听 · alive-but-invalid page（A–E 分类，含 bounded composer readiness）· Level 1/3 重建（Level 3 重装 `exposeFunction`）· single-flight · bounded retry（逐步 timeout）· `recovering` 状态 · page/browser epoch stale-event 抑制 · 页重建时 draft invalidation · `recoverTarget` snapshot 且恢复期不改 `currentSession`/`messages` · recovery 自身导航的三层防护（recoveryNavigation suppression + markKnown(actualLocation) + epoch，定稿）· ConnectionStatus 正式新增 `recovering` · 60 s 全局 recovery 预算 · dispose safety · 不自动 resend —— **design finalized / awaiting implementation（未实现）**
+  - **20A — Browser Lifecycle Recovery**：page close/crash/disconnected 监听 · alive-but-invalid page（A–E 分类，含 bounded composer readiness）· Level 1/3 重建（Level 3 重装 `exposeFunction`）· single-flight · bounded retry（逐步 timeout）· `recovering` 状态 · page/browser epoch stale-event 抑制 · 页重建时 draft invalidation · `recoverTarget` snapshot 且恢复期不改 `currentSession`/`messages` · recovery 自身导航的三层防护（recoveryNavigation suppression + markKnown(actualLocation) + epoch，定稿）· ConnectionStatus 正式新增 `recovering` · 60 s 全局 recovery 预算 · dispose safety · 不自动 resend —— **已实现并验证（complete）**
   - **20B — Session Reconciliation & UX**：`readTranscript()` 回填 · 补齐服务端已完成的 reply · 会话删除后的 transcript 最终决策 · title refresh · 恢复文案 —— **pending / later design**
-  - 结论与设计见 `docs/architecture.md` 的「Browser Recovery（Phase 20 · 设计提案 — 未实现）」（§5 健康分类、§7 timeout、§8 epoch、§10 session 策略、§13 测试计划、§15 20A/20B 边界）
+  - 实现与验收见 `docs/architecture.md` 的「Browser Recovery（Phase 20 · 20A 已实现并验证）」（§5 健康分类、§7 timeout、§8 epoch、§10 session 策略、§13 测试计划、§15 20A/20B 边界）
 - Phase 21 — Proxy
 - Phase 22 — Handoff to current DSH Composer
 - Phase 23 — Task Brief
@@ -53,6 +53,6 @@
 
 已完成：Phase 01–08.2（工程初始化 → Host State / HTTP+SSE → 浏览器与登录 → 基础聊天 / 流式 / Markdown / Deep Think / 搜索 / Stop / New Chat → 历史会话与外部会话同步 → 08.2 状态模型收口）。
 
-进行中：**Phase 20 Browser Recovery — 调查与设计阶段（design finalized / awaiting implementation）**：真实故障注入验证了 page close / crash / context close / Chromium kill 的行为边界；设计已收口（finalized）为 **20A（生命周期恢复：A–E 健康分类、Level 1/3 重建、single-flight、bounded retry + 60 s 全局预算、`ConnectionStatus` 新增 `recovering`、epoch stale-event 抑制、recovery-navigation 三层防护定稿、`recoverTarget` 且恢复期不改 session/transcript）** 与 **20B（transcript reconciliation + UX，pending / later design）**。**未写任何实现代码**。18A 已实现并验收完成；Phase 19 已由 08/08.1 提前交付；18B（历史图片恢复）仍 pending。下一阶段：20A 实现，或先做 18B。
+进行中：**Phase 20 Browser Recovery — 20A 已实现并验证（complete）**：page close / crash / context close / Chromium kill 后自动恢复（Level 1/3 重建、single-flight、bounded retry + 60 s 全局预算、`ConnectionStatus` 新增 `recovering`、epoch stale-event 抑制、recovery-navigation 三层防护、recoverTarget 且恢复期不改 session/transcript、dispose safety、绝不自动 resend），真实故障注入 A–F 全部通过（见 `docs/architecture.md` §0）。**20B（transcript reconciliation + UX）仍 pending**。18A 已实现并验收完成；Phase 19 已由 08/08.1 提前交付；18B（历史图片恢复）仍 pending。下一阶段：20B，或先做 18B。
 
 每次只完成一个 Phase，禁止顺手实现下一阶段。
