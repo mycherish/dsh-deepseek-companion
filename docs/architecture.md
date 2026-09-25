@@ -1348,3 +1348,271 @@ N9. **单步 timeout > 剩余预算**：实际等待取 `min(stepTimeout, remain
 - 「正在恢复 DeepSeek…」文案（若仍需要）
 
 **边界纪律**：20A 不实现 20B 的任何一项；20B 不重做 20A 的生命周期。
+
+## Phase 20B — Session Reconciliation & UX（**20B1 design finalized / 未实现**）
+
+> 本节记录 2026-09-25 的**调查 + 真实探测**结论与**设计提案**。**没有实现代码**：Phase 20B 仍为 investigation / design（见 `docs/roadmap.md`）；**20B1 已 design finalized，等待 implementation**。
+>
+> 证据来源：Playwright 1.62.0 + companion-test profile 临时副本（`/tmp`），真实 `history_messages` 网络 JSON、IndexedDB 内容、`completion` 请求体。未记录 token/cookie，结束后清理全部进程与副本。
+
+### 0. 调查结论（真机，2026-09-25）
+
+**① DeepSeek 有稳定 message id**（网络 JSON 与 IndexedDB，DOM 没有）
+
+`GET /api/v0/chat/history_messages` 的 `chat_messages[]` 每条：
+
+```jsonc
+{
+  message_id: 3,          // 数字，会话内严格递增（链式）
+  parent_id: 2,           // null（首条）或父 message_id
+  role: "USER",           // USER | ASSISTANT
+  status: "FINISHED",     // FINISHED | WIP
+  fragments: [
+    { id, type: "REQUEST",  content: "用户文字" },
+    { id, type: "RESPONSE", content: "助手正文(markdown)", references, stage_id },
+    { id, type: "THINK",    content: "推理", elapsed_secs, references, stage_id },
+    { id, type: "TIP",      content: "提示" },
+    { id, type: "FILE",     files: [{ id: "file-<uuid>", file_name, file_size, signed_path, model_kind: "VISION", status }] }
+  ],
+  incomplete_message, inserted_at, accumulated_token_usage, thinking_enabled, search_enabled
+}
+```
+
+实测链：`1(USER,null) → 2(ASSISTANT,1) → 3(USER,2) → 4(ASSISTANT,3) → 5(USER,4) → 6(ASSISTANT,5)`。
+
+**② 前端 cache 协议（本轮查清，20B1 的关键）**
+
+| 观测 | 事实 |
+|---|---|
+| `cache_control` | **`REPLACE` = 全量快照；`MERGE` = 增量**（相对客户端携带的 cache 版本） |
+| 请求参数 | 客户端**有**本地 cache 时带 `?cache_version=2&cache_reset_at=<unix ts>` → 服务端返回 `MERGE`（实测 msgCount=0 表示无增量）；**无** cache 时不带参数 → 返回 `REPLACE`（实测 msgCount=2、ids=[1,2]） |
+| **cache 位置** | **IndexedDB `deepseek-chat` → objectStore `history-message`，`key = session id`** |
+| entry 结构 | `{ data: { chat_session{...current_message_id}, chat_messages:[...完整数组...], cache_control, cache_reset_at }, version, key, cacheResetAt, timestamp, frontendVersion:"fv-6" }` |
+| 合并规则 | 前端把 `REPLACE`（覆盖）或 `MERGE`（并入）写回该 IDB entry；`cache_control` 记录最后一次操作；A→B→A **不再发请求**（IDB 命中） |
+| **deterministic 拿完整历史** | **直接读 IDB entry**（`page.evaluate` + `indexedDB.open('deepseek-chat')`，无需网络、无需 token）✓；备选：删除该 entry + 重新导航 → 前端发无参数请求 → `REPLACE` 全量（实测可行，但 `deleteDatabase` 会 `blocked`，需处理前端连接） |
+| 手动 `fetch` 直连 API | **不可靠**：需要精确复制前端的 `authorization`/`x-device-id` 等 header（实测缺 header 返回 `40002/40003`），因此**不作为 Host 依赖** |
+
+> 结论：**Host 不需要 HistoryAccumulator**。前端自身已在 IDB 维护该 session 的完整历史；Host 读 IDB 即得权威快照。只有在 IDB **没有**该 entry（从未打开过）时才需要先导航一次让前端写入。
+
+**③ 三边 id 映射（本轮修正：completion request 提供稳定 parent anchor，不提供新 message id）**
+
+- `POST /api/v0/chat/completion` 请求体（实测完整字段）：`chat_session_id`, **`parent_message_id`**, `prompt`, `ref_file_ids`, `model_type`, `thinking_enabled`, `search_enabled`, `action`, `preempt`。
+- **`parent_message_id` = 发送前最后一条消息的 message_id**（实测：会话末条 id=2 → `parent_message_id=2`；末条 id=4 → `parent_message_id=4`；新会话首发 = `null`）。它是**稳定、authoritative 的 parent anchor**。
+- ⚠️ **实测普通发送目前呈 `parent+1`(USER) / `parent+2`(ASSISTANT)**（2→3/4、4→5/6，链连续）。**这是 observed behavior（仅可作诊断断言），不是 request 直接给出的新 message id —— 不作为 production authoritative mapping，不参与 reconcile correctness。**
+- **authoritative 结论**：realtime 只能拿到 **parent anchor**；本轮 user/assistant 的 `message_id` **必须由 history snapshot 的 parent chain 确认后**才绑定（§3 Level 2）。
+
+**④ crash 后服务端继续完成**（沿用上一轮 + 本轮复核）：commit 后 kill → 服务端 assistant `FINISHED`；mid-stream kill → `WIP` → 约 10s 后 `FINISHED`。**⑤ 稳定时间**：`WIP → FINISHED` 约 10s，需要 bounded stability wait。**⑥ 18B**：`FILE` fragment 完整保留图片元数据。
+
+### 1. 数据源：读 IndexedDB（不是 DOM、不是手动 fetch）
+
+当前 `readTranscript()`（Phase 08）是纯 DOM：无 id、无 status、无 FILE、受 virtual-list 限制。20B1 的 history reader **改为读 IDB**：
+
+```
+page.evaluate(indexedDB.open('deepseek-chat') → objectStore('history-message').get(sessionId))
+→ { chat_messages[], cache_control, cache_reset_at, chat_session.current_message_id }
+```
+
+优点：拿到 `message_id`/`parent_id`/`status`/`fragments` 全量、不受滚动影响、不依赖 token/header、复用前端已维护的权威状态。DOM reader 仍保留给 18A 的实时发送路径。
+
+### 2. History reader 返回模型（snapshot；**不需要 accumulator**）
+
+```ts
+type HistoryRead =
+  | { kind: 'snapshot'; sessionId: string; currentMessageId: number | null; messages: DeepSeekHistoryMessage[] }
+  | { kind: 'unavailable'; reason: 'no-entry' | 'malformed' | 'stale' }
+```
+
+- IDB entry 即**前端权威快照**（`cache_control` 记录它由 `REPLACE` 或若干 `MERGE` 累积而成，但结果始终是该 session 的完整数组）。
+- **`kind: 'no-entry'` 的处理**：Host 先导航到目标 session（让前端写入 IDB），再 bounded 重读；仍无 → `unavailable` → **reconcile safe-fail**（保留 Host transcript、warning，不做 destructive patch）。
+- 完整性校验（进入 reconcile 的前提）：`chat_messages` 非空时，`message_id` 唯一、`parent_id` 形成**单根合法链**（每条 parent 指向前一条的 id，首条为 null）、`role` 交替合法。
+
+### 3. 三层 identity strategy（取代「B 为主 + C 为辅」与「realtime 直绑」）
+
+identity 解析**按顺序命中即停**：
+
+```
+Level 1 — Existing ID
+  Host message 已有 deepSeekMessageId
+  → 直接 ID reconciliation（不重新绑定、不 bootstrap）
+
+Level 2 — Parent-anchor binding（当前 committed turn）
+  Host 持有本轮 completion request 的 parent_message_id（anchor）
+  → 在 IDB snapshot 里按 parent chain 绑定本轮 user/assistant（算法 §5.1）
+  → 成功后进入 ID reconciliation
+
+Level 3 — Strict bootstrap（无 ID 且无可用 anchor）
+  完整 strict chain alignment（算法 §5.2）
+  → 成功后写 deepSeekMessageId
+```
+
+- **20A 的 repeated recovery 之后**：多数消息已有 id → **直接 Level 1**（不重复绑定）。
+- **严禁** 把 `userId = parent + 1` / `assistantId = parent + 2` 当作 authoritative mapping；`+1/+2` 只保留为诊断断言（§0 ③）。
+- **失败语义**：Level 2 一旦命中 anchor 却出现歧义/不匹配 → **直接 safe-fail**（不降级成算术推断，也不退回 Level 3 —— anchor 在场却不一致说明链不可信）。只有 **Host 根本没保存 anchor**（或无 ID）时才进入 Level 3。
+- conservative alignment **不再是 fuzzy fallback**，只在 Level 3 作为「无 identity 时唯一允许的 bootstrap」；任一歧义 → safe-fail，不做任何猜测性 patch。
+
+**`deepSeekMessageId` 写入时机（定稿）**：**只有 server snapshot 已验证、identity 绑定成功时才写**（Level 2 / Level 3）。**发送实时阶段绝不**把 `parent+1/+2` 提前写成正式 `deepSeekMessageId`。若实现需要跨 recovery 保留 anchor：优先 **transaction-local 保存 `parentMessageId`**，或增加 **Host-only committed metadata**；**优先不扩大 shared `ChatMessage` API**（结合现有 chat/send transaction 选最小实现）。
+
+### 4. 「谁是真相」按阶段定义
+
+| 阶段 | 真相 | 规则 |
+|---|---|---|
+| PRE-SUBMIT | Host | Host 有未提交 user entry，server 没有 → **不删** |
+| COMMITTED（assistant error/partial） | server 优先，**只能补全** | server content/reasoning **≥ Host 才采用**；server 更短 → 保留 Host（不倒退） |
+| Stop / interrupted | **Host** | Host `interrupted` **永不自动改 `finished`**（即使 server 后来 FINISHED） |
+| server WIP | Host | 不缩短、不升级 status，等 stability wait |
+| transient status / Host id | Host | `streaming`/`error`/`interrupted` 与 Host message id 保留 |
+
+### 5.1 Level 2 — Parent-anchor binding（当前 committed turn）
+
+前置：snapshot 完整可验证 + chain 合法 + Host 持有本轮 `parent_message_id`（anchor）。
+
+**已有 session（anchor ≠ null）**：
+
+1. 在 snapshot 中找 `role == USER && parent_id == anchor` 的条目；
+2. **必须唯一**：0 个或多个 → **safe-fail**（不猜测、不做 `anchor+1` 算术）；
+3. 校验该 USER：`REQUEST` content 与 Host user content **exact match**；
+4. 校验 **session id 正确**；
+5. `FILE` evidence：若两边都有附件（Host 已有 `ChatMessage.attachments`）则必须匹配（**file 数 + `file_name` + `file_size` 集合**）；Host 无而 server 有 FILE → 视为「Host 不认识」（不覆盖、不绑定）；
+6. 成功后 `hostUser.deepSeekMessageId = serverUser.message_id`；
+7. 再找 `role == ASSISTANT && parent_id == serverUser.message_id`，**必须唯一**（0 个或多 → safe-fail）；
+8. 成功后 `hostAssistant.deepSeekMessageId = serverAssistant.message_id`（此时 server 可能是 `WIP`，绑定仍然成立，但 content 补全要等 stability wait）；
+9. 进入 ID reconciliation。
+
+**新 session（anchor == null）**：
+
+1. 找 `role == USER && parent_id == null` 的 **唯一 root**；0 个或多个 → **safe-fail**；
+2. 校验 exact text / FILE evidence / session id；
+3. 绑定 root user 的 `deepSeekMessageId`；
+4. 再经 `assistant.parent_id == root.message_id`（唯一）绑定 assistant；
+5. root 不唯一或内容不符 → safe-fail。
+
+**Level 2 失败不降级为算术推断**（见 §3 失败语义）。
+
+### 5.2 Level 3 — Strict chain alignment（无 ID 且无可用 anchor 时）
+
+前置：history snapshot 完整可验证 + 严格 chain 合法。逐条比对 Host 链与 server 链：
+
+1. `role` 必须相等（Host user ↔ server USER、Host assistant ↔ server ASSISTANT）；
+2. 顺序必须一致（Host 第 n 条 ↔ server 第 n 条，从头部对齐）；
+3. server `parent_id` 必须形成合法链（首条 null，其后指向前一条）；
+4. 已 finished 的历史 **user 文本**：`REQUEST` content 与 Host content **exact match**；
+5. 已 finished 的历史 **assistant**：server `RESPONSE` 与 Host content **exact match**（Host 为 server 的严格 prefix 时**不视为同一段** —— 只有 exact 才绑定历史段）；
+6. **当前 crash turn** 的 assistant：Host content/reasoning 允许是 server `RESPONSE`/`THINK` 的**严格 prefix**（唯一允许的「不相等」情形）；
+7. `FILE` fragment：仅作**辅助 identity evidence**（file 数 + `file_name` + `file_size` 集合），**不覆盖** Host attachments；Host 无 attachments 而 server 有 FILE → 视为「Host 不认识」；
+8. **禁止**仅按 index/message count 绑定；**禁止** Levenshtein / fuzzy similarity / 标题猜测 / 中间 merge；**禁止** `parent+1/+2` 算术；
+9. 任何一处 `role` 不匹配、文本不 exact（非当前 turn）、链断裂、条数不齐、歧义 → **bootstrap 失败** → safe-fail（保留 Host transcript）；
+10. 成功后只**写入** `deepSeekMessageId`（不改 content/status），后续交给 ID reconciliation。
+
+### 6. FILE fragment 的 20B1 边界（不越 18B）
+
+- 允许用途：**identity evidence**（§5 规则 7）、**判断历史含附件**、**防止 destructive merge**。
+- **Host 已有 `ChatMessage.attachments` → Host authoritative**，20B1 **不用** history 的 FILE 覆盖它。
+- 历史中出现 Host 没有的 image-only/user FILE 消息 → 20B1 **不恢复像素**、**不 full replace**、**不创建假的图片恢复能力** → **safe-skip + 标记需要 Phase 18B**。
+- 只有**当前 crash turn** 的 user message 本来就由 18A 存在于 Host 时，才用 FILE 信息**验证 identity**，且保留原 Host attachments。
+- **18B 继续 pending，不被 20B1 阻塞，也不被 20B1 顺手实现。**
+
+### 7. server 新增消息的 append 策略（收紧）
+
+| 情形 | 20B1 行为 |
+|---|---|
+| A. 当前 committed turn 的 assistant（Host 已有 placeholder/error 消息） | **原地 patch**（按 `deepSeekMessageId` 或 bootstrap 绑定），**绝不 append duplicate** |
+| B. server 产生 Host 没有的 assistant，且其 `parent_id` **精确指向已绑定的 Host user** | 允许 append（新 Host id + `deepSeekMessageId`） |
+| C. server 出现 Host **不认识**的 user message（外部页面操作 / image-only 历史 / switch race） | **不盲 append** → 视为 bootstrap 失败或 safe-skip |
+
+原则：**没有明确 parent/chain evidence 就不 append。**
+
+### 8. status merge 最终规则
+
+| server | Host 当前 | 结果 |
+|---|---|---|
+| WIP | partial / error | **不缩短、不升级**（等 stability wait） |
+| FINISHED | error / partial **且 identity 已唯一确认** | 补全 content/reasoning → `finished` |
+| FINISHED | finished | no-op |
+| FINISHED 但 server 更短 | partial | **保持 Host**（不倒退） |
+| 任意 | **interrupted（Stop）** | **保持 interrupted**（20B1 永不自动改 finished） |
+
+因 `interrupted` 保守规则，**E（Stop + browser failure）不再是 20B1 blocker**，但登记为真机验收项。
+
+### 9. reconciliation 完整性前置条件（任一失败 → no-op）
+
+执行任何 state patch 前必须全部满足：
+
+- `actual session id === target session`；
+- `pageEpoch` 未变化；
+- `reconcileGeneration` 未变化；
+- history snapshot **完整可验证**（IDB entry 存在、结构合法）；
+- message chain 合法（单根、递增、parent 连续）；
+- **identity 唯一**：已有 `deepSeekMessageId`（Level 1），或 Level 2 parent-anchor 命中唯一，或 Level 3 bootstrap mapping 唯一。
+
+任一失败 → **no-op** + 保留 Host transcript + warning + connection 最终回 **online**（**不 offline**、**不 destructive replace**）。
+
+### 10. concurrency / stale
+
+- reconcile 复用 **PageGuard**（与 send / newChat / switch 互斥）；在 `markKnown(actualLocation)` 之后、next 用户操作之前执行。
+- 捕获 `sessionId` + `pageEpoch` + `reconcileGeneration`；提交前**再验证**；不一致丢弃（迟到的 A reconcile 不能覆盖 B）。
+- repeated recovery：已有 id → Level 1；不重复 parent-anchor binding / bootstrap。
+
+### 11. bounded reconcile 预算
+
+- `RECONCILE_TOTAL_BUDGET ≈ 30s`（WIP→FINISHED ~10s + stability wait 2×500ms + IDB 读取 + buffer）。
+- stability wait：`current_message_id` + `chat_messages` 长度/末条 content 长度**连续 2 次（≥500ms）一致**；不用固定 sleep。
+- 超预算 → 保留 Host、warning、不 destructive、不 offline。
+
+### 12. UX / title
+
+- 不加 toast / 文案；`recovering` 延续到 reconcile 完成（idle session 是快速 no-op，只有未完成 assistant 才花 stability wait）。**但**若 identity 任一 Level 失败 / 无 entry，reconcile 立即结束（safe-fail），不让 UI 无意义禁用。
+- title：成功后可刷 `currentSession.title`；失败不影响 reconcile（title 不是 identity）。
+
+### 13. session 已删除 / recoverTarget 重定向 `/`
+
+只有**明确证据**（history 返回 not-found / 空且 URL 重定向）才考虑清 transcript；network / auth / unknown redirect → **保留 Host + warning**。精确的 deleted HTTP/SPA 行为待 implementation 前补充真机。
+
+### 14. 测试计划（本轮修订；上一轮仍适用者保留）
+
+**snapshot / cache 协议**
+
+1. snapshot（`REPLACE`）→ reader 得完整 history
+2. `MERGE` 累积 → Host 读 IDB 得完整（由前端合并）
+3. IDB `no-entry` → 导航重读；仍无 → safe-fail
+4. duplicate / out-of-order → 结构校验拒绝
+5. `message_id` duplicate → reject
+6. broken `parent_id` chain → reject
+
+**identity（本轮定稿重点）**
+
+7. **Level 2 基本路径**：anchor=4，snapshot `USER.message_id=5(parent_id=4)` + `ASSISTANT.message_id=6(parent_id=5)` → **经 parent chain 绑定**（断言绑定不依赖 `+1/+2` 算术）
+8. **Level 2 非连续 id**：anchor=4、`USER.message_id=7(parent_id=4)` → **仍正确绑定 7**（证明实现不依赖 id 连续）
+9. **Level 2 ambiguous**：两个 `USER` 都 `parent_id=4` → safe-fail
+10. **Level 2 text mismatch**：parent 命中但 text 不 exact → safe-fail
+11. **Level 2 chain broken**：USER 命中但 `assistant.parent_id != user.message_id` → safe-fail
+12. **Level 2 新 session**：`parent=null` + 唯一 root USER exact → 绑定 user，再经 `assistant.parent_id == user.message_id` 绑定 assistant
+13. **Level 2 新 session ambiguous**：多个 root（或 0 个）→ safe-fail
+14. **Level 2 FILE mismatch**：Host 已有 attachments 而 server FILE 集合不符 → safe-fail
+15. **不依赖连续性**：`parent+1/+2` 不成立但 chain 正确 → reconciliation **仍成功**
+16. **Level 1 优先**：已有 `deepSeekMessageId` → 直接 ID reconciliation，**不重新** parent-anchor / bootstrap
+17. **Level 3 strict bootstrap**：无 ID 且无 anchor → §5.2 全部规则生效；成功后才写 `deepSeekMessageId`
+18. **禁止算术（负向）**：断言实现路径不存在 `parent+1` / `parent+2` 作为 authoritative mapping（代码审查 + 负向用例）
+19. Host partial prefix server full → bind + patch（当前 turn 唯一允许的不相等）
+20. ambiguous chain / role 不符 / 条数不齐 / text mismatch → Level 3 bootstrap fail
+21. identity 任一 Level 失败 → **no-op**（保留 Host transcript + warning + connection 回 online）
+
+**reconcile / status**
+
+22. `FILE` 仅作 identity evidence，**不覆盖** Host attachments
+23. image-only unknown history → 不 destructive replace
+24. server assistant parent 指向已绑定 user → append/patch 正确
+25. unknown server user → 不盲 append
+26. Host interrupted + server FINISHED → interrupted 保留
+27. WIP → FINISHED stability（bounded wait）
+28. stale session / epoch / generation → no-op
+
+### 15. 真机验收计划
+
+A commit-before-delta kill · B mid-stream kill · C server 完成于 browser 死期间 · D Stop 后 kill · E idle recovery · F image+text · G image-only · H deleted session URL · I reconcile 切 B · J 连续两次 recovery。对比 Host before / server history / Host after（count、roles、content length、reasoning、status、ids、attachments）。
+
+### 16. 20B 拆分
+
+- **20B1 — Safe transcript reconciliation**（IDB reader + **三层 identity strategy（Level 1 existing id / Level 2 parent-anchor binding / Level 3 strict bootstrap）** + 原地 patch + stability wait + stale 防护 + status merge）：**design finalized，可 implementation**。
+- **20B2 — Session-not-found / title / UX**：依赖 20B1，待 deleted-session 真机补充后实现。
+
+18B 保持 pending；21 Proxy 保持后续。
