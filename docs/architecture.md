@@ -1349,11 +1349,55 @@ N9. **单步 timeout > 剩余预算**：实际等待取 `min(stepTimeout, remain
 
 **边界纪律**：20A 不实现 20B 的任何一项；20B 不重做 20A 的生命周期。
 
-## Phase 20B — Session Reconciliation & UX（**20B1 design finalized / 未实现**）
+## Phase 20B — Session Reconciliation & UX（**20B1 implemented + validated**）
 
-> 本节记录 2026-09-25 的**调查 + 真实探测**结论与**设计提案**。**没有实现代码**：Phase 20B 仍为 investigation / design（见 `docs/roadmap.md`）；**20B1 已 design finalized，等待 implementation**。
+> 本节保留 2026-09-25 的调查、真实探测与设计记录；20B1 已实现并验收，20B2 尚未实现（见 `docs/roadmap.md`）。
 >
 > 证据来源：Playwright 1.62.0 + companion-test profile 临时副本（`/tmp`），真实 `history_messages` 网络 JSON、IndexedDB 内容、`completion` 请求体。未记录 token/cookie，结束后清理全部进程与副本。
+
+### 实现与真机验收记录（Phase 20B1，2026-09-25）
+
+**代码结构**
+
+| 位置 | 内容 |
+|---|---|
+| `src/host/history-idb.ts` | 只读 IDB reader（`deepseek-chat`→`history-message`）+ `parseHistoryEntry` 结构校验（**按 parent chain 重建顺序**，见下） |
+| `src/host/reconcile.ts` | 纯逻辑：三层 identity（`resolveIdentity`）、`buildReconcilePlan`、`createCommittedAnchorRegistry`、`readAndPlanReconcile`（读 → bounded stability wait → 校验 → plan）、`RECONCILE_TOTAL_BUDGET_MS = 30s` |
+| `src/host/browser.ts` | `readHistorySnapshot(sessionId)`（epoch 栅栏 + `stale`）、`onSettled` 钩子（recovery 的**最后一步**是 reconcile，`recovering` 覆盖全程） |
+| `src/host/state.ts` | `applyChatReconcile`（bindings + patches + appends **一次 notify**）；`ChatMessage.deepSeekMessageId` |
+| `src/host/chat.ts` / `src/index.ts` | commit point 始终记录 anchor（Host-only，跨 recovery 保留；newChat / switch / 成功 reconcile / dispose 清理） |
+
+**测试**：新增 5 个文件 / 84 项（`history-idb` / `reconcile` / `reconcile-apply` / chat commit point / anchor）→ 全量 619 tests。
+
+**真机验收（companion-test profile 临时副本，真实 Chromium + 真实会话）**
+
+| 场景 | 结果 |
+|---|---|
+| A idle recovery | ✅ 恢复 2.4 s → `online`，Host message id 不变；reconcile `skipped:reasoning mismatch`（见下 ②） |
+| B commit 后 kill | ⚠️ **数据安全全通过**（无重复消息、Host id 不变、不自动 resend、不 full replace）；补全未发生（见下 ④） |
+| C mid-stream kill | ✅ 无重复、Host id 不变、不自动 resend、partial 保留 |
+| D Stop 后 recovery | ⚠️ 时序未命中（回复先完成 → `finished`）；Stop 语义由既有单测覆盖 |
+| E/F 图片轮次 | ⚠️ 上传与发送本身 OK（`attachImage` 返回真实的 `deepSeekFileId`）；**附件落库未在 harness 覆盖**（验收脚本未接 18A attachment transaction），该部分由单测覆盖（`reconcile-apply`：patch 不触碰 attachments；`reconcile`：FILE 不覆盖 Host attachments） |
+| G reconcile 中途切换 | ✅ `skipped:stale snapshot`，store 完全不变 |
+| H 连续两次 recovery | ✅ 两次恢复，消息数与 Host id 全程不变 |
+
+**真机发现（与设计前提不一致，实现按设计保持 safe-fail）**
+
+① **`MERGE` entry 的数组顺序不是链序**：实测 `cache_control='MERGE'` 时 ids 为 `7,8,9,10,1..6`、parents 为 `6,7,8,9,null,1..5` —— 前端把增量插在**数组头部**。设计 §2 假设"数组即完整有序快照"不成立。
+→ 实现改为**按 `parent_id` 从唯一根重建顺序**，再执行设计原有的全部校验（唯一 id、单根单链、role 交替）；任何缺口/环/分叉仍 `malformed`。
+
+② **历史 reasoning 的 DOM 文本常是 server `THINK` 的严格前缀**：同一条 assistant 实测 `textExact=true`（5700/5700）但 `hostReasoning=8918 < serverReasoning=9261`。
+→ 设计 §5.2 规则 5/6 要求历史段 **exact**、只有当前 crash turn 允许 prefix，因此 Level 3 在完整历史 transcript 上通常 safe-fail（保守、不破坏数据）。
+
+③ **IDB entry 不会自动刷新**：前端在页面加载时写入一次；服务端 `WIP → FINISHED` 不会回写 entry。因此 §11 的 stability wait 读到"连续两次指纹相同"即结束（符合设计），但**快照可能是停更的 WIP**。
+
+④ **crash-commit 场景下 entry 不含该轮**：B 场景实测 entry 停在 `1..22`，本轮 `23/24` 不在其中（服务端持久化晚于 recovery 的页面加载），因此 Level 2 报 `parent anchor not found in history` → safe-fail。
+→ 这是 20B1 的**功能边界**：补全要求"reconcile 时 IDB 已含该轮"，实测在 commit→kill→立即恢复的时序下不满足。
+
+**已知限制**
+- ~~commit→kill 的自动补全不会生效~~ → **已解决**（§7.1 单次前端刷新；B/C 真机补全通过）。数据安全（不丢、不重、不重发）同样真机确认。
+- Level 3 strict bootstrap 的 reasoning 规则已按真机放宽为「Host 是 server 的严格前缀」（② 已解决，2026-09-27）；Level 2（有 anchor）为常规路径（实测 `applied, level=2, bindings=2, patches=1`）。
+- reconcile 只覆盖当前 committed turn（设计范围，历史无 anchor 消息不会补 id）。
 
 ### 0. 调查结论（真机，2026-09-25）
 
@@ -1392,7 +1436,7 @@ N9. **单步 timeout > 剩余预算**：实际等待取 `min(stepTimeout, remain
 | **deterministic 拿完整历史** | **直接读 IDB entry**（`page.evaluate` + `indexedDB.open('deepseek-chat')`，无需网络、无需 token）✓；备选：删除该 entry + 重新导航 → 前端发无参数请求 → `REPLACE` 全量（实测可行，但 `deleteDatabase` 会 `blocked`，需处理前端连接） |
 | 手动 `fetch` 直连 API | **不可靠**：需要精确复制前端的 `authorization`/`x-device-id` 等 header（实测缺 header 返回 `40002/40003`），因此**不作为 Host 依赖** |
 
-> 结论：**Host 不需要 HistoryAccumulator**。前端自身已在 IDB 维护该 session 的完整历史；Host 读 IDB 即得权威快照。只有在 IDB **没有**该 entry（从未打开过）时才需要先导航一次让前端写入。
+> 结论：**Host 不需要 HistoryAccumulator**。前端自身已在 IDB 维护该 session 的历史；Host 读 IDB 得到的是 **validated cached snapshot（可验证缓存快照）** —— 结构可由 Host 校验，但**新鲜度不是**：它由前端写入，可能落后于服务端。只有在 IDB **没有**该 entry（从未打开过）时才需要先导航一次让前端写入；entry **过旧**时由 §7.1 的单次前端刷新修正。
 
 **③ 三边 id 映射（本轮修正：completion request 提供稳定 parent anchor，不提供新 message id）**
 
@@ -1422,7 +1466,7 @@ type HistoryRead =
   | { kind: 'unavailable'; reason: 'no-entry' | 'malformed' | 'stale' }
 ```
 
-- IDB entry 即**前端权威快照**（`cache_control` 记录它由 `REPLACE` 或若干 `MERGE` 累积而成，但结果始终是该 session 的完整数组）。
+- IDB entry 是**前端缓存快照（validated cached snapshot）**：`cache_control` 记录它由 `REPLACE` 或若干 `MERGE` 累积而成。**它可验证（结构），但不是权威实时状态**——实测前端只在页面加载时写一次，崩溃轮会永久停在 `WIP`（见 §7.1）。
 - **`kind: 'no-entry'` 的处理**：Host 先导航到目标 session（让前端写入 IDB），再 bounded 重读；仍无 → `unavailable` → **reconcile safe-fail**（保留 Host transcript、warning，不做 destructive patch）。
 - 完整性校验（进入 reconcile 的前提）：`chat_messages` 非空时，`message_id` 唯一、`parent_id` 形成**单根合法链**（每条 parent 指向前一条的 id，首条为 null）、`role` 交替合法。
 
@@ -1520,6 +1564,40 @@ Level 3 — Strict bootstrap（无 ID 且无可用 anchor）
 | C. server 出现 Host **不认识**的 user message（外部页面操作 / image-only 历史 / switch race） | **不盲 append** → 视为 bootstrap 失败或 safe-skip |
 
 原则：**没有明确 parent/chain evidence 就不 append。**
+
+### 7.1 前端刷新：唯一一次 bounded reload（真机定稿，2026-09-27）
+
+**问题**：前端只在**页面加载时**写一次 IDB entry，之后不再更新。实测 commit→kill→recovery 后：
+entry 里崩溃轮的 assistant 永久停在 `WIP`（18 s 后仍 `WIP`），而服务端早已 `FINISHED`（同一 entry reload 后为 `FINISHED`，884 chars）。
+
+**解决**：让**前端自己**重新拉取历史 —— Host 只做一次 bounded `reload()`。
+
+```
+snapshot 判为「落后于服务端」：
+  ① committed turn 不在 entry 中（页面在服务端写入之前就加载了）
+  ② entry 的最后一条仍是 WIP（连续两次读取指纹相同 → 前端缓存停更）
+→ 先等待，直到预算只够一次刷新（REFRESH_HEADROOM_MS = 12 s）
+   —— entry 已冻结，等待是唯一让「服务端」写完的手段
+→ page.reload()（step 上限 15 s；networkidle 上限 8 s）
+→ 前端自行 MERGE/REPLACE，Host 重新读 entry
+→ 至多一次，绝不循环 reload（仍超预算/仍缺失 → safe-fail，Host 不变）
+```
+
+约束（全部满足）：**不删 IDB、不手动 fetch history API、不读 token/cookie、不伪造 cache 参数**；
+**硬 deadline**：reconcile 的 30 s 预算是**共享的**——每一次 `readHistorySnapshot`、整个 refresh（reload 与 networkidle 各自再被 `left()` 收紧）实际 timeout 都是 `min(stepCap, deadline − now)`；IDB 的 `page.evaluate` 同时受 Host 侧超时约束，读取返回后及交出 plan 前再次核对 deadline。刷新拿到的是「剩余预算」（真机实测传入 10 378 ms）；超预算一律 safe-fail，不应用过期 plan（`tests/reconcile.test.ts` 的 `20B1 deadline:` 测试覆盖）。
+reload 导致的导航被 suppression 吞掉（不会被当成用户切换）；`malformed`／`no-entry` **不触发**刷新（reload 改变不了结构）。
+
+**真机实测（fresh session）**
+
+| 场景 | 结果 |
+|---|---|
+| B commit 后 kill | `refreshes = 1`；`applied, level 2, bindings 2, patches 1`；assistant 原地补全为服务端全文并 `finished`；Host id 不变、无重复、无重发 |
+| C mid-stream kill | 同上（partial → 服务端全文，928 chars） |
+| A idle recovery | `refreshes = 0`、reconcile 10 ms、transcript 不变（**不变慢**） |
+| 刷新耗时 | reload + 前端写入 ≈ 6 s（reload 15 s 上限内） |
+| B/C 的 `recovering` 总时长 | ≈ 20 s（等待服务端 + 刷新 + 补全），仍在 30 s 预算内 |
+
+**仍存在的边界**：会话若因反复实验/分支而成为**树形**（`parent_id` 分叉，实测 `cache_control='REPLACE'` 也可能分叉），entry 判定 `malformed` → 不刷新、直接 safe-fail（reload 无法修复结构）。
 
 ### 8. status merge 最终规则
 

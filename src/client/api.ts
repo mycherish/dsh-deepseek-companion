@@ -342,6 +342,11 @@ function normalizeMessage(raw: unknown): ChatMessage | null {
     status: normalizeMessageStatus(value.status),
   }
   if (typeof value.sessionId === 'string' && value.sessionId !== '') message.sessionId = value.sessionId
+  // DeepSeek's own message id (Phase 20B1): a plain number, no content, so the
+  // views may keep mirroring the Host state one-to-one.
+  if (typeof value.deepSeekMessageId === 'number' && Number.isFinite(value.deepSeekMessageId)) {
+    message.deepSeekMessageId = value.deepSeekMessageId
+  }
   const reasoning = asRecord(value.reasoning)
   if (typeof reasoning.content === 'string' && reasoning.content !== '') {
     message.reasoning = { content: reasoning.content, format: reasoning.format === 'markdown' ? 'markdown' : 'text' }

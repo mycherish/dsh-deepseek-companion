@@ -8,6 +8,7 @@
  */
 import { randomUUID } from 'node:crypto'
 import { connectionFrom } from '../shared/state.ts'
+import type { IdentityBinding, ReconcileAppend, ReconcilePatch } from './reconcile.ts'
 import type {
   ChatAttachment,
   ChatFormat,
@@ -219,6 +220,16 @@ export interface CompanionStateStore {
    * conversation it was read from.
    */
   replaceChatMessages(messages: ChatMessageInput[], sessionId?: string): void
+  /**
+   * Apply ONE reconciliation in a single write (Phase 20B1): identity bindings,
+   * in-place patches and the few allowed appends land together and notify once —
+   * a partially applied reconcile is never observable. An empty patch is a no-op.
+   */
+  applyChatReconcile(patch: {
+    bindings?: readonly IdentityBinding[]
+    patches?: readonly ReconcilePatch[]
+    appends?: readonly ReconcileAppend[]
+  }): void
   dispose(): void
 }
 
@@ -536,6 +547,53 @@ export function createCompanionStateStore(): CompanionStateStore {
       // One replacement, one notify. `sending` and everything under `deepseek`
       // are untouched — a switch never changes the login or composer state.
       state = { ...state, chat: { ...state.chat, messages: next } }
+      notify(state)
+    },
+
+    applyChatReconcile(patch) {
+      if (disposed) return
+      const bindings = patch.bindings ?? []
+      const patches = patch.patches ?? []
+      const appends = patch.appends ?? []
+      if (bindings.length === 0 && patches.length === 0 && appends.length === 0) return
+
+      const idByHost = new Map<string, number>()
+      for (const binding of bindings) idByHost.set(binding.hostId, binding.deepSeekMessageId)
+      const patchByHost = new Map<string, ReconcilePatch>()
+      for (const entry of patches) patchByHost.set(entry.id, entry)
+
+      const messages = state.chat.messages.map((message) => {
+        const deepSeekMessageId = idByHost.get(message.id)
+        const entry = patchByHost.get(message.id)
+        if (deepSeekMessageId === undefined && entry === undefined) return message
+        const next: ChatMessage = { ...message }
+        // Identity is written only here — after a snapshot confirmed it (20B1).
+        if (deepSeekMessageId !== undefined) next.deepSeekMessageId = deepSeekMessageId
+        if (entry !== undefined) {
+          if (entry.content !== undefined) next.content = entry.content
+          if (entry.format !== undefined) next.format = entry.format
+          if (entry.reasoning !== undefined) next.reasoning = entry.reasoning
+          if (entry.status !== undefined) next.status = entry.status
+        }
+        return next
+      })
+
+      // Appends mint fresh Host ids: DeepSeek's id is identity evidence, never
+      // the Host key (the Host key never changes once minted).
+      for (const append of appends) {
+        messages.push({
+          id: randomUUID(),
+          role: append.role,
+          content: append.content,
+          format: append.format,
+          status: append.status,
+          sessionId: append.sessionId,
+          deepSeekMessageId: append.deepSeekMessageId,
+          ...(append.reasoning !== undefined ? { reasoning: append.reasoning } : {}),
+        })
+      }
+
+      state = { ...state, chat: { ...state.chat, messages } }
       notify(state)
     },
 

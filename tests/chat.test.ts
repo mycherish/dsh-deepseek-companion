@@ -276,3 +276,58 @@ test('08.2: send 抛错 → error 状态（不回写成 finished）', async () =
 
   assert.equal(store.getState().chat.messages[1]!.status, 'error')
 })
+
+// --- Phase 20B1: the commit point always records the parent anchor --------------
+
+test('20B1 commit point: onCommitted 恰好一次，带本轮 Host user/assistant id', async () => {
+  const store = createCompanionStateStore()
+  const seen: Array<{ ok: boolean; sessionId: unknown; parentMessageId: unknown; userId: string; assistantId: string }> = []
+
+  const result = await handleChatMessage(
+    store,
+    async (_message, _onDelta, _onReasoning, _onCitations, onSubmitted) => {
+      await onSubmitted?.({ ok: true, refFileIds: [], chatSessionId: 'sess-1', parentMessageId: 4 })
+      return reply('回复')
+    },
+    '第二个问题',
+    undefined,
+    undefined,
+    undefined,
+    (submitted, ids) => {
+      const anchor = submitted.ok ? { sessionId: submitted.chatSessionId, parentMessageId: submitted.parentMessageId } : { sessionId: undefined, parentMessageId: undefined }
+      seen.push({ ok: submitted.ok, ...anchor, userId: ids.userMessageId, assistantId: ids.assistantMessageId })
+    },
+  )
+
+  assert.equal(result.status, 200)
+  assert.equal(seen.length, 1, 'commit point 恰好一次')
+  const messages = store.getState().chat.messages
+  assert.equal(seen[0]!.userId, messages[0]!.id)
+  assert.equal(seen[0]!.assistantId, messages[1]!.id)
+  assert.equal(seen[0]!.sessionId, 'sess-1')
+  assert.equal(seen[0]!.parentMessageId, 4)
+})
+
+test('20B1 commit point: 无附件轮次也记录 anchor（onSubmitted 不再只属于 18A）', async () => {
+  const store = createCompanionStateStore()
+  let committed = 0
+
+  const result = await handleChatMessage(
+    store,
+    async (_message, _onDelta, _onReasoning, _onCitations, onSubmitted) => {
+      await onSubmitted?.({ ok: true, refFileIds: [], chatSessionId: 'sess-1', parentMessageId: null })
+      return reply('回复')
+    },
+    '第一个问题',
+    undefined,
+    undefined,
+    undefined,
+    () => {
+      committed += 1
+    },
+  )
+
+  assert.equal(result.status, 200)
+  assert.equal(committed, 1)
+  assert.equal(store.getState().chat.messages.length, 2)
+})

@@ -6,6 +6,8 @@ import { handleChatMessage } from '../src/host/chat.ts'
 import {
   evaluateDraftGate,
   prepareAttachmentTransaction,
+  readCompletionSubmission,
+  readParentAnchor,
   verifyRefFileIds,
   type CompletionSubmission,
 } from '../src/host/send-attachments.ts'
@@ -534,4 +536,45 @@ test('18A send: 非 Phase 18A 的既有语义不变（纯文本无附件、无 t
   assert.equal(assistant.content, '# 标题')
   assert.deepEqual(assistant.reasoning, { content: '思考', format: 'text' })
   assert.deepEqual(assistant.citations, citations)
+})
+
+// --- Phase 20B1: the committed parent anchor -----------------------------------
+
+test('20B1 anchor: readParentAnchor 读 session id + parent_message_id', () => {
+  assert.deepEqual(readParentAnchor({ ok: true, refFileIds: [], chatSessionId: 'sess-1', parentMessageId: 4 }), {
+    sessionId: 'sess-1',
+    parentMessageId: 4,
+  })
+  // 新会话首发：parent_message_id = null 本身就是合法 anchor。
+  assert.deepEqual(readParentAnchor({ ok: true, refFileIds: null, chatSessionId: 'sess-1', parentMessageId: null }), {
+    sessionId: 'sess-1',
+    parentMessageId: null,
+  })
+})
+
+test('20B1 anchor: payload 不可读 / 字段类型不对 → 没有 anchor（绝不猜）', () => {
+  assert.equal(readParentAnchor({ ok: false }), undefined)
+  assert.equal(readParentAnchor({ ok: true, refFileIds: [], chatSessionId: 7, parentMessageId: 4 }), undefined)
+  assert.equal(readParentAnchor({ ok: true, refFileIds: [], chatSessionId: '', parentMessageId: 4 }), undefined)
+  assert.equal(readParentAnchor({ ok: true, refFileIds: [], chatSessionId: 's', parentMessageId: '4' }), undefined)
+  assert.equal(readParentAnchor({ ok: true, refFileIds: [], chatSessionId: 's' }), undefined)
+})
+
+test('20B1 anchor: readCompletionSubmission 原样透传 chat_session_id / parent_message_id', () => {
+  const request = {
+    postData: () => JSON.stringify({ chat_session_id: 'sess-9', parent_message_id: 12, ref_file_ids: ['file-1'] }),
+  }
+  assert.deepEqual(readCompletionSubmission(request), {
+    ok: true,
+    refFileIds: ['file-1'],
+    chatSessionId: 'sess-9',
+    parentMessageId: 12,
+  })
+})
+
+test('20B1 anchor: 旧 payload（无新字段）仍可读，anchor 为空', () => {
+  const request = { postData: () => JSON.stringify({ ref_file_ids: [] }) }
+  const submitted = readCompletionSubmission(request)
+  assert.equal(submitted.ok, true)
+  assert.equal(readParentAnchor(submitted), undefined)
 })

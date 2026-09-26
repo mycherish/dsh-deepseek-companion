@@ -46,6 +46,14 @@ import {
   resolveCitationsByBlock,
   type DomBlock,
 } from './citations.ts'
+import {
+  DEEPSEEK_HISTORY_DB,
+  DEEPSEEK_HISTORY_STORE,
+  HISTORY_READ_TIMEOUT_MS,
+  parseHistoryEntry,
+  readHistoryEntryInPage,
+  type HistorySnapshotTicket,
+} from './history-idb.ts'
 import { loginStatusFromCurrentUser } from './login.ts'
 import {
   buildTranscript,
@@ -136,6 +144,13 @@ const STOP_GLYPH_PREFIX = 'M2 4.88'
  * what the page shows.
  */
 const STOP_SETTLE_TIMEOUT = 5000
+/**
+ * Phase 20B1 review: how long one frontend history refresh (a `reload()`) may take,
+ * and how long the SPA is then given to write its own IDB entry. Measured on a real
+ * page: the whole refresh+write settled well inside this (≈6 s end to end).
+ */
+const REFRESH_TIMEOUT_MS = 15000
+const REFRESH_SETTLE_TIMEOUT = 8000
 /** Primary assistant reply container (semantic class, Phase 07D-0). */
 const REPLY_SELECTOR = '.ds-assistant-message-main-content'
 /** Fallback when the semantic class is absent (older/renamed DOM). */
@@ -314,6 +329,19 @@ export interface DeepSeekBrowser {
    * settles. Never starts more than one recovery, and never auto-resends.
    */
   ensureReady(): Promise<DeepSeekStatus>
+  /**
+   * Read one session's authoritative history from DeepSeek's OWN IndexedDB cache
+   * (Phase 20B1). Read-only and bounded; the ticket also carries the page epoch
+   * the read belonged to, so the caller can refuse to apply a stale snapshot.
+   */
+  readHistorySnapshot(sessionId: string, budgetMs?: number): Promise<HistorySnapshotTicket>
+  /**
+   * Ask the page to re-fetch its OWN history (Phase 20B1 review): one bounded
+   * `reload()`, after which the SPA writes a fresh `MERGE`/`REPLACE` into its own
+   * IndexedDB entry. Never deletes the DB, never calls the history API, never
+   * reads tokens/cookies, and never looks like a user navigation.
+   */
+  refreshHistoryView(budgetMs?: number): Promise<void>
   /** Focus the live DeepSeek page, reopening the sign-in page if it was closed. */
   showLogin(): Promise<void>
   /** Read DeepSeek's REAL Deep Think toggle state (Phase 07G). */
@@ -483,6 +511,14 @@ export interface RecoveryCallbacks {
   getRecoverTarget?: () => SessionLocation
   /** Align `sessionSync.lastKnown` with the page's real location after recovery. */
   onMarkKnown?: (location: SessionLocation) => void
+  /**
+   * The recovery reached a final verdict (Phase 20B1). Runs INSIDE the
+   * `recovering` window — `connection` stays `recovering` until this resolves —
+   * so the Host can reconcile the transcript BEFORE the UI is handed back. A
+   * rejection is swallowed: reconciliation is best-effort and can never turn a
+   * successful recovery into a failure.
+   */
+  onSettled?: (status: DeepSeekStatus) => Promise<void> | void
   /**
    * Diagnostics only (Phase 20A fault injection / debugging): getters for the
    * live page and context, so a test harness can trigger `page.close()` / crash /
@@ -988,6 +1024,15 @@ export async function createDeepSeekBrowser(
       }
     } finally {
       recoveryNavigationActive = false
+      // Phase 20B1: the recovery's LAST step is reconciliation. It runs while
+      // the connection still reads `recovering`, so the UI is never handed back
+      // before the transcript and the real page agree. Strictly best-effort — a
+      // failure here can never turn a successful recovery into a failure.
+      try {
+        await recovery.onSettled?.(finalStatus)
+      } catch {
+        // reconciliation never owns the recovery's outcome
+      }
       recovery.onRecovering?.(false)
     }
     // The recovery has settled: report the page's real state (never optimistic).
@@ -1060,6 +1105,80 @@ export async function createDeepSeekBrowser(
     if (health === 'healthy_chat') return 'logged_in'
     if (health === 'login_required') return 'logged_out'
     return recover(health === 'browser_dead' ? 'browser-disconnected' : health === 'page_dead' ? 'page-closed' : 'page-crashed')
+  }
+
+  /**
+   * Phase 20B1: read one session's authoritative history from the page's own
+   * IndexedDB cache. Read-only and bounded, and fenced by BOTH epochs — a page
+   * replaced while the read was in flight reports `stale` instead of handing
+   * back a snapshot that no longer describes the live page.
+   */
+  const readHistorySnapshot = async (sessionId: string, budgetMs?: number): Promise<HistorySnapshotTicket> => {
+    const readPageEpoch = pageEpoch
+    const readBrowserEpoch = browserEpoch
+    const target = page
+    let probe: unknown = { outcome: 'error' }
+    // The reconcile's deadline is shared: this read gets whatever is left of it,
+    // capped by its own limit — never a fresh full timeout.
+    const timeoutMs =
+      budgetMs === undefined ? HISTORY_READ_TIMEOUT_MS : Math.max(1, Math.min(HISTORY_READ_TIMEOUT_MS, budgetMs))
+    try {
+      probe = await bound(
+        target.evaluate(readHistoryEntryInPage, {
+          db: DEEPSEEK_HISTORY_DB,
+          store: DEEPSEEK_HISTORY_STORE,
+          key: sessionId,
+          timeoutMs,
+        }),
+        timeoutMs,
+      )
+    } catch {
+      // A closed or replaced page makes the evaluate itself throw — same verdict:
+      // there is no trustworthy snapshot.
+      probe = { outcome: 'error' }
+    }
+    const read = parseHistoryEntry(probe, sessionId)
+    const current = (): boolean =>
+      !disposed && readPageEpoch === pageEpoch && readBrowserEpoch === browserEpoch && target === page
+    return { read: current() ? read : { kind: 'unavailable', reason: 'stale' }, current }
+  }
+
+  /**
+   * Phase 20B1 review: ask the PAGE ITSELF to re-fetch its history. Measured on a
+   * real session, the frontend writes its IDB entry once per page load and never
+   * again — a crash mid-turn therefore leaves the assistant frozen at `WIP`
+   * forever, while a plain `reload()` makes the SPA request its own history again
+   * and write a fresh `MERGE`/`REPLACE` (`4(A:WIP)` → `4(A:FINISHED)`, 884 chars).
+   *
+   * The Host only reloads: it never deletes the DB, never calls the history API
+   * and never reads tokens/cookies. The navigation this causes is suppressed so it
+   * can never look like a user switch, and it is bounded by a step timeout — the
+   * caller (reconcile) additionally allows at most ONE refresh per run.
+   */
+  const refreshHistoryView = async (budgetMs?: number): Promise<void> => {
+    if (disposed) return
+    // The WHOLE refresh shares the caller's deadline: `left()` is re-read before
+    // every sub-step, so its real timeout is `min(stepCap, remaining)` — a fixed
+    // step cap could otherwise be spent twice in a row and overrun the budget.
+    const deadline = Date.now() + (budgetMs ?? REFRESH_TIMEOUT_MS + REFRESH_SETTLE_TIMEOUT)
+    const left = (): number => Math.max(0, deadline - Date.now())
+    const reloadBudget = Math.min(REFRESH_TIMEOUT_MS, left())
+    if (reloadBudget <= 0) return
+    const refreshPageEpoch = pageEpoch
+    const refreshBrowserEpoch = browserEpoch
+    const previousSuppression = recoveryNavigationActive
+    // Our navigation, not the user's: the session watcher must ignore it.
+    recoveryNavigationActive = true
+    try {
+      await bound(page.reload({ waitUntil: 'domcontentloaded' }), reloadBudget)
+      if (disposed || refreshPageEpoch !== pageEpoch || refreshBrowserEpoch !== browserEpoch) return
+      // `networkidle` is the real "the SPA finished its own requests" signal, and
+      // it may only use what the reload left behind.
+      const settleBudget = Math.min(REFRESH_SETTLE_TIMEOUT, left())
+      if (settleBudget > 0) await page.waitForLoadState('networkidle', { timeout: settleBudget }).catch(() => {})
+    } finally {
+      recoveryNavigationActive = previousSuppression
+    }
   }
 
   // Mount the initial browser + page lifecycle listeners.
@@ -1964,6 +2083,8 @@ export async function createDeepSeekBrowser(
   return {
     check,
     ensureReady,
+    readHistorySnapshot,
+    refreshHistoryView,
     showLogin,
     getDeepThinkState: () => readToggle(DEEP_THINK_OPTIONS),
     setDeepThinkEnabled,

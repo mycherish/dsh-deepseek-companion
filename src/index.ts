@@ -8,8 +8,9 @@ import { handleDeepThinkRequest } from './host/deep-think.ts'
 import { createPageGuard } from './host/guard.ts'
 import { handleNewChatRequest } from './host/new-chat.ts'
 import { attachmentUploadDir, browserProfileDir } from './host/paths.ts'
+import { createCommittedAnchorRegistry, readAndPlanReconcile } from './host/reconcile.ts'
 import { handleSearchRequest } from './host/search.ts'
-import { prepareAttachmentTransaction } from './host/send-attachments.ts'
+import { prepareAttachmentTransaction, readParentAnchor } from './host/send-attachments.ts'
 import {
   createSessionSyncController,
   handleListSessionsRequest,
@@ -18,7 +19,7 @@ import {
 } from './host/sessions.ts'
 import { handleStopRequest } from './host/stop.ts'
 import { createCompanionStateStore, type CompanionStateStore } from './host/state.ts'
-import type { CompanionState } from './shared/state.ts'
+import type { CompanionState, DeepSeekStatus } from './shared/state.ts'
 
 /** Cordis plugin id, referenced by the bundle patch to insert this plugin. */
 export const name = 'deepseek-companion'
@@ -119,6 +120,15 @@ export function apply(ctx: Context): void {
   // — no view renders it.
   const pageGuard = createPageGuard()
 
+  // Committed-turn anchors (Phase 20B1): Host-only bookkeeping for the LAST
+  // committed send — the session id plus the completion request's
+  // `parent_message_id`. Never part of the shared `ChatMessage` shape, and never
+  // a message id itself: realtime only ever learns the parent anchor.
+  const anchors = createCommittedAnchorRegistry()
+  // Bumped whenever a reconcile starts: a plan built by an older round must
+  // never be applied over a newer one (Phase 20B1 stale guard).
+  let reconcileGeneration = 0
+
   // External session sync (Phase 08.1): when the USER navigates inside the
   // DeepSeek window itself, the Host pulls the page's transcript back into the
   // shared state. It reuses the SAME page guard, so a sync never runs next to a
@@ -135,6 +145,49 @@ export function apply(ctx: Context): void {
 
   ctx.effect(() => {
     let disposed = false
+
+    /**
+     * Phase 20B1: reconcile the Host transcript against DeepSeek's own history
+     * once a recovery settled on a logged-in session. It runs INSIDE the
+     * `recovering` window (through `onSettled`), holds the page guard for its
+     * whole duration, and is strictly best-effort: any failure keeps the Host
+     * transcript untouched and still reports the recovery as successful.
+     */
+    const runReconcile = async (status: DeepSeekStatus): Promise<void> => {
+      if (disposed || status !== 'logged_in') return
+      const currentBrowser = browser
+      if (currentBrowser === null) return
+      const sessionId = store.getState().currentSession.id
+      // An empty chat has no server history to reconcile against.
+      if (sessionId === null) return
+      // The guard arbitrates the ONE page: a busy page is skipped, never fought over.
+      if (!pageGuard.tryClaim()) return
+      const generation = ++reconcileGeneration
+      try {
+        // Read → bounded stability wait → validate → plan (Phase 20B1, pure logic).
+        const outcome = await readAndPlanReconcile({
+          browser: currentBrowser,
+          sessionId,
+          hostMessages: store.getState().chat.messages,
+          anchor: anchors.get(),
+          // Freshness is re-checked right before the plan is handed back: a
+          // switch, a page rebuild or a newer reconcile invalidates this run.
+          isFresh: () =>
+            !disposed && generation === reconcileGeneration && store.getState().currentSession.id === sessionId,
+        })
+        if (outcome.kind !== 'plan') {
+          console.warn('[dsh-deepseek-companion] reconcile skipped:', outcome.reason)
+          return
+        }
+        store.applyChatReconcile(outcome.patch)
+        // The committed turn is resolved — its anchor has done its job.
+        anchors.clear()
+      } catch (error) {
+        console.warn('[dsh-deepseek-companion] reconcile failed:', error)
+      } finally {
+        pageGuard.release()
+      }
+    }
 
     void createDeepSeekBrowser(
       browserProfileDirForCtx,
@@ -172,6 +225,10 @@ export function apply(ctx: Context): void {
         onMarkKnown: (location) => {
           if (!disposed) sessionSync.markKnown(location)
         },
+        // Phase 20B1: the last step of a successful recovery is reconciliation —
+        // it runs while `connection` still reads `recovering`, so the UI is only
+        // handed back once the transcript and the real page agree.
+        onSettled: (status) => runReconcile(status),
       },
     )
       .then((created) => {
@@ -195,6 +252,9 @@ export function apply(ctx: Context): void {
 
     return () => {
       disposed = true
+      // A disposed Host must not leave a committed anchor behind: a stale one
+      // could bind ids for a session this process no longer owns (Phase 20B1).
+      anchors.clear()
       // The page is about to go away, taking its drafts with it (Phase 18A).
       // Fire-and-forget: teardown must not block on file I/O.
       void resources.resetDraft()
@@ -299,6 +359,19 @@ export function apply(ctx: Context): void {
             // external switch) — read after the send settled.
             () => currentBrowser.wasInterrupted(),
             attachmentTransaction,
+            // Phase 20B1: record the committed parent anchor (Host-only) so a
+            // later recovery can bind this turn's ids through the parent chain.
+            // A payload without a usable anchor simply records nothing.
+            (submitted, ids) => {
+              const anchor = readParentAnchor(submitted)
+              if (anchor === undefined) return
+              anchors.record({
+                sessionId: anchor.sessionId,
+                parentMessageId: anchor.parentMessageId,
+                userMessageId: ids.userMessageId,
+                assistantMessageId: ids.assistantMessageId,
+              })
+            },
           )
           if (result.status === 500) {
             console.warn('[dsh-deepseek-companion] failed to send chat message', result.body.error)
@@ -431,6 +504,9 @@ export function apply(ctx: Context): void {
             // The Host made this navigation itself: record where it landed, so
             // the watcher never syncs the same change a second time (08.1).
             sessionSync.markKnown({ kind: 'empty' })
+            // The committed anchor belonged to the conversation that just went
+            // away (Phase 20B1) — a new chat starts with no turn to bind.
+            anchors.clear()
             // Phase 18A: a fresh conversation means a fresh composer — the old
             // draft (and its temp files) is dropped with the old transcript.
             await resources.resetDraft()
@@ -485,6 +561,9 @@ export function apply(ctx: Context): void {
             // never re-syncs it (Phase 08.1).
             const known = knownLocationFromSwitchBody(body)
             if (known !== null) sessionSync.markKnown(known)
+            // The committed anchor described the conversation left behind
+            // (Phase 20B1): it must never bind ids in the new one.
+            anchors.clear()
             // Phase 18A: the composer belonged to the OLD conversation, so its
             // draft is dropped rather than carried into the new one.
             await resources.resetDraft()

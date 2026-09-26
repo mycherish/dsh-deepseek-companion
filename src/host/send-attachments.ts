@@ -22,7 +22,16 @@ import type { AttachmentRecord } from './attachment-resources.ts'
  * `{ ok: false }` means the payload could not be read at all (null body, bad
  * JSON, not an object) — that is an INTEGRITY failure, never a pre-submit one.
  */
-export type CompletionSubmission = { ok: true; refFileIds: unknown } | { ok: false }
+/**
+ * The completion REQUEST as read at the commit point. `refFileIds` drives the
+ * Phase 18A attachment contract; `chatSessionId` / `parentMessageId` are the
+ * Phase 20B1 parent ANCHOR — a stable pointer at where this turn hangs, never
+ * the new message ids themselves. All three are passed through EXACTLY as the
+ * payload stated them, so a missing/mistyped field stays detectable.
+ */
+export type CompletionSubmission =
+  | { ok: true; refFileIds: unknown; chatSessionId?: unknown; parentMessageId?: unknown }
+  | { ok: false }
 
 /** The browser capability a send needs (keeps unit tests free of Playwright). */
 export interface AttachmentSendBrowser {
@@ -180,7 +189,32 @@ export function readCompletionSubmission(request: { postData(): string | null })
     return { ok: false }
   }
   if (parsed === null || typeof parsed !== 'object') return { ok: false }
-  return { ok: true, refFileIds: (parsed as { ref_file_ids?: unknown }).ref_file_ids }
+  const payload = parsed as { ref_file_ids?: unknown; chat_session_id?: unknown; parent_message_id?: unknown }
+  return {
+    ok: true,
+    refFileIds: payload.ref_file_ids,
+    chatSessionId: payload.chat_session_id,
+    parentMessageId: payload.parent_message_id,
+  }
+}
+
+/**
+ * The committed turn's parent anchor (Phase 20B1): the session id plus the
+ * `parent_message_id` the request declared (`null` for the first message of a
+ * NEW session). A payload that does not state both in usable form has NO anchor
+ * — Level 2 binding is then skipped rather than guessed at, and the strict
+ * bootstrap decides instead.
+ */
+export function readParentAnchor(
+  submitted: CompletionSubmission,
+): { sessionId: string; parentMessageId: number | null } | undefined {
+  if (!submitted.ok) return undefined
+  const sessionId = submitted.chatSessionId
+  if (typeof sessionId !== 'string' || sessionId === '') return undefined
+  const parent = submitted.parentMessageId
+  if (parent === null) return { sessionId, parentMessageId: null }
+  if (typeof parent === 'number' && Number.isFinite(parent)) return { sessionId, parentMessageId: parent }
+  return undefined
 }
 
 export type IntegrityResult = { ok: true; fileIds: string[] } | { ok: false; error: string }

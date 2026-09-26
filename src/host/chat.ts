@@ -44,6 +44,15 @@ export async function handleChatMessage(
    * written, and the moment after which the draft is never restored.
    */
   attachmentTransaction?: SendAttachmentTransaction,
+  /**
+   * The commit point, bound to THIS round's Host message ids (Phase 20B1). Fires
+   * whether or not the round carried images: reconciliation needs the parent
+   * anchor of every committed turn, not just the attachment ones.
+   */
+  onCommitted?: (
+    submitted: CompletionSubmission,
+    ids: { userMessageId: string; assistantMessageId: string },
+  ) => void,
 ): Promise<ChatSendResult> {
   // A page operation owns the page — never start a send against it, and never
   // append a user message that could not be sent.
@@ -72,12 +81,15 @@ export async function handleChatMessage(
       // `sending` is already false. Bound to THIS assistant message id, so a
       // following send can never write its sources here (Phase 07I).
       (citations) => store.updateChatCitations(assistant.id, citations),
-      // Phase 18A: the commit point, bound to THIS round's user message. The
-      // transaction decides whether the images may be written onto it, and it
-      // never runs when there was no attachment at all.
-      attachmentTransaction === undefined
+      // The commit point, bound to THIS round's Host messages. Phase 20B1 always
+      // records the parent anchor; Phase 18A additionally verifies the images
+      // (and only then writes `attachments` on the user message).
+      onCommitted === undefined && attachmentTransaction === undefined
         ? undefined
-        : (submitted) => attachmentTransaction.onSubmitted(submitted, user.id),
+        : async (submitted) => {
+            onCommitted?.(submitted, { userMessageId: user.id, assistantMessageId: assistant.id })
+            await attachmentTransaction?.onSubmitted(submitted, user.id)
+          },
     )
     // Force-write the final reply even if the last delta was throttled/dropped.
     // An EMPTY final reply is not written: that is what a user-requested stop can

@@ -304,3 +304,57 @@ test('20A 兼容层: 新 Host 的 connection.status=recovering 原样保留（�
   // recovering 属于白名单 → 不退回 deepseek 派生（否则会变成 offline）。
   assert.deepEqual(state.connection, { status: 'recovering', browserReady: true })
 })
+
+test('20B1 兼容层: deepSeekMessageId 原样保留（identity 不丢）', () => {
+  const state = normalizeCompanionState({
+    status: 'ready',
+    revision: 3,
+    instanceId: 'host-1',
+    connection: { status: 'online', browserReady: true },
+    deepseek: {
+      status: 'logged_in',
+      deepThink: { available: false, enabled: false },
+      search: { available: false, enabled: false },
+    },
+    composer: {
+      sending: false,
+      stopping: false,
+      deepThink: { available: false, enabled: false },
+      search: { available: false, enabled: false },
+    },
+    chat: {
+      sending: false,
+      messages: [
+        { id: 'h1', role: 'user', content: 'q', format: 'text', status: 'finished', deepSeekMessageId: 5 },
+        { id: 'h2', role: 'assistant', content: 'a', format: 'text', status: 'finished', deepSeekMessageId: 6 },
+      ],
+    },
+  })
+
+  assert.equal(state.chat.messages[0]!.deepSeekMessageId, 5)
+  assert.equal(state.chat.messages[1]!.deepSeekMessageId, 6)
+})
+
+test('20B1 兼容层: 旧 Host 无 deepSeekMessageId → 字段缺失（不是 0 / null）', () => {
+  const state = normalizeCompanionState({
+    status: 'ready',
+    revision: 4,
+    instanceId: 'host-1',
+    connection: { status: 'online', browserReady: true },
+    deepseek: {
+      status: 'logged_in',
+      deepThink: { available: false, enabled: false },
+      search: { available: false, enabled: false },
+    },
+    composer: {
+      sending: false,
+      stopping: false,
+      deepThink: { available: false, enabled: false },
+      search: { available: false, enabled: false },
+    },
+    chat: { sending: false, messages: [{ id: 'h1', role: 'user', content: 'q', format: 'text' }] },
+  })
+
+  assert.equal(state.chat.messages[0]!.deepSeekMessageId, undefined)
+  assert.equal('deepSeekMessageId' in state.chat.messages[0]!, false)
+})

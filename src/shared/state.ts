@@ -182,6 +182,13 @@ export interface ChatMessage {
   /** Conversation this message belongs to (Phase 08.2); absent until it is known. */
   sessionId?: string
   /**
+   * DeepSeek's own `message_id` for this message (Phase 20B1). Written ONLY once
+   * a history snapshot confirmed the binding through its parent chain — never
+   * derived from a completion request (the request only carries the parent
+   * anchor). The Host's own `id` stays the key; this is identity evidence.
+   */
+  deepSeekMessageId?: number
+  /**
    * Images sent with this message (Phase 18A). Written only once the completion
    * request was observed and its `ref_file_ids` matched — a message with
    * attachments is a verifiable statement, not an optimistic one.
