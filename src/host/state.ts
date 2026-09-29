@@ -166,6 +166,12 @@ export interface CompanionStateStore {
    * id keeps the title that is already known.
    */
   setCurrentSession(session: { id: string | null; title?: string | null }): void
+  /** Clear only a provably deleted current session and its transcript atomically. */
+  applyDeletedSession(sessionId: string): boolean
+  /** Preserve a session after an inconclusive recovery but block sending to an uncertain page. */
+  markSessionUnverified(sessionId: string): boolean
+  /** Clear the uncertainty only after the page was positively verified. */
+  clearSessionUnverified(sessionId: string): void
   setDeepThinkState(state: DeepThinkState): void
   setSearchState(state: SearchState): void
   appendChatMessage(role: ChatMessage['role'], content: string, format?: ChatFormat): ChatMessage
@@ -243,6 +249,7 @@ export function createCompanionStateStore(): CompanionStateStore {
     instanceId: randomUUID(),
     connection: connectionFrom('checking', false),
     currentSession: { id: null, title: null },
+    recoveryNotice: null,
     deepseek: { status: 'checking', deepThink, search },
     composer: { sending: false, stopping: false, deepThink, search, attachments: [] },
     chat: { messages: [], sending: false },
@@ -331,7 +338,40 @@ export function createCompanionStateStore(): CompanionStateStore {
         session.title == null ? (session.id === current.id ? current.title : null) : session.title
       const next: CurrentSession = { id: session.id, title }
       if (sameSession(current, next)) return
-      state = { ...state, currentSession: next }
+      state = {
+        ...state,
+        currentSession: next,
+        // URL navigation arrives BEFORE the transcript read. An unverified
+        // recovery stays blocked until that read succeeds, even across ids.
+        recoveryNotice:
+          state.recoveryNotice === 'session_unverified' || session.id === current.id ? state.recoveryNotice : null,
+      }
+      notify(state)
+    },
+
+    applyDeletedSession(sessionId: string) {
+      if (disposed || state.currentSession.id !== sessionId) return false
+      state = {
+        ...state,
+        currentSession: { id: null, title: null },
+        chat: { ...state.chat, messages: [] },
+        recoveryNotice: 'session_deleted',
+      }
+      notify(state)
+      return true
+    },
+
+    markSessionUnverified(sessionId: string) {
+      if (disposed || state.currentSession.id !== sessionId) return false
+      if (state.recoveryNotice === 'session_unverified') return true
+      state = { ...state, recoveryNotice: 'session_unverified' }
+      notify(state)
+      return true
+    },
+
+    clearSessionUnverified(sessionId: string) {
+      if (disposed || state.currentSession.id !== sessionId || state.recoveryNotice !== 'session_unverified') return
+      state = { ...state, recoveryNotice: null }
       notify(state)
     },
 
@@ -527,8 +567,8 @@ export function createCompanionStateStore(): CompanionStateStore {
       // Already empty → nothing to change, nothing to notify. Everything else
       // (`sending`, the composer switches, `deepseek.status`) is left alone:
       // this is a new conversation, not a reset of the Host.
-      if (state.chat.messages.length === 0) return
-      state = { ...state, chat: { ...state.chat, messages: [] } }
+      if (state.chat.messages.length === 0 && state.recoveryNotice === null) return
+      state = { ...state, chat: { ...state.chat, messages: [] }, recoveryNotice: null }
       notify(state)
     },
 

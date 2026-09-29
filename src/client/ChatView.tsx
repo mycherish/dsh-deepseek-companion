@@ -646,6 +646,7 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
   const [connection, setConnection] = useState<ConnectionState>(() => connectionFrom('checking', false))
   /** Where the DeepSeek page is (Phase 08.2) — drives the「当前」marker. */
   const [currentSession, setCurrentSession] = useState<CurrentSession>({ id: null, title: null })
+  const [recoveryNotice, setRecoveryNotice] = useState<'session_deleted' | 'session_unverified' | null>(null)
   const [messages, setMessages] = useState<ChatMessage[]>([])
   /**
    * Send/stop slot state (Phase 07J). `sending` is the Host's authoritative
@@ -692,6 +693,7 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
         setStatus(state.deepseek.status)
         setConnection(state.connection)
         setCurrentSession(state.currentSession)
+        setRecoveryNotice(state.recoveryNotice)
         setMessages(state.chat.messages)
         // The unified composer group is the single source for the controls
         // (Phase 08.2); the legacy mirrors carry the same values.
@@ -721,11 +723,20 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
   const phase = stopPhase({ sending: busy, stopping })
   // Any in-flight page operation (sending, new chat, switch) blocks the other
   // entry points — the Host refuses the same combinations with 409.
-  const pageBusy = busy || startingNew || switching
+  const recovering = connection.status === 'recovering'
+  const sessionUnverified = recoveryNotice === 'session_unverified'
+  const pageBusy = busy || startingNew || switching || recovering
   // Which history entry is「当前」(Phase 08.2): the Host's `currentSession` is
   // the authority (it follows the real page, manual navigation included); the
   // list's own `active` flag is only used while the Host has no id yet.
-  const activeId = currentSession.id ?? (sessions ?? []).find((session) => session.active)?.id ?? null
+  const activeId =
+    currentSession.id ?? (recoveryNotice === null ? (sessions ?? []).find((session) => session.active)?.id : null) ?? null
+
+  useEffect(() => {
+    if (recoveryNotice !== 'session_deleted') return
+    setHistoryOpen(false)
+    setSessions(null)
+  }, [recoveryNotice])
 
   // Keep the newest message in view.
   useEffect(() => {
@@ -770,7 +781,7 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
     connection: connection.status,
   })
   /** The picker is closed while the page is busy or a draft is still uploading. */
-  const pickerDisabled = !canPickAttachment({ pageBusy, attaching, attachments })
+  const pickerDisabled = sessionUnverified || !canPickAttachment({ pageBusy, attaching, attachments })
 
   /**
    * Read one picked file as base64. The string lives ONLY inside this call: it is
@@ -875,7 +886,7 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
   // A switch is disabled while a reply streams (the composer mode must not
   // change mid-generation) and when DeepSeek exposes no such switch at all.
   const toggleDisabled = (state: ComposerToggleState, toggling: boolean): boolean =>
-    busy || toggling || !state.available
+    pageBusy || sessionUnverified || toggling || !state.available
 
   /**
    * Ask the Host to start a new DeepSeek chat (Phase 07L). Nothing is cleared
@@ -884,7 +895,7 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
    * `startingNew` only blocks a second click until the Host answers.
    */
   const startNew = async (): Promise<void> => {
-    if (busy || startingNew) return
+    if (pageBusy) return
     setStartingNew(true)
     setError(null)
     try {
@@ -973,7 +984,7 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
     }
   }
 
-  if (status === 'checking') {
+  if (status === 'checking' && !recovering) {
     return (
       <div style={rootStyle}>
         <div style={hintStyle}>检测中…</div>
@@ -981,7 +992,7 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
     )
   }
 
-  if (status === 'logged_out') {
+  if (status === 'logged_out' && !recovering) {
     return (
       <div style={rootStyle}>
         <div style={hintStyle}>未登录 DeepSeek</div>
@@ -998,7 +1009,7 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
     )
   }
 
-  if (status === 'error') {
+  if (status === 'error' && !recovering) {
     return (
       <div style={rootStyle}>
         <div style={hintStyle}>检测失败</div>
@@ -1008,6 +1019,13 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
 
   return (
     <div style={rootStyle}>
+      {recovering ? <div role="status" style={hintStyle}>正在恢复 DeepSeek…</div> : null}
+      {!recovering && recoveryNotice === 'session_deleted' ? (
+        <div role="status" style={hintStyle}>原会话已在 DeepSeek 中删除，已清空本地聊天记录。</div>
+      ) : null}
+      {!recovering && sessionUnverified ? (
+        <div role="alert" style={hintStyle}>无法确认原会话状态；已保留聊天记录。请新建聊天或切换历史会话后继续。</div>
+      ) : null}
       <div ref={listRef} style={messagesStyle}>
         {messages.length === 0 ? <div style={hintStyle}>输入消息开始对话</div> : null}
         {messages.map((message) => {
@@ -1064,7 +1082,7 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
               // follows the real page, including manual navigation inside
               // DeepSeek); the list's own `active` flag is only the fallback for
               // a state pushed before the page was first read.
-              const active = activeId === null ? session.active : session.id === activeId
+              const active = recoveryNotice === null && (activeId === null ? session.active : session.id === activeId)
               return (
                 <button
                   key={session.id}
@@ -1141,8 +1159,8 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
                 </span>
                 <button
                   type="button"
-                  style={attachmentRemoveStyle(busy || removingId !== null)}
-                  disabled={busy || removingId !== null}
+                  style={attachmentRemoveStyle(pageBusy || removingId !== null)}
+                  disabled={pageBusy || removingId !== null}
                   title="从草稿中移除这张图片"
                   aria-label={`移除 ${attachment.name}`}
                   onClick={() => void dropAttachment(attachment.id)}
@@ -1192,7 +1210,7 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
             type="button"
             style={busy ? stopButtonStyle : sendButtonStyle}
             onClick={() => (busy ? void stop() : void send())}
-            disabled={busy ? stopping : !canSend}
+            disabled={recovering || sessionUnverified || (busy ? stopping : !canSend)}
           >
             {STOP_PHASE_LABEL[busy ? phase : 'send']}
           </button>

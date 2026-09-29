@@ -125,6 +125,23 @@ test('M: 从 / 发送但页面先出现 other（登录页等）→ ignore，不�
 
 // --- N. session sync controller ------------------------------------------------
 
+test('20B2: an unverified session stays blocked until external transcript read succeeds', async () => {
+  const { store, controller } = makeController([new Error('read failed'), transcript('B')])
+  store.setCurrentSession({ id: SESSION_A })
+  store.appendChatMessage('user', 'preserved')
+  store.markSessionUnverified(SESSION_A)
+  controller.onLocation(atB, { createdBySend: false })
+  await flush()
+  assert.equal(store.getState().currentSession.id, SESSION_B)
+  assert.equal(store.getState().chat.messages[0]?.content, 'preserved')
+  assert.equal(store.getState().recoveryNotice, 'session_unverified')
+  controller.onLocation(atA, { createdBySend: false })
+  await flush()
+  assert.equal(store.getState().currentSession.id, SESSION_A)
+  assert.equal(store.getState().chat.messages[0]?.content, 'B 问题')
+  assert.equal(store.getState().recoveryNotice, null)
+})
+
 test('N-A: 页面空闲时外部 A→B → Host 自动替换为 B', async () => {
   const { store, state, controller } = makeController([transcript('A'), transcript('B')])
   store.appendChatMessage('user', '旧的 A 内容')

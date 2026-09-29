@@ -7,6 +7,22 @@ import type { AssistantReply, ChatFormat } from '../src/shared/state.ts'
 
 const reply = (content: string, format: ChatFormat = 'text'): AssistantReply => ({ content, format })
 
+test('20B2: unverified recovery refuses send before appending a message', async () => {
+  const store = createCompanionStateStore()
+  store.setCurrentSession({ id: 'uncertain' })
+  store.appendChatMessage('user', 'preserved')
+  store.markSessionUnverified('uncertain')
+  let called = false
+  const result = await handleChatMessage(store, async () => {
+    called = true
+    return reply('unexpected')
+  }, 'new message')
+  assert.equal(result.status, 409)
+  assert.equal(called, false)
+  assert.deepEqual(store.getState().chat.messages.map((entry) => entry.content), ['preserved'])
+  assert.equal(store.getState().chat.sending, false)
+})
+
 test('发送成功后返回 reply，assistant 消息为最终内容', async () => {
   const store = createCompanionStateStore()
   const result = await handleChatMessage(store, async () => reply('回复内容'), '你好')

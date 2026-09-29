@@ -918,7 +918,7 @@ expectedFileIds = consumedAttachmentIds → AttachmentRecord[] → deepSeekFileI
 
 > 本节记录 2026-09-24 的**调查 + 真实故障注入**结论、**定稿设计**，以及 Phase 20A 的**实现与验收**。
 >
-> **实现状态**：Phase **20A 已实现并验证**；20B（session reconciliation + UX）仍 pending。实现与设计对应关系、真实故障注入结果、与定稿设计的偏差、已知限制见下方 **§0 实现状态**。证据来源：Playwright **1.62.0** + 其自带 Chromium **151.0.7922.34**，用 `companion-test` profile 的**临时副本**（`/tmp`，独立进程）做真实故障注入；**未使用 web profile**，未记录 token / cookie，结束后清理全部进程与副本。
+> **本节为 20A 验收时的历史记录**：当时 Phase **20A 已实现并验证**，20B 尚未开始；当前 20B1 / 20B2 均已完成，见下方 Phase 20B 章节。实现与设计对应关系、真实故障注入结果、与定稿设计的偏差、已知限制见下方 **§0 实现状态**。证据来源：Playwright **1.62.0** + 其自带 Chromium **151.0.7922.34**，用 `companion-test` profile 的**临时副本**（`/tmp`，独立进程）做真实故障注入；**未使用 web profile**，未记录 token / cookie，结束后清理全部进程与副本。
 
 ### 0. 实现状态（20A 已实现并验证，2026-09-24）
 
@@ -1339,7 +1339,7 @@ N9. **单步 timeout > 剩余预算**：实际等待取 `min(stepTimeout, remain
 
 20A 的验收句：**浏览器崩了 → 自动恢复 → 用户不刷新 DSH → Host 现有 transcript 不被误清 → 原 session 尽量重新打开 → 用户可继续发送。**
 
-**20B — Session Reconciliation & UX（后续设计）**
+**20B — Session Reconciliation & UX（20A 完成时的后续设计；现已实现）**
 
 - recovery 成功后的 `readTranscript()` 回填
 - 补齐「服务端已完成但 Host 未收到」的 assistant reply
@@ -1349,11 +1349,23 @@ N9. **单步 timeout > 剩余预算**：实际等待取 `min(stepTimeout, remain
 
 **边界纪律**：20A 不实现 20B 的任何一项；20B 不重做 20A 的生命周期。
 
-## Phase 20B — Session Reconciliation & UX（**20B1 implemented + validated**）
+## Phase 20B — Session Reconciliation & UX（**20B1 + 20B2 implemented + validated**）
 
-> 本节保留 2026-09-25 的调查、真实探测与设计记录；20B1 已实现并验收，20B2 尚未实现（见 `docs/roadmap.md`）。
+> 本节保留 2026-09-25 的调查、真实探测与设计记录；20B1 与 20B2 均已实现并验收（见 `docs/roadmap.md`）。
 >
 > 证据来源：Playwright 1.62.0 + companion-test profile 临时副本（`/tmp`），真实 `history_messages` 网络 JSON、IndexedDB 内容、`completion` 请求体。未记录 token/cookie，结束后清理全部进程与副本。
+
+### Phase 20B2 实现与验收（2026-09-27）
+
+**真实前端证据**：隔离的 `companion-test` profile 副本访问正常会话时，前端自己的 `GET /api/v0/chat/history_messages?chat_session_id=<id>` 返回 HTTP 200、`code=0`、`data.biz_code=0`，`biz_data` 为历史对象，URL 留在目标会话。访问确定不存在的 UUID 时，同一路径返回 HTTP 200、`code=0`、`data.biz_code=1`、`biz_data=null`，SPA 把 URL 重定向到 `/`；`users/current` 仍表明已登录。探测只输出状态与字段形状，没有记录认证值或历史内容。随后用仓库的 `createDeepSeekBrowser` 真实执行 page close → Level 1 恢复：正常会话得到 `location=session / history=found / verdict=reconcile`，侧栏有 active exact-id 的非空标题；不存在会话得到 `location=empty / history=not_found / verdict=deleted`。
+
+**删除判定**：`src/host/browser.ts` 只观察恢复期、当前 page epoch、**目标 `chat_session_id` 精确相等**的前端响应；Host 不直接请求 history API。`src/host/recovery-settlement.ts` 仅认可上面的精确 not-found envelope。`logged_in + 目标会话 + 实际 URL=/ + not_found` 全部成立时，`src/host/state.ts` 在一次 notify 中将 `currentSession` 置空、清空消息并发布 `session_deleted` 提示，清除 committed anchor。网络异常、认证失败、未知响应、响应与目标不匹配、未知重定向或跳到其他会话都不能触发删除；不确定时保留 transcript，发布 `session_unverified` 警告并拦截发送，用户可新建聊天或切换历史会话继续。后续 URL 导航不会提前解除警告，只有成功读取目标 transcript / 成功切换会话或用户确认新建聊天后才解除。
+
+**标题与文案**：恢复到目标会话才进行 20B1 reconcile，随后至多等待 2 s 读取侧栏；只有 `active && id===recoverTarget.id` 的非空标题更新 `currentSession.title`，读取失败不改变消息。Dock、Float、Pop-out 共用 Host 状态：`connection=recovering` 显示「正在恢复 DeepSeek…」并保留 transcript；确认删除显示清理提示；无法确认显示保留与操作提示。`recovering` 仍是 connection 状态，reconcile 与 session verdict 仍各自独立。恢复导航的 `networkidle` 也消耗 20A 的 60 s 剩余预算。
+
+**边界**：本轮真实恢复验收使用已存在与确定不存在的会话，不删除测试账号内已有会话；完整 DSH 三界面人工视觉验收仍留给 Phase 25。`parent_message_id=null` 与树形/分支 IDB entry 仍 safe-fail，分别属于后续 anchor identity 与 history branch resolution，不扩入 20B2。
+
+**回归覆盖**：`tests/recovery-settlement.test.ts` 固定 URL/方法/目标 ID、not-found envelope、删除 verdict 与标题精确匹配；`tests/state.test.ts` 固定删除的单次通知和不确定时的消息保留；`tests/chat.test.ts` 固定不确定状态下发送前拒绝；`tests/state-compat.test.ts` 固定三个界面消费的新状态值。
 
 ### 实现与真机验收记录（Phase 20B1，2026-09-25）
 
@@ -1643,7 +1655,7 @@ reload 导致的导航被 suppression 吞掉（不会被当成用户切换）；
 
 ### 13. session 已删除 / recoverTarget 重定向 `/`
 
-只有**明确证据**（history 返回 not-found / 空且 URL 重定向）才考虑清 transcript；network / auth / unknown redirect → **保留 Host + warning**。精确的 deleted HTTP/SPA 行为待 implementation 前补充真机。
+只有**明确证据**（目标 ID 的前端 history 返回 HTTP 200 / `code=0` / `biz_code=1` / `biz_data=null`，且 logged-in、实际 URL 重定向 `/`）才清 transcript；network / auth / unknown redirect → **保留 Host + `session_unverified` 提示并阻止发送**。实际行为与实现见上方「Phase 20B2 实现与验收」。
 
 ### 14. 测试计划（本轮修订；上一轮仍适用者保留）
 
@@ -1691,6 +1703,6 @@ A commit-before-delta kill · B mid-stream kill · C server 完成于 browser �
 ### 16. 20B 拆分
 
 - **20B1 — Safe transcript reconciliation**（IDB reader + **三层 identity strategy（Level 1 existing id / Level 2 parent-anchor binding / Level 3 strict bootstrap）** + 原地 patch + stability wait + stale 防护 + status merge）：**design finalized，可 implementation**。
-- **20B2 — Session-not-found / title / UX**：依赖 20B1，待 deleted-session 真机补充后实现。
+- **20B2 — Session-not-found / title / UX**：**已实现并验证**（2026-09-27）；目标 ID 的前端 not-found + `/` 重定向 + logged-in 才清理；其它结果 safe-fail；恢复后的 active exact-id 侧栏标题与共享恢复提示已接入。
 
 18B 保持 pending；21 Proxy 保持后续。

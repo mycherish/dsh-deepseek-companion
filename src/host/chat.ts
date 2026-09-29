@@ -54,6 +54,9 @@ export async function handleChatMessage(
     ids: { userMessageId: string; assistantMessageId: string },
   ) => void,
 ): Promise<ChatSendResult> {
+  if (store.getState().recoveryNotice === 'session_unverified') {
+    return { status: 409, body: { error: 'recovered session is unverified' } }
+  }
   // A page operation owns the page — never start a send against it, and never
   // append a user message that could not be sent.
   if (pageGuard?.inProgress() === true) {

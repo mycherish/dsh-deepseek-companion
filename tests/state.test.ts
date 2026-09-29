@@ -102,6 +102,45 @@ test('初始 chat 状态：messages 为空且 sending=false', () => {
   assert.equal(store.getState().chat.sending, false)
 })
 
+test('20B2: confirmed deleted session clears identity and transcript in one push', () => {
+  const store = createCompanionStateStore()
+  store.setCurrentSession({ id: 'lost', title: 'Old title' })
+  store.appendChatMessage('user', 'hello')
+  const states: CompanionState[] = []
+  store.subscribe((state) => states.push(state))
+  assert.equal(store.applyDeletedSession('other'), false)
+  assert.equal(states.length, 1)
+  assert.equal(store.applyDeletedSession('lost'), true)
+  assert.equal(states.length, 2)
+  assert.deepEqual(states[1]!.currentSession, { id: null, title: null })
+  assert.deepEqual(states[1]!.chat.messages, [])
+  assert.equal(states[1]!.recoveryNotice, 'session_deleted')
+  store.setCurrentSession({ id: 'next', title: 'Next' })
+  assert.equal(store.getState().recoveryNotice, null)
+})
+
+test('20B2: inconclusive recovery keeps transcript and clears warning after a real switch', () => {
+  const store = createCompanionStateStore()
+  store.setCurrentSession({ id: 'uncertain', title: 'Old' })
+  store.appendChatMessage('user', 'keep me')
+  assert.equal(store.markSessionUnverified('other'), false)
+  assert.equal(store.markSessionUnverified('uncertain'), true)
+  assert.equal(store.getState().chat.messages[0]?.content, 'keep me')
+  assert.equal(store.getState().currentSession.id, 'uncertain')
+  assert.equal(store.getState().recoveryNotice, 'session_unverified')
+  store.setCurrentSession({ id: 'uncertain', title: 'Old' })
+  assert.equal(store.getState().recoveryNotice, 'session_unverified')
+  store.clearSessionUnverified('other')
+  assert.equal(store.getState().recoveryNotice, 'session_unverified')
+  store.clearSessionUnverified('uncertain')
+  assert.equal(store.getState().recoveryNotice, null)
+  store.markSessionUnverified('uncertain')
+  store.setCurrentSession({ id: 'new', title: 'New' })
+  assert.equal(store.getState().recoveryNotice, 'session_unverified')
+  store.clearSessionUnverified('new')
+  assert.equal(store.getState().recoveryNotice, null)
+})
+
 test('appendChatMessage 追加 user/assistant 并通知监听者', () => {
   const store = createCompanionStateStore()
   const counts: number[] = []

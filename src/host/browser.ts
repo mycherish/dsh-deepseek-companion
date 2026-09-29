@@ -56,6 +56,12 @@ import {
 } from './history-idb.ts'
 import { loginStatusFromCurrentUser } from './login.ts'
 import {
+  classifyHistoryResponse,
+  matchesRecoveryHistoryRequest,
+  type HistorySignal,
+  type RecoverySettlement,
+} from './recovery-settlement.ts'
+import {
   buildTranscript,
   classifyDuringSend,
   conversationIdFromPath,
@@ -518,7 +524,7 @@ export interface RecoveryCallbacks {
    * rejection is swallowed: reconciliation is best-effort and can never turn a
    * successful recovery into a failure.
    */
-  onSettled?: (status: DeepSeekStatus) => Promise<void> | void
+  onSettled?: (result: RecoverySettlement) => Promise<void> | void
   /**
    * Diagnostics only (Phase 20A fault injection / debugging): getters for the
    * live page and context, so a test harness can trigger `page.close()` / crash /
@@ -574,6 +580,10 @@ export async function createDeepSeekBrowser(
   let knownHealthy = false
   /** Recovery's own navigation is in flight — the watcher must not sync it (§10.1). */
   let recoveryNavigationActive = false
+  /** Only the current recovery attempt's frontend requests can prove deletion. */
+  let recoveryTarget: SessionLocation | null = null
+  let historySignals: Promise<HistorySignal>[] = []
+  let settledLocation: SessionLocation = { kind: 'other' }
   /** Single-flight recovery promise; non-null while a recovery is executing (§6). */
   let recoveryPromise: Promise<DeepSeekStatus> | null = null
   /** A failure arrived WHILE recovering — handled after the current round (§6). */
@@ -699,6 +709,18 @@ export async function createDeepSeekBrowser(
     })
     target.on('response', (response) => {
       if (disposed || myEpoch !== pageEpoch) return
+      if (recoveryNavigationActive && recoveryTarget?.kind === 'session') {
+        if (matchesRecoveryHistoryRequest(response.url(), recoveryTarget.id, response.request().method())) {
+          // Observe the frontend's OWN request. Never make a Host request or
+          // expose its body, cookies, or headers outside this classifier.
+          historySignals.push(
+            response
+              .json()
+              .then((body: unknown) => classifyHistoryResponse(response.status(), body))
+              .catch(() => 'unknown'),
+          )
+        }
+      }
       if (!response.url().includes(CURRENT_USER_PATH)) return
       void runDetect()
     })
@@ -922,7 +944,8 @@ export async function createDeepSeekBrowser(
   const gotoRecoverTarget = async (target: SessionLocation, budget: RecoveryBudget): Promise<SessionLocation> => {
     const url = target.kind === 'session' ? `${DEEPSEEK_URL}/a/chat/s/${target.id}` : DEEPSEEK_URL
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: budget.effectiveTimeout('goto') })
-    await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {})
+    const settleMs = budget.effectiveTimeoutMs(15_000)
+    if (settleMs > 0) await page.waitForLoadState('networkidle', { timeout: settleMs }).catch(() => {})
     return sessionLocationFromPath(page.url())
   }
 
@@ -937,6 +960,7 @@ export async function createDeepSeekBrowser(
       .catch(() => false)
 
   const settleAfterRebuild = async (status: DeepSeekStatus, location: SessionLocation, budget: RecoveryBudget): Promise<DeepSeekStatus> => {
+    settledLocation = location
     recovery.onMarkKnown?.(location)
     crashed = false
     knownHealthy = status === 'logged_in' && location.kind !== 'other' && (await composerReady(budget))
@@ -988,6 +1012,7 @@ export async function createDeepSeekBrowser(
     recoveryNavigationActive = true
     const budget = createRecoveryBudget()
     const target = recovery.getRecoverTarget?.() ?? ({ kind: 'empty' } as const)
+    recoveryTarget = target
     let finalStatus: DeepSeekStatus = 'error'
     try {
       let level: RecoveryLevel = reason === 'browser-disconnected' || reason === 'context-closed' ? 3 : 1
@@ -999,6 +1024,8 @@ export async function createDeepSeekBrowser(
           if (budget.exhausted()) break
         }
         attempt += 1
+        historySignals = []
+        settledLocation = { kind: 'other' }
         try {
           const status = level === 1 ? await rebuildPage(target, budget) : await rebuildBrowser(target, budget)
           if (status === 'logged_in' || status === 'logged_out') {
@@ -1029,10 +1056,24 @@ export async function createDeepSeekBrowser(
       // before the transcript and the real page agree. Strictly best-effort — a
       // failure here can never turn a successful recovery into a failure.
       try {
-        await recovery.onSettled?.(finalStatus)
+        let history: HistorySignal = 'unknown'
+        if (historySignals.length > 0 && budget.remaining() > 0) {
+          const signals = await bound(Promise.all(historySignals), budget.effectiveTimeoutMs(1_000)).catch(() => [])
+          if (signals.length > 0 && signals.every((signal) => signal === 'not_found')) history = 'not_found'
+          else if (signals.length > 0 && signals.every((signal) => signal === 'found')) history = 'found'
+        }
+        let location = settledLocation
+        try {
+          if (!page.isClosed()) location = sessionLocationFromPath(page.url())
+        } catch {
+          location = { kind: 'other' }
+        }
+        await recovery.onSettled?.({ status: finalStatus, target, location, history })
       } catch {
         // reconciliation never owns the recovery's outcome
       }
+      recoveryTarget = null
+      historySignals = []
       recovery.onRecovering?.(false)
     }
     // The recovery has settled: report the page's real state (never optimistic).

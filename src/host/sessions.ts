@@ -573,6 +573,7 @@ export function createSessionSyncController(deps: {
     // Page first, Host second: the rebuilt transcript arrives tagged with the
     // conversation it was read from (Phase 08.2).
     deps.store.replaceChatMessages(transcript, location.id)
+    deps.store.clearSessionUnverified(location.id)
   }
 
   const run = async (location: SessionLocation): Promise<void> => {
@@ -767,6 +768,7 @@ export async function handleSwitchChatRequest(
     // were read from, and the Host records where the page is now.
     store.replaceChatMessages(transcript, requested.conversationId)
     store.setCurrentSession({ id: requested.conversationId, title: null })
+    store.clearSessionUnverified(requested.conversationId)
     return { status: 200, body: { switched: true, messages: transcript.length } }
   } catch (error) {
     // The current Host transcript is deliberately left untouched.

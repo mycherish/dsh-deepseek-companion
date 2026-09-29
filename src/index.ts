@@ -9,6 +9,11 @@ import { createPageGuard } from './host/guard.ts'
 import { handleNewChatRequest } from './host/new-chat.ts'
 import { attachmentUploadDir, browserProfileDir } from './host/paths.ts'
 import { createCommittedAnchorRegistry, readAndPlanReconcile } from './host/reconcile.ts'
+import {
+  recoverySessionVerdict,
+  titleForRecoveredSession,
+  type RecoverySettlement,
+} from './host/recovery-settlement.ts'
 import { handleSearchRequest } from './host/search.ts'
 import { prepareAttachmentTransaction, readParentAnchor } from './host/send-attachments.ts'
 import {
@@ -153,37 +158,65 @@ export function apply(ctx: Context): void {
      * whole duration, and is strictly best-effort: any failure keeps the Host
      * transcript untouched and still reports the recovery as successful.
      */
-    const runReconcile = async (status: DeepSeekStatus): Promise<void> => {
-      if (disposed || status !== 'logged_in') return
+    const runReconcile = async (settlement: RecoverySettlement): Promise<void> => {
+      if (disposed) return
+      const verdict = recoverySessionVerdict(settlement)
+      if (verdict === 'deleted' && settlement.target.kind === 'session') {
+        if (store.applyDeletedSession(settlement.target.id)) anchors.clear()
+        return
+      }
+      if (verdict === 'uncertain') {
+        if (settlement.target.kind === 'session') store.markSessionUnverified(settlement.target.id)
+        console.warn('[dsh-deepseek-companion] recovery location/history inconclusive; preserving Host transcript')
+        return
+      }
+      if (verdict !== 'reconcile' || settlement.target.kind !== 'session') return
       const currentBrowser = browser
       if (currentBrowser === null) return
-      const sessionId = store.getState().currentSession.id
-      // An empty chat has no server history to reconcile against.
-      if (sessionId === null) return
+      const sessionId = settlement.target.id
+      if (store.getState().currentSession.id !== sessionId) return
+      store.clearSessionUnverified(sessionId)
       // The guard arbitrates the ONE page: a busy page is skipped, never fought over.
       if (!pageGuard.tryClaim()) return
       const generation = ++reconcileGeneration
       try {
         // Read → bounded stability wait → validate → plan (Phase 20B1, pure logic).
-        const outcome = await readAndPlanReconcile({
-          browser: currentBrowser,
-          sessionId,
-          hostMessages: store.getState().chat.messages,
-          anchor: anchors.get(),
-          // Freshness is re-checked right before the plan is handed back: a
-          // switch, a page rebuild or a newer reconcile invalidates this run.
-          isFresh: () =>
-            !disposed && generation === reconcileGeneration && store.getState().currentSession.id === sessionId,
-        })
-        if (outcome.kind !== 'plan') {
-          console.warn('[dsh-deepseek-companion] reconcile skipped:', outcome.reason)
-          return
+        const isFresh = (): boolean =>
+          !disposed && generation === reconcileGeneration && store.getState().currentSession.id === sessionId
+        try {
+          const outcome = await readAndPlanReconcile({
+            browser: currentBrowser,
+            sessionId,
+            hostMessages: store.getState().chat.messages,
+            anchor: anchors.get(),
+            isFresh,
+          })
+          if (outcome.kind === 'plan') {
+            store.applyChatReconcile(outcome.patch)
+            anchors.clear()
+          } else console.warn('[dsh-deepseek-companion] reconcile skipped:', outcome.reason)
+        } catch (error) {
+          console.warn('[dsh-deepseek-companion] reconcile failed:', error)
         }
-        store.applyChatReconcile(outcome.patch)
-        // The committed turn is resolved — its anchor has done its job.
-        anchors.clear()
-      } catch (error) {
-        console.warn('[dsh-deepseek-companion] reconcile failed:', error)
+        // Title is a sidebar projection, never an identity input. A missing or
+        // slow sidebar read cannot block the reconciled transcript.
+        let timer: ReturnType<typeof setTimeout> | undefined
+        try {
+          const sessions = await Promise.race([
+            currentBrowser.listSessions(),
+            new Promise<null>((resolve) => {
+              timer = setTimeout(() => resolve(null), 2_000)
+            }),
+          ])
+          const title = sessions === null ? null : titleForRecoveredSession(sessions, sessionId)
+          if (title !== null && isFresh()) {
+            store.setCurrentSession({ id: sessionId, title })
+          }
+        } catch {
+          // Title refresh is best-effort.
+        } finally {
+          if (timer !== undefined) clearTimeout(timer)
+        }
       } finally {
         pageGuard.release()
       }
@@ -228,7 +261,7 @@ export function apply(ctx: Context): void {
         // Phase 20B1: the last step of a successful recovery is reconciliation —
         // it runs while `connection` still reads `recovering`, so the UI is only
         // handed back once the transcript and the real page agree.
-        onSettled: (status) => runReconcile(status),
+        onSettled: (settlement) => runReconcile(settlement),
       },
     )
       .then((created) => {
@@ -317,6 +350,9 @@ export function apply(ctx: Context): void {
           // the single-flight recovery when the page needs it (Phase 20A).
           const currentBrowser = await readyBrowser()
           if (currentBrowser === null) return Response.json({ error: 'browser not ready' }, { status: 503 })
+          if (store.getState().recoveryNotice === 'session_unverified') {
+            return Response.json({ error: 'recovered session is unverified' }, { status: 409 })
+          }
 
           // The image half of the round (Phase 18A). The identity comparison runs
           // for EVERY send — text-only included: a page draft this Host does not

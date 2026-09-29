@@ -243,6 +243,8 @@ export interface CompanionState {
   connection: ConnectionState
   /** Where the DeepSeek page is right now (Phase 08.2). */
   currentSession: CurrentSession
+  /** A confirmed recovery outcome worth showing after `recovering` ends. */
+  recoveryNotice: 'session_deleted' | 'session_unverified' | null
   /**
    * Legacy login/composer mirror (Phase 07A → 07H). Kept for backward
    * compatibility: `deepseek.status` is still the source of the login texts, and

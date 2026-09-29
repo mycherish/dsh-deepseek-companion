@@ -3,6 +3,13 @@ import test from 'node:test'
 
 import { normalizeCompanionState } from '../src/client/api.ts'
 
+test('20B2 recovery notice is normalized across the shared view payload', () => {
+  assert.equal(normalizeCompanionState({ recoveryNotice: 'session_deleted' }).recoveryNotice, 'session_deleted')
+  assert.equal(normalizeCompanionState({ recoveryNotice: 'session_unverified' }).recoveryNotice, 'session_unverified')
+  assert.equal(normalizeCompanionState({ recoveryNotice: 'unknown' }).recoveryNotice, null)
+  assert.equal(normalizeCompanionState({}).recoveryNotice, null)
+})
+
 /**
  * Phase 08.2 兼容层测试：Client 对 Host 状态的归一化。
  *

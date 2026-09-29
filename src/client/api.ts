@@ -428,6 +428,10 @@ export function normalizeCompanionState(raw: unknown): CompanionState {
     instanceId: typeof value.instanceId === 'string' ? value.instanceId : '',
     connection,
     currentSession,
+    recoveryNotice:
+      value.recoveryNotice === 'session_deleted' || value.recoveryNotice === 'session_unverified'
+        ? value.recoveryNotice
+        : null,
     deepseek: { status, deepThink, search },
     composer,
     chat: { messages, sending },
