@@ -25,6 +25,7 @@ import { remarkCitations } from './remark-citations.ts'
 import { STOP_PHASE_LABEL, initialStopUiState, reduceStopUi, stopPhase } from './stop-state.ts'
 import { connectionFrom } from '../shared/state.ts'
 import type {
+  ChatAttachment,
   ChatFormat,
   ChatMessage,
   ChatReasoning,
@@ -160,6 +161,39 @@ const sentAttachmentStyle: CSSProperties = {
   color: 'var(--dsw-alias-label-secondary)',
   fontSize: 12,
   lineHeight: '16px',
+}
+
+const historyImageStyle: CSSProperties = {
+  display: 'block',
+  maxWidth: 'min(240px, 100%)',
+  maxHeight: 240,
+  objectFit: 'contain',
+  borderRadius: 6,
+}
+
+/** A signed history URL can expire; the file name remains visible on failure. */
+function SentAttachment({ attachment }: { attachment: ChatAttachment }): JSX.Element {
+  const [failed, setFailed] = useState(false)
+  const label = attachment.name ?? '图片'
+  const style: CSSProperties =
+    attachment.remoteUrl === undefined
+      ? sentAttachmentStyle
+      : { ...sentAttachmentStyle, flexDirection: 'column', alignItems: 'flex-start', maxWidth: '100%' }
+  return (
+    <div style={style} title={label}>
+      {attachment.remoteUrl !== undefined && !failed ? (
+        <img
+          src={attachment.remoteUrl}
+          alt={label}
+          loading="lazy"
+          referrerPolicy="no-referrer"
+          style={historyImageStyle}
+          onError={() => setFailed(true)}
+        />
+      ) : null}
+      <span>{label + (attachment.bytes !== undefined ? ` · ${formatBytes(attachment.bytes)}` : '')}</span>
+    </div>
+  )
 }
 
 const attachmentNameStyle: CSSProperties = {
@@ -1037,16 +1071,12 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
           if (message.role === 'assistant' && message.content === '' && reasoning === undefined) return null
           return (
             <div key={message.id} style={messageRowStyle(message.role, message.format)}>
-              {/* Images that were really sent with this message (Phase 18A):
-                  written by the Host only after the commit point + a verified
-                  `ref_file_ids`. Metadata chips again — no thumbnails. */}
+              {/* Sent images: live 18A entries have metadata only; restored 18B
+                  entries carry a signed URL and fall back to the file name. */}
               {message.attachments !== undefined && message.attachments.length > 0 ? (
                 <div style={attachmentRowStyle}>
                   {message.attachments.map((attachment) => (
-                    <span key={attachment.id} style={sentAttachmentStyle} title={attachment.name ?? '图片'}>
-                      {(attachment.name ?? '图片') +
-                        (attachment.bytes !== undefined ? ` · ${formatBytes(attachment.bytes)}` : '')}
-                    </span>
+                    <SentAttachment key={`${attachment.id}:${attachment.remoteUrl ?? ''}`} attachment={attachment} />
                   ))}
                 </div>
               ) : null}

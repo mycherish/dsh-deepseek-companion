@@ -469,9 +469,9 @@ DeepSeek page（URL pathname / 侧栏 href，标准 DOM）
 - **不用 React fiber 做状态**：本次全部新增状态都来自 URL / 标准 DOM / 既有 store 写入；`readTranscriptInPage` 里 fiber 只用于读取 DeepSeek 自己的 raw Markdown（既有行为，未改动）。
 - **测试**：`tests/state.test.ts`（connection/currentSession/composer/message 状态与三界面快照一致）、`tests/state-compat.test.ts`（兼容层 + 旧状态迁移）、`tests/stop-state.test.ts`（Host 停止标记让未点击界面也显示「停止中…」）、`tests/chat.test.ts` / `tests/stop.test.ts` / `tests/new-chat.test.ts` / `tests/sessions.test.ts` / `tests/session-sync.test.ts`（各自的不回归用例）。
 
-## DeepSeek 图片发送（Phase 18 · **18A 已实现；核心场景已实机验收**）
+## DeepSeek 图片发送与历史恢复（Phase 18 · **18A 已实机验收；18B 已实现待复验**）
 
-> 本节先记录**设计**，再记录**实现与实机验收**。设计期的「实测」结论来自真实页面上的两轮探测（2026-09-23 能力 / DOM / 历史恢复；2026-09-24 上传响应关联与失败路径），用 **companion-test profile 的临时副本** + 独立 Playwright 实例完成。**18A 已实现**（`feat(image): send images`）：8 个**核心**发送/清理场景已在真实 `companion-test` DSH 实例上跑通；**外部页面手动草稿、页面外部删除、失败卡片删除**这几条安全路径**没有完整真机驱动**，由单测覆盖（其中「审核失败后页面保留卡片」的行为已在真实环境观察到）。18B 仍只保留结论。
+> 本节先记录**设计**，再记录**实现与实机验收**。设计期的「实测」结论来自真实页面上的两轮探测（2026-09-23 能力 / DOM / 历史恢复；2026-09-24 上传响应关联与失败路径），用 **companion-test profile 的临时副本** + 独立 Playwright 实例完成。**18A 已实现**（`feat(image): send images`）：8 个**核心**发送/清理场景已在真实 `companion-test` DSH 实例上跑通；**外部页面手动草稿、页面外部删除、失败卡片删除**这几条安全路径**没有完整真机驱动**，由单测覆盖（其中「审核失败后页面保留卡片」的行为已在真实环境观察到）。**18B 已实现，历史图文 reader 已在真实 Chromium 复验**；Client 界面复验边界见下文。
 >
 > **⚠ 实机验收纠正了两条设计期假设**（详见文末「实现与实机验收」）：① 页面函数必须自包含（Playwright 序列化）；② 草稿 blob 扫描必须限定在 composer 内 —— 已发送消息里的图片同样以 `blob:` 渲染。
 
@@ -858,6 +858,13 @@ expectedFileIds = consumedAttachmentIds → AttachmentRecord[] → deepSeekFileI
 - **18A（发送图片）**：选图 → Host action → 页面上传 → 草稿状态（attachment card，无像素缩略图）→ 发送（request 级 commit point + `ref_file_ids` 校验）→ 消息 `attachments`。**可独立交付，且不依赖 18B。**
 - **18B（历史图片恢复）**：`readTranscriptInPage` 读 user 消息里的 `img`；只有图片的消息不再被丢弃；URL 映射必须基于**结构证据**（「这个 `img` 属于这条 `.ds-message`」），**禁止 fuzzy mapping**（不按顺序/数量猜对应关系）。签名 URL 过期后的展示降级需单独决定（例如只显示文件名占位）。
 - 若 18B 达不到结构证据标准，则**只交付 18A**，历史里继续表现为“该轮只有文本/空白”，不伪造。
+
+### 18B 实现与验收记录（2026-09-30）
+
+- `readTranscriptInPage` 逐条读取 user `.ds-message` **内部**的 `img`。只接受 `/api/file` 且有唯一 `file_id` 与 `state` 的相对 URL 或 `files.deepseeksvc.com` HTTPS URL；相对 URL 转成 `chat.deepseek.com` 绝对地址，避免 Companion UI 错误地请求 DSH 自身域名。任何图片来源不明、参数缺失或同一消息出现重复 `file_id`，该消息的附件集合整体 safe-fail；文本照常保留，不按位置猜归属。
+- 页面返回后 Host 再次验证 URL 域名、路径、签名和 `file_id` 一致性。`ChatAttachment` 只承载 `id/name/remoteUrl`；图片不混入正文、reasoning 或 citations。纯图片 user 消息因有附件而保留；空且无附件的占位消息仍丢弃。
+- Host transcript 等价比较纳入**本次确证**的附件：同一文本后来出现历史图片时触发状态更新；相同图片重复读取不推送；本次未读到附件（实时页面仍是 `blob:`）时不抹掉 Host 已验证的 18A 附件。Client 对带历史 URL 的附件显示图片和文件名，加载失败（包括签名过期）时仅显示文件名；18A 实时发送的附件仍显示元数据卡片。
+- 自动测试覆盖纯图片、图文混合、跨消息归属、异常 URL/重复 ID safe-fail、Host 二次校验、同文本附件更新及 `blob:` 重读保护；Client 通过 typecheck/build 验证。独立 `companion-test` profile 临时副本的只读缓存扫描定位到 3 个带 FILE 的历史会话；真实 Chromium 页面里的 user 消息分别有 1、2、1 张 `files.deepseeksvc.com/api/file` 图片，页面 reader 分别恢复 1、2、1 个附件，未打印会话内容或签名参数。此副本没有纯图片历史轮次；纯图片保留由自动测试和设计期结构探测覆盖。Companion Client 的真实像素加载与签名过期降级仍待界面复验。
 
 ### 风险与未决项（实现前已知，均可接受）
 

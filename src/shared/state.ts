@@ -110,7 +110,7 @@ export interface ChatAttachment {
   name: string | null
   mimeType?: string
   bytes?: number
-  /** Signed CDN URL for history restore — reserved for Phase 18B, never set in 18A. */
+  /** Signed history URL for display; absent on 18A live sends. */
   remoteUrl?: string
 }
 
@@ -189,9 +189,9 @@ export interface ChatMessage {
    */
   deepSeekMessageId?: number
   /**
-   * Images sent with this message (Phase 18A). Written only once the completion
-   * request was observed and its `ref_file_ids` matched — a message with
-   * attachments is a verifiable statement, not an optimistic one.
+   * Images sent with this message. Phase 18A writes only after the completion
+   * request's `ref_file_ids` match; Phase 18B rebuilds from the history DOM's
+   * exact user-message containment and signed file URL.
    */
   attachments?: ChatAttachment[]
   /** Only present when DeepSeek produced reasoning for this reply. */

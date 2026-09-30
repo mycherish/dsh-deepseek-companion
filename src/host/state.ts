@@ -42,11 +42,15 @@ function sameReasoning(a: ChatReasoning | undefined, b: ChatReasoning | undefine
   return a.content === b.content && a.format === b.format
 }
 
-/**
- * Whether an incoming transcript is EQUIVALENT to the current one: same roles,
- * content, format, reasoning and citations — ids aside, since a re-read of the
- * same conversation mints fresh Host ids every time (Phase 08).
- */
+function attachmentsUnchangedByRead(a: ChatAttachment[] | undefined, b: ChatAttachment[] | undefined): boolean {
+  // A live, already-sent image may still be a page-local blob. A transcript
+  // read with no verifiable history URL is not evidence that the Host's
+  // previously verified attachment disappeared.
+  if (b === undefined) return true
+  if (a === undefined) return false
+  return sameChatAttachments(a, b)
+}
+
 /** Structural equality for the page's current conversation. */
 function sameSession(a: CurrentSession, b: CurrentSession): boolean {
   return a.id === b.id && a.title === b.title
@@ -130,12 +134,14 @@ function withConnection(
   return { ...state, connection: connectionFrom(status, browserReady) }
 }
 
+/** A page re-read can be skipped when its observed content matches Host state. */
 function equivalentMessages(current: ChatMessage[], next: ChatMessageInput[]): boolean {
   if (current.length !== next.length) return false
   return current.every((message, index) => {
     const other = next[index]!
     if (message.role !== other.role || message.content !== other.content || message.format !== other.format) return false
     if (!sameReasoning(message.reasoning, other.reasoning)) return false
+    if (!attachmentsUnchangedByRead(message.attachments, other.attachments)) return false
     const a = message.citations
     const b = other.citations
     if (a === undefined || b === undefined) return a === b

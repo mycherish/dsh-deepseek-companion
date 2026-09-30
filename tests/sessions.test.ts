@@ -324,6 +324,46 @@ test('H: user + assistant 顺序与角色由结构决定（不看 hash class）'
   assert.equal(entries[1]!.replyIndex, 0)
 })
 
+test('18B: 同一条 user 消息的历史图片与文本一起恢复；纯图片消息保留', () => {
+  const imageOnly = new FakeEl()
+  imageOnly.map.img = [new FakeEl({ tag: 'IMG', attrs: {
+    src: 'https://files.deepseeksvc.com/api/file?file_id=file-one&state=signed&ty=chat',
+    alt: 'one.png',
+  } })]
+  const mixed = new FakeEl({ text: '请描述图片' })
+  mixed.map.img = [new FakeEl({ tag: 'IMG', attrs: {
+    src: '/api/file?file_id=file-two&state=signed&ty=chat',
+    alt: 'two.jpg',
+  } })]
+  const entries = readTranscriptInPage({ options: TRANSCRIPT, env: sessionsEnv({ messages: [imageOnly, mixed] }) }).entries
+  const messages = buildTranscript(normalizeTranscript({ entries }).entries, [])
+
+  assert.deepEqual(messages, [
+    { role: 'user', content: '', format: 'text', attachments: [{ id: 'file-one', kind: 'image', name: 'one.png', remoteUrl: 'https://files.deepseeksvc.com/api/file?file_id=file-one&state=signed&ty=chat' }] },
+    { role: 'user', content: '请描述图片', format: 'text', attachments: [{ id: 'file-two', kind: 'image', name: 'two.jpg', remoteUrl: 'https://chat.deepseek.com/api/file?file_id=file-two&state=signed&ty=chat' }] },
+  ])
+})
+
+test('18B: 无法证明为历史附件的图片不挂到消息，重复 file_id 不猜', () => {
+  const user = new FakeEl({ text: '文本保留' })
+  user.map.img = [
+    new FakeEl({ tag: 'IMG', attrs: { src: 'https://evil.example/api/file?file_id=file-one', alt: 'fake.png' } }),
+    new FakeEl({ tag: 'IMG', attrs: { src: 'https://files.deepseeksvc.com/api/file?state=signed', alt: 'missing.png' } }),
+    new FakeEl({ tag: 'IMG', attrs: { src: 'https://files.deepseeksvc.com/api/file?file_id=file-a&state=s', alt: 'a.png' } }),
+    new FakeEl({ tag: 'IMG', attrs: { src: 'https://files.deepseeksvc.com/api/file?file_id=file-a&state=s', alt: 'duplicate.png' } }),
+  ]
+  const entry = readTranscriptInPage({ options: TRANSCRIPT, env: sessionsEnv({ messages: [user] }) }).entries[0]!
+  assert.deepEqual(buildTranscript([entry], []), [{ role: 'user', content: '文本保留', format: 'text' }])
+})
+
+test('18B: Host 再校验页面返回的签名 URL 与 file_id', () => {
+  const entries = normalizeTranscript({ entries: [
+    { role: 'user', content: '保留文本', attachments: [{ id: 'file-a', kind: 'image', name: 'a.png', remoteUrl: 'https://evil.example/api/file?file_id=file-a&state=s' }] },
+    { role: 'user', content: '', attachments: [{ id: 'file-a', kind: 'image', name: 'a.png', remoteUrl: 'https://files.deepseeksvc.com/api/file?file_id=file-b&state=s' }] },
+  ] }).entries
+  assert.deepEqual(buildTranscript(entries, []), [{ role: 'user', content: '保留文本', format: 'text' }])
+})
+
 test('H: fiber markdown 命中 → content = 原始 Markdown，format = markdown', () => {
   const assistant = assistantMessage({ text: '渲染出来的正文', fiber: fiberChain([{ markdown: '# 标题\n\n正文 [citation:1]' }]) })
 
@@ -803,6 +843,11 @@ test('P: 页面函数自包含 —— 去掉模块作用域后仍能执行', () 
   const win: Record<string, unknown> = {}
   const switchOptions = { ...SWITCH, conversationId: VALID_ID }
   const message = assistantMessage({ text: '正文', reasoning: '思考' })
+  const imageMessage = new FakeEl()
+  imageMessage.map.img = [new FakeEl({ tag: 'IMG', attrs: {
+    src: '/api/file?file_id=file-isolated&state=signed',
+    alt: 'isolated.png',
+  } })]
   const scrollEnv = sessionsEnv({
     messages: [messageWithScrollers(new FakeEl(), [scroller({ scrollHeight: 3545, clientHeight: 840 })])],
   })
@@ -811,6 +856,7 @@ test('P: 页面函数自包含 —— 去掉模块作用域后仍能执行', () 
     ['switchChatInPage', switchChatInPage, { options: switchOptions, env: sessionsEnv({ links, window: win }) }, true],
     ['switchChatReadyInPage', switchChatReadyInPage, { options: switchOptions, env: sessionsEnv({ pathname: '/', window: win }) }, true],
     ['readTranscriptInPage', readTranscriptInPage, { options: TRANSCRIPT, env: sessionsEnv({ messages: [message] }) }, true],
+    ['readTranscriptInPage with image', readTranscriptInPage, { options: TRANSCRIPT, env: sessionsEnv({ messages: [imageMessage] }) }, true],
     ['scrollMessagesInPage', scrollMessagesInPage, { options: SCROLL_OPTIONS, position: 'top', env: scrollEnv }, false],
   ]
 

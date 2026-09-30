@@ -21,8 +21,8 @@
 - Phase 17 — Web Search
 - Phase 18 — Image（向真实 DeepSeek 会话发送**图片**；不含文件附件、不含 gallery/lightbox）
   - 18A — 发送图片（composer 选图 → 上传 → 随文本发送）—— **已完成（implemented + 实机验收）**
-  - 18B — 历史图片恢复（历史 transcript 中的图片回填，需先解决稳定映射）
-  - 状态：**18A 已实现**：8 个核心发送/清理场景已在真实 `companion-test` 实例实机验收通过；**外部页面手动草稿 / 页面外部删除 / 失败卡片 remove 等安全路径由单测覆盖（未完整真机驱动）**；18B（历史图片恢复）**仍为 pending，未实现**（见 `docs/architecture.md` 的 Phase 18 小节）
+  - 18B — 历史图片恢复（同一 user `.ds-message` 内的图片结构映射；纯图片消息保留；签名 URL 失效降级）—— **已实现并通过历史图文页面 reader 复验；Client 像素与过期降级待界面复验**
+  - 状态：**18A 已实现**：8 个核心发送/清理场景已在真实 `companion-test` 实例实机验收通过；**外部页面手动草稿 / 页面外部删除 / 失败卡片 remove 等安全路径由单测覆盖（未完整真机驱动）**；18B 的 reader / Host 有自动测试，真实 Chromium 的 3 个图文历史会话 reader 恢复 1/2/1 张图片，纯图片轮次由自动测试覆盖，Client 通过 typecheck/build（见 `docs/architecture.md` 的 Phase 18 小节）
 - Phase 19 — Conversation History（**已在 Phase 08 / 08.1 提前交付**：侧栏列表 + 切换 + 外部导航同步）
 - Phase 20 — Browser Recovery（浏览器/页面故障后自动恢复，不需要重启 DSH）
   - 状态：**20A、20B1、20B2 均已实现并验证**；不做 Proxy / 多账号 / browser pool / 多 page / durable persistence / 自动重发
@@ -53,6 +53,6 @@
 
 已完成：Phase 01–08.2（工程初始化 → Host State / HTTP+SSE → 浏览器与登录 → 基础聊天 / 流式 / Markdown / Deep Think / 搜索 / Stop / New Chat → 历史会话与外部会话同步 → 08.2 状态模型收口）。
 
-当前：**Phase 20 Browser Recovery 已完成（20A + 20B1 + 20B2）**。20B1 的 IDB reader、三层 identity、原地 patch、30 s 共享 deadline 与单次前端刷新已完成，真机确认 commit→kill / mid-stream kill 的原地补全。20B2 的删除证据、标题刷新和恢复提示已完成；对不能确认的重定向保留 Host 消息并阻止发送。**Phase 18A 已完成；18B 历史图片恢复仍 pending**。后续依次为 18B、21 Proxy、22 Handoff、23 Task Brief、24 UI Polish、25 Regression / Release。`parent_message_id=null` 的极快连续发送与树形/分支 IDB entry 保持 safe-fail，分别作为 anchor identity 与 history branch resolution 的独立后续任务；不回填 20B。
+当前：**Phase 20 Browser Recovery 已完成（20A + 20B1 + 20B2）**。20B1 的 IDB reader、三层 identity、原地 patch、30 s 共享 deadline 与单次前端刷新已完成，真机确认 commit→kill / mid-stream kill 的原地补全。20B2 的删除证据、标题刷新和恢复提示已完成；对不能确认的重定向保留 Host 消息并阻止发送。**Phase 18A 已完成；18B 历史图片恢复已实现并通过历史图文 reader 真机复验，Client 界面复验待完成**。后续依次为 21 Proxy、22 Handoff、23 Task Brief、24 UI Polish、25 Regression / Release。`parent_message_id=null` 的极快连续发送与树形/分支 IDB entry 保持 safe-fail，分别作为 anchor identity 与 history branch resolution 的独立后续任务；不回填 20B。
 
 每次只完成一个 Phase，禁止顺手实现下一阶段。

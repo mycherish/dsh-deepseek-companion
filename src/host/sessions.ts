@@ -15,7 +15,7 @@
  * and the "active" entry is decided by comparing that id with the page's own
  * pathname. No hash class, no React fiber, and the title is never a key.
  */
-import type { ChatMessageInput, ChatSessionSummary } from '../shared/state.ts'
+import type { ChatAttachment, ChatMessageInput, ChatSessionSummary } from '../shared/state.ts'
 import { resolveCitationsByBlock, type DomBlock } from './citations.ts'
 import type { PageGuard } from './guard.ts'
 import type { CompanionStateStore } from './state.ts'
@@ -219,6 +219,8 @@ export interface TranscriptEntryRaw {
   reasoning: string
   /** Index into the assistant reply nodes (-1 for a user entry). */
   replyIndex: number
+  /** Images structurally contained in this user message (Phase 18B). */
+  attachments?: ChatAttachment[]
 }
 
 /**
@@ -285,13 +287,61 @@ export function readTranscriptInPage(payload: { options: TranscriptOptions; env?
       (message as { querySelector?: (s: string) => unknown }).querySelector?.(options.replySelector) ??
       (useFallback ? (message as { querySelector?: (s: string) => unknown }).querySelector?.(options.replyFallback) : null)
     if (reply === null || reply === undefined) {
-      entries.push({
+      // Only images INSIDE this message can belong to it. One ambiguous image
+      // invalidates the attachment set; never infer ownership by DOM order.
+      const images = Array.from(
+        (message as { querySelectorAll?: (s: string) => ArrayLike<unknown> }).querySelectorAll?.('img') ?? [],
+      )
+      const attachments: ChatAttachment[] = []
+      const seen = new Set<string>()
+      let validImages = true
+      for (const image of images) {
+        const node = image as { getAttribute?: (name: string) => unknown }
+        const src = node.getAttribute?.('src')
+        if (typeof src !== 'string' || src.length > 4096 || src.includes('#')) {
+          validImages = false
+          break
+        }
+        const relative = src.startsWith('/api/file?')
+        let url: URL
+        try {
+          url = new URL(src, 'https://chat.deepseek.com')
+        } catch {
+          validImages = false
+          break
+        }
+        if ((!relative && url.origin !== 'https://files.deepseeksvc.com') || url.pathname !== '/api/file') {
+          validImages = false
+          break
+        }
+        const ids = url.searchParams.getAll('file_id')
+        const signatures = url.searchParams.getAll('state')
+        const id = ids[0] ?? ''
+        if (
+          ids.length !== 1 || !/^[a-zA-Z0-9_-]{1,128}$/.test(id) ||
+          signatures.length !== 1 || signatures[0] === '' || seen.has(id)
+        ) {
+          validImages = false
+          break
+        }
+        seen.add(id)
+        const alt = node.getAttribute?.('alt')
+        attachments.push({
+          id,
+          kind: 'image',
+          name: typeof alt === 'string' && alt.trim() !== '' ? alt.trim().slice(0, 200) : null,
+          remoteUrl: url.href,
+        })
+      }
+      const entry: TranscriptEntryRaw = {
         role: 'user',
         content: String((message as { textContent?: unknown }).textContent ?? '').trim(),
         format: 'text',
         reasoning: '',
         replyIndex: -1,
-      })
+      }
+      if (validImages && attachments.length > 0) entry.attachments = attachments
+      entries.push(entry)
       continue
     }
     replyIndex += 1
@@ -364,15 +414,16 @@ export function transcriptNeedsBlocks(entries: TranscriptEntryRaw[]): boolean {
  * Assemble the rebuilt transcript: user entries become plain text messages;
  * assistant entries keep their raw Markdown (or rendered text), their reasoning
  * and — only where the strict block rule can map them — their citations. Empty
- * user bubbles are dropped; an assistant entry never carries an empty reasoning
- * block.
+ * user bubbles are dropped unless they contain proven image attachments.
  */
 export function buildTranscript(entries: TranscriptEntryRaw[], blocksByReply: DomBlock[][]): ChatMessageInput[] {
   const messages: ChatMessageInput[] = []
   for (const entry of entries) {
     if (entry.role === 'user') {
-      if (entry.content === '') continue
-      messages.push({ role: 'user', content: entry.content, format: 'text' })
+      if (entry.content === '' && (entry.attachments?.length ?? 0) === 0) continue
+      const message: ChatMessageInput = { role: 'user', content: entry.content, format: 'text' }
+      if (entry.attachments?.length) message.attachments = entry.attachments
+      messages.push(message)
       continue
     }
     const message: ChatMessageInput = { role: 'assistant', content: entry.content, format: entry.format }
@@ -674,16 +725,58 @@ export function normalizeTranscript(value: unknown): { entries: TranscriptEntryR
         format?: unknown
         reasoning?: unknown
         replyIndex?: unknown
+        attachments?: unknown
       }
       if (source.role !== 'user' && source.role !== 'assistant') continue
       if (typeof source.content !== 'string') continue
-      entries.push({
+      const normalized: TranscriptEntryRaw = {
         role: source.role,
         content: source.content,
         format: source.format === 'markdown' ? 'markdown' : 'text',
         reasoning: typeof source.reasoning === 'string' ? source.reasoning : '',
         replyIndex: typeof source.replyIndex === 'number' ? source.replyIndex : -1,
-      })
+      }
+      if (source.role === 'user' && Array.isArray(source.attachments)) {
+        const attachments: ChatAttachment[] = []
+        let valid = true
+        const seen = new Set<string>()
+        for (const item of source.attachments) {
+          if (item === null || typeof item !== 'object') {
+            valid = false
+            break
+          }
+          const image = item as Record<string, unknown>
+          if (
+            typeof image.id !== 'string' || !/^[a-zA-Z0-9_-]{1,128}$/.test(image.id) ||
+            image.kind !== 'image' || seen.has(image.id) ||
+            (image.name !== null && typeof image.name !== 'string') ||
+            typeof image.remoteUrl !== 'string' || image.remoteUrl.length > 4096 || image.remoteUrl.includes('#')
+          ) {
+            valid = false
+            break
+          }
+          let url: URL
+          try {
+            url = new URL(image.remoteUrl)
+          } catch {
+            valid = false
+            break
+          }
+          if (
+            (url.origin !== 'https://files.deepseeksvc.com' && url.origin !== 'https://chat.deepseek.com') ||
+            url.pathname !== '/api/file' || url.searchParams.getAll('file_id').length !== 1 ||
+            url.searchParams.get('file_id') !== image.id ||
+            url.searchParams.getAll('state').length !== 1 || !url.searchParams.get('state')
+          ) {
+            valid = false
+            break
+          }
+          seen.add(image.id)
+          attachments.push({ id: image.id, kind: 'image', name: image.name, remoteUrl: image.remoteUrl })
+        }
+        if (valid && attachments.length > 0) normalized.attachments = attachments
+      }
+      entries.push(normalized)
     }
   }
   return { entries }
