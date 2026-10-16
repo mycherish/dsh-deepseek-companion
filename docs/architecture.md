@@ -469,9 +469,9 @@ DeepSeek page（URL pathname / 侧栏 href，标准 DOM）
 - **不用 React fiber 做状态**：本次全部新增状态都来自 URL / 标准 DOM / 既有 store 写入；`readTranscriptInPage` 里 fiber 只用于读取 DeepSeek 自己的 raw Markdown（既有行为，未改动）。
 - **测试**：`tests/state.test.ts`（connection/currentSession/composer/message 状态与三界面快照一致）、`tests/state-compat.test.ts`（兼容层 + 旧状态迁移）、`tests/stop-state.test.ts`（Host 停止标记让未点击界面也显示「停止中…」）、`tests/chat.test.ts` / `tests/stop.test.ts` / `tests/new-chat.test.ts` / `tests/sessions.test.ts` / `tests/session-sync.test.ts`（各自的不回归用例）。
 
-## DeepSeek 图片发送与历史恢复（Phase 18 · **18A 已实机验收；18B 已实现待复验**）
+## DeepSeek 图片发送与历史恢复（Phase 18 · **18A、18B 均已实机验收**）
 
-> 本节先记录**设计**，再记录**实现与实机验收**。设计期的「实测」结论来自真实页面上的两轮探测（2026-09-23 能力 / DOM / 历史恢复；2026-09-24 上传响应关联与失败路径），用 **companion-test profile 的临时副本** + 独立 Playwright 实例完成。**18A 已实现**（`feat(image): send images`）：8 个**核心**发送/清理场景已在真实 `companion-test` DSH 实例上跑通；**外部页面手动草稿、页面外部删除、失败卡片删除**这几条安全路径**没有完整真机驱动**，由单测覆盖（其中「审核失败后页面保留卡片」的行为已在真实环境观察到）。**18B 已实现，历史图文 reader 已在真实 Chromium 复验**；Client 界面复验边界见下文。
+> 本节先记录**设计**，再记录**实现与实机验收**。设计期的「实测」结论来自真实页面上的两轮探测（2026-09-23 能力 / DOM / 历史恢复；2026-09-24 上传响应关联与失败路径），用 **companion-test profile 的临时副本** + 独立 Playwright 实例完成。**18A 已实现**（`feat(image): send images`）：8 个**核心**发送/清理场景已在真实 `companion-test` DSH 实例上跑通；**外部页面手动草稿、页面外部删除、失败卡片删除**这几条安全路径**没有完整真机驱动**，由单测覆盖（其中「审核失败后页面保留卡片」的行为已在真实环境观察到）。**18B 已实现，历史图文 reader 与 Client 界面均已在真实 Chromium / DSH Web 复验**；验收边界见下文。
 >
 > **⚠ 实机验收纠正了两条设计期假设**（详见文末「实现与实机验收」）：① 页面函数必须自包含（Playwright 序列化）；② 草稿 blob 扫描必须限定在 composer 内 —— 已发送消息里的图片同样以 `blob:` 渲染。
 
@@ -864,7 +864,7 @@ expectedFileIds = consumedAttachmentIds → AttachmentRecord[] → deepSeekFileI
 - `readTranscriptInPage` 逐条读取 user `.ds-message` **内部**的 `img`。只接受 `/api/file` 且有唯一 `file_id` 与 `state` 的相对 URL 或 `files.deepseeksvc.com` HTTPS URL；相对 URL 转成 `chat.deepseek.com` 绝对地址，避免 Companion UI 错误地请求 DSH 自身域名。任何图片来源不明、参数缺失或同一消息出现重复 `file_id`，该消息的附件集合整体 safe-fail；文本照常保留，不按位置猜归属。
 - 页面返回后 Host 再次验证 URL 域名、路径、签名和 `file_id` 一致性。`ChatAttachment` 只承载 `id/name/remoteUrl`；图片不混入正文、reasoning 或 citations。纯图片 user 消息因有附件而保留；空且无附件的占位消息仍丢弃。
 - Host transcript 等价比较纳入**本次确证**的附件：同一文本后来出现历史图片时触发状态更新；相同图片重复读取不推送；本次未读到附件（实时页面仍是 `blob:`）时不抹掉 Host 已验证的 18A 附件。Client 对带历史 URL 的附件显示图片和文件名，加载失败（包括签名过期）时仅显示文件名；18A 实时发送的附件仍显示元数据卡片。
-- 自动测试覆盖纯图片、图文混合、跨消息归属、异常 URL/重复 ID safe-fail、Host 二次校验、同文本附件更新及 `blob:` 重读保护；Client 通过 typecheck/build 验证。独立 `companion-test` profile 临时副本的只读缓存扫描定位到 3 个带 FILE 的历史会话；真实 Chromium 页面里的 user 消息分别有 1、2、1 张 `files.deepseeksvc.com/api/file` 图片，页面 reader 分别恢复 1、2、1 个附件，未打印会话内容或签名参数。此副本没有纯图片历史轮次；纯图片保留由自动测试和设计期结构探测覆盖。Companion Client 的真实像素加载与签名过期降级仍待界面复验。
+- 自动测试覆盖纯图片、图文混合、跨消息归属、异常 URL/重复 ID safe-fail、Host 二次校验、同文本附件更新及 `blob:` 重读保护；Client 通过 typecheck/build 验证。独立 `companion-test` profile 临时副本的只读缓存扫描定位到 3 个带 FILE 的历史会话；真实 Chromium 页面里的 user 消息分别有 1、2、1 张 `files.deepseeksvc.com/api/file` 图片，页面 reader 分别恢复 1、2、1 个附件，未打印会话内容或签名参数。此副本没有纯图片历史轮次；纯图片保留由自动测试和设计期结构探测覆盖。**Client 界面复验（2026-10-16）**：在临时 DSH Web profile 的真实 Chromium 中打开 Companion，验证图文混合消息、纯图片消息和 7 个历史图片节点的正常加载；拦截 `/api/file` 图片请求后，所有图片均由 Client `onError` 路径退化为文件名，未留下破图。临时 profile、截图和测试脚本均在验证后清理，未修改原始 profile。
 
 ### 风险与未决项（实现前已知，均可接受）
 
@@ -872,7 +872,7 @@ expectedFileIds = consumedAttachmentIds → AttachmentRecord[] → deepSeekFileI
 2. **草稿上限未知**：实测 ≥6 张，官方上限未确认 → Host 自设上限 5 张 + 明确错误提示。
 3. **上传被受理 ≠ 最终可用**：成功响应 `status: "PENDING"`（审核/处理中）。若最终审核失败，发送时的行为**未测**；Phase 18A 只保证“受理成功”，并在文档与 UI 文案上不承诺审核结果。
 4. **失败草稿“手动发送”行为未测**：因此设计上**禁止**在存在 `error` 草稿时发送（比 DeepSeek 页面更保守）。
-5. **签名 URL 过期**（18B 相关）：`state` 是签名参数，长期展示需降级或重新取 URL（额外 API）。
+5. **签名 URL 过期**（18B 相关）：`state` 是签名参数；当前 Client 已验证过期时降级为文件名，若未来需要长期像素展示仍需重新取 URL（额外 API）。
 6. **`accept` 不是 `image/*`**：文件选择器允许文档 → Client 必须自行按 MIME 白名单过滤（png/jpeg/webp/gif），不依赖 `accept`。
 7. **不新增生产依赖**：base64 编解码用浏览器 `FileReader` / Node `Buffer`。
 8. **外部手动草稿会被严格拒绝**（预期行为）：页面身份集合 === Host 集合是硬闸门，因此用户在 DeepSeek 页面自己拖入/粘贴的图片会让 `/chat` 返回 409，直到用户删掉它或 New chat。这是 18A 的明确取舍：**宁可拒发，也不发送无法追踪的图片**。
@@ -1322,7 +1322,7 @@ N9. **单步 timeout > 剩余预算**：实际等待取 `min(stepTimeout, remain
 4. **多实例 / 双 DSH**：第二个实例在 profile 被占用时 176 ms 快速失败且错误信息误导 → 重试耗尽后只能报 `offline`，用户可能误以为登录失效（文档需写明）。
 5. **恢复风暴**：若 crash 反复发生（页面自身 bug），会不断重建。缓解：**每个恢复周期最多 3 次**，且不引入周期探活（避免「探活 → 失败 → 重建」循环）。
 6. **未测**：Windows / Linux 的进程 kill 行为、headless 模式、多 page 窗口管理（本项目恒为单 page）。
-7. **明确不做**：Proxy、多账号、browser pool、多 DeepSeek page、Phase 18B、durable message persistence、自动重发。
+7. **20A 当时明确不做**：Proxy、多账号、browser pool、多 DeepSeek page、durable message persistence、自动重发；Phase 18B 后续已独立完成。
 
 ### 15. Phase 20A / 20B 边界（实现范围收口）
 
@@ -1572,7 +1572,7 @@ Level 3 — Strict bootstrap（无 ID 且无可用 anchor）
 - **Host 已有 `ChatMessage.attachments` → Host authoritative**，20B1 **不用** history 的 FILE 覆盖它。
 - 历史中出现 Host 没有的 image-only/user FILE 消息 → 20B1 **不恢复像素**、**不 full replace**、**不创建假的图片恢复能力** → **safe-skip + 标记需要 Phase 18B**。
 - 只有**当前 crash turn** 的 user message 本来就由 18A 存在于 Host 时，才用 FILE 信息**验证 identity**，且保留原 Host attachments。
-- **18B 继续 pending，不被 20B1 阻塞，也不被 20B1 顺手实现。**
+- **设计期记录：18B 当时继续 pending，不被 20B1 阻塞，也不被 20B1 顺手实现；18B 后续已独立完成。**
 
 ### 7. server 新增消息的 append 策略（收紧）
 
@@ -1712,4 +1712,4 @@ A commit-before-delta kill · B mid-stream kill · C server 完成于 browser �
 - **20B1 — Safe transcript reconciliation**（IDB reader + **三层 identity strategy（Level 1 existing id / Level 2 parent-anchor binding / Level 3 strict bootstrap）** + 原地 patch + stability wait + stale 防护 + status merge）：**design finalized，可 implementation**。
 - **20B2 — Session-not-found / title / UX**：**已实现并验证**（2026-09-27）；目标 ID 的前端 not-found + `/` 重定向 + logged-in 才清理；其它结果 safe-fail；恢复后的 active exact-id 侧栏标题与共享恢复提示已接入。
 
-18B 保持 pending；21 Proxy 保持后续。
+18B 已完成并验证（含 Client 界面与签名 URL 失败降级）；21 Proxy 保持后续。
