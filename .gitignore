@@ -21,3 +21,5 @@ coverage/
 
 # Future phases: browser profile / cookie / session data must be ignored here.
 # Never commit any authentication data.
+
+.memsearch/
