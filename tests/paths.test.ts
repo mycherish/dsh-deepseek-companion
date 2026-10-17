@@ -50,10 +50,7 @@ test('不同 profile 的 baseUrl 得到不同目录（默认隔离）', () => {
 
 test('DEEPSEEK_COMPANION_PROFILE 覆盖优先于 baseUrl', () => {
   const baseUrl = pathToFileURL('/tmp/.dsh/profiles/companion-test/').href
-  assert.equal(
-    browserProfileDir({ DEEPSEEK_COMPANION_PROFILE: '/tmp/test-profile' }, baseUrl),
-    '/tmp/test-profile',
-  )
+  assert.equal(browserProfileDir({ DEEPSEEK_COMPANION_PROFILE: '/tmp/test-profile' }, baseUrl), '/tmp/test-profile')
 })
 
 test('baseUrl 非法时回退到 DSH_HOME', () => {

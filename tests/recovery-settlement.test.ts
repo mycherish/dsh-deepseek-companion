@@ -15,11 +15,19 @@ test('20B2: only the frontend history request for the exact target id counts', (
   assert.equal(matchesRecoveryHistoryRequest(path, 'a', 'POST'), false)
   assert.equal(matchesRecoveryHistoryRequest(`${path}&chat_session_id=b`, 'a', 'GET'), false)
   assert.equal(
-    matchesRecoveryHistoryRequest('https://chat.deepseek.com.evil/api/v0/chat/history_messages?chat_session_id=a', 'a', 'GET'),
+    matchesRecoveryHistoryRequest(
+      'https://chat.deepseek.com.evil/api/v0/chat/history_messages?chat_session_id=a',
+      'a',
+      'GET',
+    ),
     false,
   )
   assert.equal(
-    matchesRecoveryHistoryRequest('https://chat.deepseek.com/api/v0/chat/history_messages_extra?chat_session_id=a', 'a', 'GET'),
+    matchesRecoveryHistoryRequest(
+      'https://chat.deepseek.com/api/v0/chat/history_messages_extra?chat_session_id=a',
+      'a',
+      'GET',
+    ),
     false,
   )
   assert.equal(matchesRecoveryHistoryRequest('not a url', 'a', 'GET'), false)
@@ -27,14 +35,18 @@ test('20B2: only the frontend history request for the exact target id counts', (
 
 test('20B2: the measured missing history envelope is the only not-found signal', () => {
   assert.equal(classifyHistoryResponse(200, { code: 0, data: { biz_code: 1, biz_data: null } }), 'not_found')
-  assert.equal(classifyHistoryResponse(200, { code: 0, data: { biz_code: 0, biz_data: { chat_messages: [] } } }), 'found')
+  assert.equal(
+    classifyHistoryResponse(200, { code: 0, data: { biz_code: 0, biz_data: { chat_messages: [] } } }),
+    'found',
+  )
   for (const [status, body] of [
     [503, { code: 0, data: { biz_code: 1, biz_data: null } }],
     [200, { code: 40002, data: { biz_code: 1, biz_data: null } }],
     [200, { code: 0, data: { biz_code: 1, biz_data: {} } }],
     [200, { code: 0, data: { biz_code: 0, biz_data: null } }],
     [200, null],
-  ] as const) assert.equal(classifyHistoryResponse(status, body), 'unknown')
+  ] as const)
+    assert.equal(classifyHistoryResponse(status, body), 'unknown')
 })
 
 test('20B2: title refresh uses only the active exact-id sidebar entry', () => {

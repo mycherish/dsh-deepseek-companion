@@ -24,17 +24,26 @@ import type { ChatMessage } from '../src/shared/state.ts'
 
 // --- fixtures ------------------------------------------------------------------
 
-function host(
-  id: string,
-  role: ChatMessage['role'],
-  content: string,
-  extra: Partial<ChatMessage> = {},
-): ChatMessage {
+function host(id: string, role: ChatMessage['role'], content: string, extra: Partial<ChatMessage> = {}): ChatMessage {
   return { id, role, content, format: 'text', status: role === 'assistant' ? 'finished' : 'finished', ...extra }
 }
 
-function sUser(messageId: number, parentId: number | null, text: string, files: { name: string; size: number }[] = []): DeepSeekHistoryMessage {
-  return { messageId, parentId, role: 'USER', status: 'FINISHED', requestText: text, responseText: null, reasoningText: null, files }
+function sUser(
+  messageId: number,
+  parentId: number | null,
+  text: string,
+  files: { name: string; size: number }[] = [],
+): DeepSeekHistoryMessage {
+  return {
+    messageId,
+    parentId,
+    role: 'USER',
+    status: 'FINISHED',
+    requestText: text,
+    responseText: null,
+    reasoningText: null,
+    files,
+  }
 }
 
 function sAssistant(
@@ -63,7 +72,9 @@ const anchorOf = (overrides: Partial<CommittedAnchor> = {}): CommittedAnchor => 
   ...overrides,
 })
 
-const hostTurn = (options: { userContent?: string; assistantContent?: string; status?: ChatMessage['status'] } = {}): ChatMessage[] => [
+const hostTurn = (
+  options: { userContent?: string; assistantContent?: string; status?: ChatMessage['status'] } = {},
+): ChatMessage[] => [
   host('h-user', 'user', options.userContent ?? '第二个问题'),
   host('h-assistant', 'assistant', options.assistantContent ?? '', { status: options.status ?? 'error' }),
 ]
@@ -72,7 +83,10 @@ const hostTurn = (options: { userContent?: string; assistantContent?: string; st
 // 已有 deepSeekMessageId → 直接 ID reconciliation，不重新绑定。
 
 test('20B1 identity L1: 当前 turn 已有 deepSeekMessageId → Level 1、零新绑定', () => {
-  const messages = [host('h-user', 'user', 'q', { deepSeekMessageId: 5 }), host('h-assistant', 'assistant', 'a', { deepSeekMessageId: 6 })]
+  const messages = [
+    host('h-user', 'user', 'q', { deepSeekMessageId: 5 }),
+    host('h-assistant', 'assistant', 'a', { deepSeekMessageId: 6 }),
+  ]
   const resolved = resolveIdentity({
     sessionId: 'sess-1',
     messages: [sUser(5, 4, 'q'), sAssistant(6, 5, 'a')],
@@ -83,7 +97,10 @@ test('20B1 identity L1: 当前 turn 已有 deepSeekMessageId → Level 1、零�
 })
 
 test('20B1 identity L1: 已有 id 与 snapshot 冲突（id 不存在）→ 不静默重绑，safe-fail', () => {
-  const messages = [host('h-user', 'user', 'q', { deepSeekMessageId: 5 }), host('h-assistant', 'assistant', 'a', { deepSeekMessageId: 99 })]
+  const messages = [
+    host('h-user', 'user', 'q', { deepSeekMessageId: 5 }),
+    host('h-assistant', 'assistant', 'a', { deepSeekMessageId: 99 }),
+  ]
   const resolved = resolveIdentity({
     sessionId: 'sess-1',
     messages: [sUser(5, 4, 'q'), sAssistant(6, 5, 'a')],
@@ -374,7 +391,10 @@ test('20B1 identity L3: 历史 assistant 的 reasoning 分叉 → safe-fail', ()
     messages: [sUser(1, null, 'a'), sAssistant(2, 1, '回复', { reasoning: '完整推理' })],
     hostMessages: [
       host('h1', 'user', 'a'),
-      host('h2', 'assistant', '回复', { status: 'finished', reasoning: { content: '完整推理内容更长', format: 'text' } }),
+      host('h2', 'assistant', '回复', {
+        status: 'finished',
+        reasoning: { content: '完整推理内容更长', format: 'text' },
+      }),
     ],
   })
   assert.equal(longer.ok, false)
@@ -416,13 +436,15 @@ const planFor = (
   messages: DeepSeekHistoryMessage[],
   hostMessages: ChatMessage[],
   anchor?: CommittedAnchor,
-): ReturnType<typeof buildReconcilePlan> =>
-  buildReconcilePlan({ sessionId: 'sess-1', messages, hostMessages, anchor })
+): ReturnType<typeof buildReconcilePlan> => buildReconcilePlan({ sessionId: 'sess-1', messages, hostMessages, anchor })
 
 test('20B1 plan: FINISHED 补全 partial（host prefix）→ content 补全 + finished', () => {
   const plan = planFor(
     [sUser(5, 4, '第二个问题'), sAssistant(6, 5, '完整回复')],
-    [host('h-user', 'user', '第二个问题', { deepSeekMessageId: 5 }), host('h-assistant', 'assistant', '完整', { deepSeekMessageId: 6, status: 'error' })],
+    [
+      host('h-user', 'user', '第二个问题', { deepSeekMessageId: 5 }),
+      host('h-assistant', 'assistant', '完整', { deepSeekMessageId: 6, status: 'error' }),
+    ],
   )
   assert.equal(plan.kind, 'apply')
   if (plan.kind !== 'apply') return
@@ -433,7 +455,10 @@ test('20B1 plan: FINISHED 补全 partial（host prefix）→ content 补全 + fi
 test('20B1 plan: 空 assistant + FINISHED server → 补全内容并 finished', () => {
   const plan = planFor(
     [sUser(5, 4, '第二个问题'), sAssistant(6, 5, '回复')],
-    [host('h-user', 'user', '第二个问题', { deepSeekMessageId: 5 }), host('h-assistant', 'assistant', '', { deepSeekMessageId: 6, status: 'error' })],
+    [
+      host('h-user', 'user', '第二个问题', { deepSeekMessageId: 5 }),
+      host('h-assistant', 'assistant', '', { deepSeekMessageId: 6, status: 'error' }),
+    ],
   )
   assert.equal(plan.kind, 'apply')
   if (plan.kind !== 'apply') return
@@ -456,7 +481,10 @@ test('20B1 plan: server 更短（是 Host 的严格前缀）→ 保留 Host（�
 test('20B1 plan: 内容分叉 → 整单 safe-fail（no-op）', () => {
   const plan = planFor(
     [sUser(5, 4, '第二个问题'), sAssistant(6, 5, '服务器版本')],
-    [host('h-user', 'user', '第二个问题', { deepSeekMessageId: 5 }), host('h-assistant', 'assistant', '本地版本', { deepSeekMessageId: 6, status: 'error' })],
+    [
+      host('h-user', 'user', '第二个问题', { deepSeekMessageId: 5 }),
+      host('h-assistant', 'assistant', '本地版本', { deepSeekMessageId: 6, status: 'error' }),
+    ],
   )
   assert.equal(plan.kind, 'no-op')
 })
@@ -464,7 +492,10 @@ test('20B1 plan: 内容分叉 → 整单 safe-fail（no-op）', () => {
 test('20B1 plan: interrupted 永不自动改 finished（也不补内容）', () => {
   const plan = planFor(
     [sUser(5, 4, '第二个问题'), sAssistant(6, 5, '完整的服务器回复')],
-    [host('h-user', 'user', '第二个问题', { deepSeekMessageId: 5 }), host('h-assistant', 'assistant', '被停止的部分', { deepSeekMessageId: 6, status: 'interrupted' })],
+    [
+      host('h-user', 'user', '第二个问题', { deepSeekMessageId: 5 }),
+      host('h-assistant', 'assistant', '被停止的部分', { deepSeekMessageId: 6, status: 'interrupted' }),
+    ],
   )
   assert.equal(plan.kind, 'apply')
   if (plan.kind !== 'apply') return
@@ -475,7 +506,10 @@ test('20B1 plan: interrupted 永不自动改 finished（也不补内容）', () 
 test('20B1 plan: server WIP → 不升级、不补全', () => {
   const plan = planFor(
     [sUser(5, 4, '第二个问题'), sAssistant(6, 5, '半截', { status: 'WIP' })],
-    [host('h-user', 'user', '第二个问题', { deepSeekMessageId: 5 }), host('h-assistant', 'assistant', '半', { deepSeekMessageId: 6, status: 'error' })],
+    [
+      host('h-user', 'user', '第二个问题', { deepSeekMessageId: 5 }),
+      host('h-assistant', 'assistant', '半', { deepSeekMessageId: 6, status: 'error' }),
+    ],
   )
   assert.equal(plan.kind, 'apply')
   if (plan.kind !== 'apply') return
@@ -485,7 +519,10 @@ test('20B1 plan: server WIP → 不升级、不补全', () => {
 test('20B1 plan: host 已 finished 且内容一致 → no-op（零 patch）', () => {
   const plan = planFor(
     [sUser(5, 4, '第二个问题'), sAssistant(6, 5, '回复')],
-    [host('h-user', 'user', '第二个问题', { deepSeekMessageId: 5 }), host('h-assistant', 'assistant', '回复', { deepSeekMessageId: 6, status: 'finished' })],
+    [
+      host('h-user', 'user', '第二个问题', { deepSeekMessageId: 5 }),
+      host('h-assistant', 'assistant', '回复', { deepSeekMessageId: 6, status: 'finished' }),
+    ],
   )
   assert.equal(plan.kind, 'apply')
   if (plan.kind !== 'apply') return
@@ -497,7 +534,11 @@ test('20B1 plan: reasoning 补全（host prefix / server 更短不倒退）', ()
     [sUser(5, 4, '第二个问题'), sAssistant(6, 5, '回复', { reasoning: '完整推理' })],
     [
       host('h-user', 'user', '第二个问题', { deepSeekMessageId: 5 }),
-      host('h-assistant', 'assistant', '回复', { deepSeekMessageId: 6, status: 'error', reasoning: { content: '完整', format: 'text' } }),
+      host('h-assistant', 'assistant', '回复', {
+        deepSeekMessageId: 6,
+        status: 'error',
+        reasoning: { content: '完整', format: 'text' },
+      }),
     ],
   )
   assert.equal(completed.kind, 'apply')
@@ -510,7 +551,11 @@ test('20B1 plan: reasoning 补全（host prefix / server 更短不倒退）', ()
     [sUser(5, 4, '第二个问题'), sAssistant(6, 5, '回复', { reasoning: '完整推理' })],
     [
       host('h-user', 'user', '第二个问题', { deepSeekMessageId: 5 }),
-      host('h-assistant', 'assistant', '回复', { deepSeekMessageId: 6, status: 'error', reasoning: { content: '完整推理更长', format: 'text' } }),
+      host('h-assistant', 'assistant', '回复', {
+        deepSeekMessageId: 6,
+        status: 'error',
+        reasoning: { content: '完整推理更长', format: 'text' },
+      }),
     ],
   )
   assert.equal(shorter.kind, 'apply')
@@ -560,7 +605,10 @@ test('20B1 plan: server 新增 assistant（parent 指向已绑定 user）→ app
 test('20B1 plan: unknown server user → 不盲 append', () => {
   const plan = planFor(
     [sUser(5, 4, '第二个问题'), sAssistant(6, 5, ''), sUser(9, 6, '外部插入的问题')],
-    [host('h-user', 'user', '第二个问题', { deepSeekMessageId: 5 }), host('h-assistant', 'assistant', '', { deepSeekMessageId: 6, status: 'error' })],
+    [
+      host('h-user', 'user', '第二个问题', { deepSeekMessageId: 5 }),
+      host('h-assistant', 'assistant', '', { deepSeekMessageId: 6, status: 'error' }),
+    ],
   )
   assert.equal(plan.kind, 'apply')
   if (plan.kind !== 'apply') return
@@ -583,7 +631,12 @@ test('20B1 plan: server assistant 的 parent 指向未知消息 → 不 append',
 
 test('20B1 plan: server WIP 的追加 assistant → 不 append（等稳定）', () => {
   const plan = planFor(
-    [sUser(5, 4, '第二个问题'), sAssistant(6, 5, ''), sUser(7, 6, '第三个问题'), sAssistant(8, 7, '半', { status: 'WIP' })],
+    [
+      sUser(5, 4, '第二个问题'),
+      sAssistant(6, 5, ''),
+      sUser(7, 6, '第三个问题'),
+      sAssistant(8, 7, '半', { status: 'WIP' }),
+    ],
     [
       host('h-user', 'user', '第二个问题', { deepSeekMessageId: 5 }),
       host('h-assistant', 'assistant', '', { deepSeekMessageId: 6, status: 'error' }),
@@ -614,11 +667,7 @@ test('20B1 plan: FILE 不覆盖 Host attachments（user 永远不 patch）', () 
 // bindings 随 plan 一起 apply（不做两次写）。
 
 test('20B1 plan: Level 2 绑定 + 补全在同一次 apply 里返回', () => {
-  const plan = planFor(
-    [sUser(5, 4, '第二个问题'), sAssistant(6, 5, '完整回复')],
-    hostTurn(),
-    anchorOf(),
-  )
+  const plan = planFor([sUser(5, 4, '第二个问题'), sAssistant(6, 5, '完整回复')], hostTurn(), anchorOf())
   assert.equal(plan.kind, 'apply')
   if (plan.kind !== 'apply') return
   assert.equal(plan.level, 2)
@@ -653,7 +702,10 @@ test('20B1 stability: fingerprint 反映 current_message_id / 条数 / 末条长
   const base: HistorySnapshotish = { currentMessageId: 6, messages: [sUser(5, 4, 'q'), sAssistant(6, 5, 'abcdef')] }
   const same: HistorySnapshotish = { currentMessageId: 6, messages: [sUser(5, 4, 'q'), sAssistant(6, 5, 'abcdef')] }
   const longer: HistorySnapshotish = { currentMessageId: 6, messages: [sUser(5, 4, 'q'), sAssistant(6, 5, 'abcdefg')] }
-  const extra: HistorySnapshotish = { currentMessageId: 6, messages: [sUser(5, 4, 'q'), sAssistant(6, 5, 'abcdef'), sAssistant(8, 6, 'x')] }
+  const extra: HistorySnapshotish = {
+    currentMessageId: 6,
+    messages: [sUser(5, 4, 'q'), sAssistant(6, 5, 'abcdef'), sAssistant(8, 6, 'x')],
+  }
   assert.equal(snapshotFingerprint(base), snapshotFingerprint(same))
   assert.notEqual(snapshotFingerprint(base), snapshotFingerprint(longer))
   assert.notEqual(snapshotFingerprint(base), snapshotFingerprint(extra))
@@ -674,16 +726,15 @@ interface HistorySnapshotish {
 // ================================================================== orchestration
 // read → bounded stability wait → validate → plan（design §11）。
 
-import {
-  readAndPlanReconcile,
-  type ReconcileHistoryReader,
-} from '../src/host/reconcile.ts'
+import { readAndPlanReconcile, type ReconcileHistoryReader } from '../src/host/reconcile.ts'
 import type { HistoryRead } from '../src/host/history-idb.ts'
 
-const snapshotOf = (
-  messages: DeepSeekHistoryMessage[],
-  currentMessageId: number | null = null,
-): HistoryRead => ({ kind: 'snapshot', sessionId: 'sess-1', currentMessageId, messages })
+const snapshotOf = (messages: DeepSeekHistoryMessage[], currentMessageId: number | null = null): HistoryRead => ({
+  kind: 'snapshot',
+  sessionId: 'sess-1',
+  currentMessageId,
+  messages,
+})
 
 /** A reader that hands back the given reads in order (the last one repeats). */
 function fakeReader(reads: HistoryRead[], fresh = true): { reader: ReconcileHistoryReader; calls: () => number } {
@@ -701,9 +752,7 @@ function fakeReader(reads: HistoryRead[], fresh = true): { reader: ReconcileHist
 }
 
 test('20B1 run: 无 WIP → 一次读取即出 plan（warm path 不空等）', async () => {
-  const { reader, calls } = fakeReader([
-    snapshotOf([sUser(5, 4, '第二个问题'), sAssistant(6, 5, '完整回复')], 6),
-  ])
+  const { reader, calls } = fakeReader([snapshotOf([sUser(5, 4, '第二个问题'), sAssistant(6, 5, '完整回复')], 6)])
   const outcome = await readAndPlanReconcile({
     browser: reader,
     sessionId: 'sess-1',
@@ -872,7 +921,12 @@ function testClock(): {
 const staleOnly = (): HistoryRead => snapshotOf([sUser(1, null, '第一个问题'), sAssistant(2, 1, '第一个回答')], 2)
 const turnDone = (): HistoryRead =>
   snapshotOf(
-    [sUser(1, null, '第一个问题'), sAssistant(2, 1, '第一个回答'), sUser(3, 2, '第二个问题'), sAssistant(4, 3, '完整回复')],
+    [
+      sUser(1, null, '第一个问题'),
+      sAssistant(2, 1, '第一个回答'),
+      sUser(3, 2, '第二个问题'),
+      sAssistant(4, 3, '完整回复'),
+    ],
     4,
   )
 
@@ -1081,7 +1135,10 @@ test('20B1 deadline: read / refresh 每一步都收到剩余预算（min(stepCap
     assert.ok((budget ?? 0) <= 30_000, `read 预算不得超过总预算（实得 ${String(budget)}）`)
   }
   const refreshBudget = budgets.refresh[0]
-  assert.ok(typeof refreshBudget === 'number' && refreshBudget > 0, `refresh 必须收到预算（实得 ${String(refreshBudget)}）`)
+  assert.ok(
+    typeof refreshBudget === 'number' && refreshBudget > 0,
+    `refresh 必须收到预算（实得 ${String(refreshBudget)}）`,
+  )
   assert.ok((refreshBudget ?? 0) <= 12_000, `refresh 预算必须落在剩余预算内（实得 ${String(refreshBudget)}）`)
 })
 

@@ -618,10 +618,19 @@ test('08.2 message: replaceChatMessages 带 sessionId 标签，等价重建仍 n
 test('18B: 同一文本的历史图片变化必须触发 transcript 更新，等价附件不重复推送', () => {
   const store = createCompanionStateStore()
   const plain = [{ role: 'user' as const, content: '看图', format: 'text' as const }]
-  const withImage = [{ ...plain[0]!, attachments: [{ id: 'file-a', kind: 'image' as const, name: 'a.png', remoteUrl: '/api/file?file_id=file-a&state=s' }] }]
+  const withImage = [
+    {
+      ...plain[0]!,
+      attachments: [
+        { id: 'file-a', kind: 'image' as const, name: 'a.png', remoteUrl: '/api/file?file_id=file-a&state=s' },
+      ],
+    },
+  ]
   store.replaceChatMessages(plain, 'session-a')
   let notifies = 0
-  store.subscribe(() => { notifies += 1 })
+  store.subscribe(() => {
+    notifies += 1
+  })
   notifies = 0
 
   store.replaceChatMessages(withImage, 'session-a')
@@ -633,12 +642,20 @@ test('18B: 同一文本的历史图片变化必须触发 transcript 更新，等
 
 test('18B: 页面仍是 blob 图片时，同文本重读不抹掉 18A 已验证附件', () => {
   const store = createCompanionStateStore()
-  const verified = [{ role: 'user' as const, content: '看图', format: 'text' as const,
-    attachments: [{ id: 'file-a', kind: 'image' as const, name: 'a.png' }] }]
+  const verified = [
+    {
+      role: 'user' as const,
+      content: '看图',
+      format: 'text' as const,
+      attachments: [{ id: 'file-a', kind: 'image' as const, name: 'a.png' }],
+    },
+  ]
   store.replaceChatMessages(verified, 'session-a')
   const original = store.getState().chat.messages[0]!
   let notifies = 0
-  store.subscribe(() => { notifies += 1 })
+  store.subscribe(() => {
+    notifies += 1
+  })
   notifies = 0
 
   store.replaceChatMessages([{ role: 'user', content: '看图', format: 'text' }], 'session-a')

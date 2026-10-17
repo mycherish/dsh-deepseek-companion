@@ -140,9 +140,7 @@ function ResizeHandle({ dock }: { dock: DockController }): JSX.Element {
   const onPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
     const start = startRef.current
     if (start === null || !event.currentTarget.hasPointerCapture(event.pointerId)) return
-    dock.setDockWidth(
-      clampDockWidth(widthFromPointer(start.width, start.pointerX, event.clientX), window.innerWidth),
-    )
+    dock.setDockWidth(clampDockWidth(widthFromPointer(start.width, start.pointerX, event.clientX), window.innerWidth))
   }
 
   const finish = (event: ReactPointerEvent<HTMLDivElement>, persist: boolean) => {

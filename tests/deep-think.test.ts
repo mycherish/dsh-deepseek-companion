@@ -122,11 +122,7 @@ test('B: 标签命中多个（歧义）→ available=false', () => {
 })
 
 test('B: 标签唯一命中时忽略其他未知 toggle', () => {
-  const env = fakeEnv([
-    fakeToggle('某个未知开关', false),
-    fakeToggle('深度思考', true),
-    fakeToggle('智能搜索', false),
-  ])
+  const env = fakeEnv([fakeToggle('某个未知开关', false), fakeToggle('深度思考', true), fakeToggle('智能搜索', false)])
   assert.deepEqual(deepThinkInPage({ options: OPTIONS, action: 'read', env }), {
     available: true,
     enabled: true,

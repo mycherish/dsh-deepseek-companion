@@ -101,16 +101,21 @@ function fakeEl(init: {
 }
 
 /** One page draft: an img inside a role=button card, optionally with a remove X. */
-function draft(identity: string, card: { left: number; top: number; width?: number; height?: number }, control?: Box | null) {
+function draft(
+  identity: string,
+  card: { left: number; top: number; width?: number; height?: number },
+  control?: Box | null,
+) {
   const box: Box = { left: card.left, top: card.top, width: card.width ?? 64, height: card.height ?? 64 }
   const cardEl = fakeEl({ tag: 'div', attrs: { role: 'button' }, box })
   const image = fakeEl({ tag: 'img', attrs: { src: identity }, box, parent: cardEl })
   // 真实结构：草稿卡片与消息输入框同属 composer 容器。
   const textarea = fakeEl({ tag: 'textarea', box, parent: cardEl })
   cardEl.descendants.push(image, textarea)
-  const svg = control === null || control === undefined
-    ? null
-    : fakeEl({ tag: 'svg', box: control, cursor: 'pointer', parent: cardEl })
+  const svg =
+    control === null || control === undefined
+      ? null
+      : fakeEl({ tag: 'svg', box: control, cursor: 'pointer', parent: cardEl })
   return { cardEl, image, svg }
 }
 
@@ -238,7 +243,14 @@ test('18A upload: HTTP 错误 / code 非 0 / biz_code 非 0 都是失败（安�
 })
 
 test('18A upload: 非法 file id / 缺少 file_name / 缺少 file_size 都拒绝', () => {
-  for (const overrides of [{ id: 'abc' }, { id: '' }, { id: undefined }, { file_name: undefined }, { file_size: '40083' }, { file_size: undefined }]) {
+  for (const overrides of [
+    { id: 'abc' },
+    { id: '' },
+    { id: undefined },
+    { file_name: undefined },
+    { file_size: '40083' },
+    { file_size: undefined },
+  ]) {
     const result = normalizeUploadResponse({ status: 200, body: uploadBody(overrides) })
     assert.equal(result.ok, false, `${JSON.stringify(overrides)} 必须被拒绝`)
   }
@@ -351,7 +363,11 @@ test('18A remove: 命中另一张卡片的 svg 不算（只认本卡片右上角
     getComputedStyle: (element) => ({ cursor: (element as FakeEl).cursor }),
   }
 
-  assert.equal(findRemoveControlInPage({ identity: A, offsets: REMOVE_CONTROL_OFFSETS, env }).found, false, '目标卡片没有 X → 安全失败')
+  assert.equal(
+    findRemoveControlInPage({ identity: A, offsets: REMOVE_CONTROL_OFFSETS, env }).found,
+    false,
+    '目标卡片没有 X → 安全失败',
+  )
 })
 
 test('18A remove 确认: 目标消失且其它 identity 全在才算成功', () => {
@@ -505,11 +521,7 @@ test('18A 页面函数必须自包含：不得引用任何模块级标识符（P
     const source = fn.toString()
     for (const other of inPage) {
       if (other === fn) continue
-      assert.equal(
-        source.includes(`${other.name}(`),
-        false,
-        `${fn.name} 不能调用 ${other.name}（必须各自内联）`,
-      )
+      assert.equal(source.includes(`${other.name}(`), false, `${fn.name} 不能调用 ${other.name}（必须各自内联）`)
     }
   }
 })
@@ -542,7 +554,9 @@ test('18A scope: 已发送消息里的 blob 图片绝不算草稿（图片发送
 
 test('18A scope: 不在 composer 里的图片（无 textarea 祖先）不算草稿', () => {
   const orphan = fakeEl({ tag: 'img', attrs: { src: A } })
-  const env: DraftImageEnv = { document: { querySelectorAll: (selector: string) => (selector === 'img' ? [orphan] : []) } }
+  const env: DraftImageEnv = {
+    document: { querySelectorAll: (selector: string) => (selector === 'img' ? [orphan] : []) },
+  }
 
   assert.deepEqual(readDraftIdentitiesInPage({ env, messageSelector: '.ds-message' }), [])
 })

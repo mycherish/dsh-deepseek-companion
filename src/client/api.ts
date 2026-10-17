@@ -49,9 +49,11 @@ export async function setDeepThink(origin: string, enabled: boolean): Promise<De
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ enabled }),
   })
-  const body = (await response.json().catch(() => null)) as
-    | { available?: unknown; enabled?: unknown; error?: unknown }
-    | null
+  const body = (await response.json().catch(() => null)) as {
+    available?: unknown
+    enabled?: unknown
+    error?: unknown
+  } | null
   if (!response.ok) {
     throw new Error(typeof body?.error === 'string' ? body.error : `HTTP ${response.status}`)
   }
@@ -69,9 +71,11 @@ export async function setSearch(origin: string, enabled: boolean): Promise<Searc
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ enabled }),
   })
-  const body = (await response.json().catch(() => null)) as
-    | { available?: unknown; enabled?: unknown; error?: unknown }
-    | null
+  const body = (await response.json().catch(() => null)) as {
+    available?: unknown
+    enabled?: unknown
+    error?: unknown
+  } | null
   if (!response.ok) {
     throw new Error(typeof body?.error === 'string' ? body.error : `HTTP ${response.status}`)
   }

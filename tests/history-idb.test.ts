@@ -149,7 +149,10 @@ test('20B1 history: fragments 解析 REQUEST / RESPONSE / THINK / FILE', () => {
 
 test('20B1 history: WIP 原样保留（status 由 reconcile 决定怎么用）', () => {
   const read = parseHistoryEntry(
-    ok([user(1, null, '你好'), assistant(2, 1, '', { status: 'WIP', fragments: [{ id: 'x', type: 'RESPONSE', content: '半' }] })]),
+    ok([
+      user(1, null, '你好'),
+      assistant(2, 1, '', { status: 'WIP', fragments: [{ id: 'x', type: 'RESPONSE', content: '半' }] }),
+    ]),
     'sess-1',
   )
   assert.equal(read.kind, 'snapshot')
@@ -205,7 +208,10 @@ test('20B1 history: 字段类型不对（message_id / role / status / fragments�
 })
 
 test('20B1 history: chat_messages 不是数组 / entry 缺 data → malformed', () => {
-  assert.equal(parseHistoryEntry({ outcome: 'ok', value: { data: { chat_messages: 'x' } } }, 'sess-1').kind, 'unavailable')
+  assert.equal(
+    parseHistoryEntry({ outcome: 'ok', value: { data: { chat_messages: 'x' } } }, 'sess-1').kind,
+    'unavailable',
+  )
   assert.equal(parseHistoryEntry({ outcome: 'ok', value: null }, 'sess-1').kind, 'unavailable')
   assert.equal(parseHistoryEntry({ outcome: 'ok', value: {} }, 'sess-1').kind, 'unavailable')
 })
@@ -262,14 +268,14 @@ test('20B1 history: 顺序打乱但链完整 → 仍解析（顺序不是事实�
   )
   assert.equal(read.kind, 'snapshot')
   if (read.kind !== 'snapshot') return
-  assert.deepEqual(read.messages.map((m) => m.messageId), [1, 2, 3, 4])
+  assert.deepEqual(
+    read.messages.map((m) => m.messageId),
+    [1, 2, 3, 4],
+  )
 })
 
 test('20B1 history: 孤儿（parent 不在数组内）→ malformed（entry 不完整）', () => {
-  const read = parseHistoryEntry(
-    ok([user(1, null, 'a'), assistant(2, 1, 'b'), assistant(4, 99, 'c')]),
-    'sess-1',
-  )
+  const read = parseHistoryEntry(ok([user(1, null, 'a'), assistant(2, 1, 'b'), assistant(4, 99, 'c')]), 'sess-1')
   assert.deepEqual(read, { kind: 'unavailable', reason: 'malformed' })
 })
 
@@ -279,9 +285,6 @@ test('20B1 history: 环（互指）→ malformed（没有根）', () => {
 })
 
 test('20B1 history: 分叉（同一 parent 两个子）→ malformed', () => {
-  const read = parseHistoryEntry(
-    ok([user(1, null, 'a'), assistant(2, 1, 'b'), assistant(4, 1, 'c')]),
-    'sess-1',
-  )
+  const read = parseHistoryEntry(ok([user(1, null, 'a'), assistant(2, 1, 'b'), assistant(4, 1, 'c')]), 'sess-1')
   assert.deepEqual(read, { kind: 'unavailable', reason: 'malformed' })
 })

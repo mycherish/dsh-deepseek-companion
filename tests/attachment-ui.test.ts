@@ -45,7 +45,10 @@ test('18A card: 字节数按 1.8 MB 这样的可读格式展示', () => {
 test('18A card: 三种状态各有明确文案，失败带原因', () => {
   assert.equal(attachmentStatusText(attachment('uploading')), '上传中…')
   assert.equal(attachmentStatusText(attachment('ready')), '已就绪')
-  assert.equal(attachmentStatusText(attachment('error', { error: 'upload failed (HTTP 500)' })), '失败 · upload failed (HTTP 500)')
+  assert.equal(
+    attachmentStatusText(attachment('error', { error: 'upload failed (HTTP 500)' })),
+    '失败 · upload failed (HTTP 500)',
+  )
   assert.equal(attachmentStatusText(attachment('error')), '失败')
 })
 

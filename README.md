@@ -29,6 +29,8 @@ DeepSeek Web Companion plugin for [DeepSeek Harness](https://github.com/deepseek
 
 ```sh
 pnpm install
+pnpm format:check
+pnpm lint
 pnpm typecheck
 pnpm build
 pnpm test

@@ -78,7 +78,12 @@ export function readSessionsInPage(payload: { options: SessionLinkOptions; env?:
     const id = idFrom(attrOf(el, 'href'))
     if (id === null || seen.has(id)) continue
     seen.add(id)
-    sessions.push({ id, title: String((el as { textContent?: unknown }).textContent ?? '').trim().slice(0, 200) })
+    sessions.push({
+      id,
+      title: String((el as { textContent?: unknown }).textContent ?? '')
+        .trim()
+        .slice(0, 200),
+    })
   }
 
   const currentId = idFrom(String(env.location?.pathname ?? ''))
@@ -285,7 +290,9 @@ export function readTranscriptInPage(payload: { options: TranscriptOptions; env?
   for (const message of messages) {
     const reply =
       (message as { querySelector?: (s: string) => unknown }).querySelector?.(options.replySelector) ??
-      (useFallback ? (message as { querySelector?: (s: string) => unknown }).querySelector?.(options.replyFallback) : null)
+      (useFallback
+        ? (message as { querySelector?: (s: string) => unknown }).querySelector?.(options.replyFallback)
+        : null)
     if (reply === null || reply === undefined) {
       // Only images INSIDE this message can belong to it. One ambiguous image
       // invalidates the attachment set; never infer ownership by DOM order.
@@ -318,8 +325,11 @@ export function readTranscriptInPage(payload: { options: TranscriptOptions; env?
         const signatures = url.searchParams.getAll('state')
         const id = ids[0] ?? ''
         if (
-          ids.length !== 1 || !/^[a-zA-Z0-9_-]{1,128}$/.test(id) ||
-          signatures.length !== 1 || signatures[0] === '' || seen.has(id)
+          ids.length !== 1 ||
+          !/^[a-zA-Z0-9_-]{1,128}$/.test(id) ||
+          signatures.length !== 1 ||
+          signatures[0] === '' ||
+          seen.has(id)
         ) {
           validImages = false
           break
@@ -346,12 +356,17 @@ export function readTranscriptInPage(payload: { options: TranscriptOptions; env?
     }
     replyIndex += 1
     const scanned = scanMarkdown(reply)
-    const reasoningNode = (message as { querySelector?: (s: string) => unknown }).querySelector?.(options.reasoningSelector)
+    const reasoningNode = (message as { querySelector?: (s: string) => unknown }).querySelector?.(
+      options.reasoningSelector,
+    )
     entries.push({
       role: 'assistant',
       content: scanned?.content ?? String((reply as { textContent?: unknown }).textContent ?? '').trim(),
       format: scanned?.format ?? 'text',
-      reasoning: reasoningNode === null || reasoningNode === undefined ? '' : String((reasoningNode as { textContent?: unknown }).textContent ?? '').trim(),
+      reasoning:
+        reasoningNode === null || reasoningNode === undefined
+          ? ''
+          : String((reasoningNode as { textContent?: unknown }).textContent ?? '').trim(),
       replyIndex,
     })
   }
@@ -387,7 +402,8 @@ export function scrollMessagesInPage(payload: {
   const candidates: unknown[] = []
   let current: unknown = messages[0] ?? null
   while (current !== null && current !== undefined) {
-    if (String((current as { className?: unknown }).className ?? '').includes('ds-scroll-area')) candidates.push(current)
+    if (String((current as { className?: unknown }).className ?? '').includes('ds-scroll-area'))
+      candidates.push(current)
     current = (current as { parentElement?: unknown }).parentElement ?? null
   }
   const scroller = candidates.find((el) => {
@@ -449,7 +465,10 @@ export function buildTranscript(entries: TranscriptEntryRaw[], blocksByReply: Do
  * comparing ids only — a repeated title never makes two entries "the same", and
  * a styling class is never consulted.
  */
-export function toSessionSummaries(result: { sessions: SessionLink[]; currentId: string | null }): ChatSessionSummary[] {
+export function toSessionSummaries(result: {
+  sessions: SessionLink[]
+  currentId: string | null
+}): ChatSessionSummary[] {
   return result.sessions.map((entry) => ({
     id: entry.id,
     title: entry.title,
@@ -490,10 +509,7 @@ export function needsSwitchChat(currentId: string | null, targetId: string): boo
  *                 transcript: only a page that is really an empty chat may be
  *                 cleared.
  */
-export type SessionLocation =
-  | { kind: 'session'; id: string }
-  | { kind: 'empty' }
-  | { kind: 'other' }
+export type SessionLocation = { kind: 'session'; id: string } | { kind: 'empty' } | { kind: 'other' }
 
 /**
  * Classify a URL or a bare pathname. The conversation id is parsed from the
@@ -747,10 +763,14 @@ export function normalizeTranscript(value: unknown): { entries: TranscriptEntryR
           }
           const image = item as Record<string, unknown>
           if (
-            typeof image.id !== 'string' || !/^[a-zA-Z0-9_-]{1,128}$/.test(image.id) ||
-            image.kind !== 'image' || seen.has(image.id) ||
+            typeof image.id !== 'string' ||
+            !/^[a-zA-Z0-9_-]{1,128}$/.test(image.id) ||
+            image.kind !== 'image' ||
+            seen.has(image.id) ||
             (image.name !== null && typeof image.name !== 'string') ||
-            typeof image.remoteUrl !== 'string' || image.remoteUrl.length > 4096 || image.remoteUrl.includes('#')
+            typeof image.remoteUrl !== 'string' ||
+            image.remoteUrl.length > 4096 ||
+            image.remoteUrl.includes('#')
           ) {
             valid = false
             break
@@ -764,9 +784,11 @@ export function normalizeTranscript(value: unknown): { entries: TranscriptEntryR
           }
           if (
             (url.origin !== 'https://files.deepseeksvc.com' && url.origin !== 'https://chat.deepseek.com') ||
-            url.pathname !== '/api/file' || url.searchParams.getAll('file_id').length !== 1 ||
+            url.pathname !== '/api/file' ||
+            url.searchParams.getAll('file_id').length !== 1 ||
             url.searchParams.get('file_id') !== image.id ||
-            url.searchParams.getAll('state').length !== 1 || !url.searchParams.get('state')
+            url.searchParams.getAll('state').length !== 1 ||
+            !url.searchParams.get('state')
           ) {
             valid = false
             break

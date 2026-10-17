@@ -66,10 +66,7 @@ export interface AttachmentResources {
   resetDraft(): Promise<void>
 }
 
-export function createAttachmentResources(options: {
-  dir: string
-  store: CompanionStateStore
-}): AttachmentResources {
+export function createAttachmentResources(options: { dir: string; store: CompanionStateStore }): AttachmentResources {
   const records = new Map<string, AttachmentRecord>()
 
   const forget = async (ids: readonly string[], deleteFiles: boolean): Promise<void> => {

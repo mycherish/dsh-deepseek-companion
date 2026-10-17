@@ -49,10 +49,7 @@ export async function handleChatMessage(
    * whether or not the round carried images: reconciliation needs the parent
    * anchor of every committed turn, not just the attachment ones.
    */
-  onCommitted?: (
-    submitted: CompletionSubmission,
-    ids: { userMessageId: string; assistantMessageId: string },
-  ) => void,
+  onCommitted?: (submitted: CompletionSubmission, ids: { userMessageId: string; assistantMessageId: string }) => void,
 ): Promise<ChatSendResult> {
   if (store.getState().recoveryNotice === 'session_unverified') {
     return { status: 409, body: { error: 'recovered session is unverified' } }

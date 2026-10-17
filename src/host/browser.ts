@@ -40,12 +40,7 @@ import {
   type FileInputCandidate,
 } from './draft-images.ts'
 import { readCompletionSubmission, type CompletionSubmission } from './send-attachments.ts'
-import {
-  parseCitationGroups,
-  readDomBlocks,
-  resolveCitationsByBlock,
-  type DomBlock,
-} from './citations.ts'
+import { parseCitationGroups, readDomBlocks, resolveCitationsByBlock, type DomBlock } from './citations.ts'
 import {
   DEEPSEEK_HISTORY_DB,
   DEEPSEEK_HISTORY_STORE,
@@ -959,7 +954,11 @@ export async function createDeepSeekBrowser(
       .then(() => true)
       .catch(() => false)
 
-  const settleAfterRebuild = async (status: DeepSeekStatus, location: SessionLocation, budget: RecoveryBudget): Promise<DeepSeekStatus> => {
+  const settleAfterRebuild = async (
+    status: DeepSeekStatus,
+    location: SessionLocation,
+    budget: RecoveryBudget,
+  ): Promise<DeepSeekStatus> => {
     settledLocation = location
     recovery.onMarkKnown?.(location)
     crashed = false
@@ -973,7 +972,10 @@ export async function createDeepSeekBrowser(
     currentDeltaReceiver = null
     currentReasoningReceiver = null
     onPageReplaced?.()
-    await bound(page.close().catch(() => {}), budget.effectiveTimeout('closeQuietly')).catch(() => {})
+    await bound(
+      page.close().catch(() => {}),
+      budget.effectiveTimeout('closeQuietly'),
+    ).catch(() => {})
     page = await bound(context.newPage(), budget.effectiveTimeout('newPage'))
     mountPage(page)
     const location = await gotoRecoverTarget(target, budget)
@@ -988,7 +990,10 @@ export async function createDeepSeekBrowser(
     currentDeltaReceiver = null
     currentReasoningReceiver = null
     onPageReplaced?.()
-    await bound(context.close().catch(() => {}), budget.effectiveTimeout('closeQuietly')).catch(() => {})
+    await bound(
+      context.close().catch(() => {}),
+      budget.effectiveTimeout('closeQuietly'),
+    ).catch(() => {})
     context = await bound(
       chromium.launchPersistentContext(profileDir, { headless: false, viewport: { width: 1280, height: 800 } }),
       budget.effectiveTimeout('newPage'),
@@ -1020,7 +1025,9 @@ export async function createDeepSeekBrowser(
       for (;;) {
         if (disposed || budget.exhausted()) break
         if (attempt > 0) {
-          await new Promise((resolve) => setTimeout(resolve, Math.min(backoffForAttempt(attempt + 1), budget.remaining())))
+          await new Promise((resolve) =>
+            setTimeout(resolve, Math.min(backoffForAttempt(attempt + 1), budget.remaining())),
+          )
           if (budget.exhausted()) break
         }
         attempt += 1
@@ -1145,7 +1152,9 @@ export async function createDeepSeekBrowser(
     const health = syncHealth()
     if (health === 'healthy_chat') return 'logged_in'
     if (health === 'login_required') return 'logged_out'
-    return recover(health === 'browser_dead' ? 'browser-disconnected' : health === 'page_dead' ? 'page-closed' : 'page-crashed')
+    return recover(
+      health === 'browser_dead' ? 'browser-disconnected' : health === 'page_dead' ? 'page-closed' : 'page-crashed',
+    )
   }
 
   /**
@@ -1443,10 +1452,9 @@ export async function createDeepSeekBrowser(
       // for "nothing was submitted". The response keeps its old role — the SSE
       // stream's end is still the reliable "reply complete" signal.
       const requestPromise = page.waitForRequest(isCompletionCall, { timeout: COMPLETION_TIMEOUT })
-      const completionPromise = page.waitForResponse(
-        (response) => isCompletionCall(response.request()),
-        { timeout: COMPLETION_TIMEOUT },
-      )
+      const completionPromise = page.waitForResponse((response) => isCompletionCall(response.request()), {
+        timeout: COMPLETION_TIMEOUT,
+      })
       // If the commit point itself fails, the response waiter must not surface as
       // an unhandled rejection later — it is still awaited properly below.
       completionPromise.catch(() => {})
@@ -1714,7 +1722,10 @@ export async function createDeepSeekBrowser(
         let current: Element | null = messages[0] ?? null
         let height = 0
         while (current !== null) {
-          if (String(current.className).includes('ds-scroll-area') && current.scrollHeight > current.clientHeight + 10) {
+          if (
+            String(current.className).includes('ds-scroll-area') &&
+            current.scrollHeight > current.clientHeight + 10
+          ) {
             height = Math.round(current.scrollHeight)
             break
           }
@@ -2069,7 +2080,11 @@ export async function createDeepSeekBrowser(
         .then(() => true)
         .catch(() => false)
       if (!settled) {
-        console.warn('[dsh-deepseek-companion] removeDraftAttachment: confirmation failed at', clickPoint.x, clickPoint.y)
+        console.warn(
+          '[dsh-deepseek-companion] removeDraftAttachment: confirmation failed at',
+          clickPoint.x,
+          clickPoint.y,
+        )
       }
       return settled
     } catch (error) {
@@ -2094,7 +2109,9 @@ export async function createDeepSeekBrowser(
           const card = image.closest('div[role=button]')
           if (card === null) return ['card not found']
           const box = card.getBoundingClientRect()
-          lines.push(`card=(${Math.round(box.left)},${Math.round(box.top)},${Math.round(box.width)}x${Math.round(box.height)})`)
+          lines.push(
+            `card=(${Math.round(box.left)},${Math.round(box.top)},${Math.round(box.width)}x${Math.round(box.height)})`,
+          )
           for (const [dx, dy] of payload.offsets) {
             const x = box.right - (dx ?? 0)
             const y = box.top + (dy ?? 0)

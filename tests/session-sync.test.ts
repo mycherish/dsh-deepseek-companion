@@ -38,9 +38,10 @@ function transcript(label: string): ChatMessageInput[] {
 }
 
 /** A browser stub whose reads are countable and can be made to fail. */
-function stubSyncBrowser(
-  plan: Array<ChatMessageInput[] | Error> = [transcript('默认')],
-): { browser: SessionSyncBrowser; state: { reads: number } } {
+function stubSyncBrowser(plan: Array<ChatMessageInput[] | Error> = [transcript('默认')]): {
+  browser: SessionSyncBrowser
+  state: { reads: number }
+} {
   const state = { reads: 0 }
   return {
     state,

@@ -29,7 +29,12 @@ export interface FloatPosition {
  * maximum keeps the float fully on-screen (minus the edge margin), and never
  * falls below the minimum so the window stays usable on a tiny viewport.
  */
-export function clampFloatSize(width: number, height: number, viewportWidth: number, viewportHeight: number): FloatSize {
+export function clampFloatSize(
+  width: number,
+  height: number,
+  viewportWidth: number,
+  viewportHeight: number,
+): FloatSize {
   const maxWidth = Math.max(FLOAT_MIN_WIDTH, viewportWidth - FLOAT_EDGE_MARGIN * 2)
   const maxHeight = Math.max(FLOAT_MIN_HEIGHT, viewportHeight - FLOAT_EDGE_MARGIN * 2)
   return {
@@ -78,14 +83,7 @@ export function initialFloatPosition(
 
 /** Eight resize directions: four edges plus four corners. */
 export type ResizeDirection =
-  | 'top'
-  | 'bottom'
-  | 'left'
-  | 'right'
-  | 'top-left'
-  | 'top-right'
-  | 'bottom-left'
-  | 'bottom-right'
+  'top' | 'bottom' | 'left' | 'right' | 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right'
 
 /** A float window's full geometry (top-left position plus size). */
 export interface FloatRect {

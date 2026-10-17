@@ -34,7 +34,6 @@ import type { AssistantReply, ChatMessageInput, Citation } from '../src/shared/s
 
 const VALID_ID = 'aaaaaaaa-1111-4111-8111-111111111111'
 const OTHER_ID = 'bbbbbbbb-2222-4222-8222-222222222222'
-const THIRD_ID = 'cccccccc-3333-4333-8333-333333333333'
 
 const LINKS: SessionLinkOptions = { linkSelector: 'a[href*="/a/chat/s/"]', hrefMarker: '/a/chat/s/' }
 const SWITCH: Omit<SwitchChatOptions, 'conversationId'> = { ...LINKS, messageSelector: '.ds-message' }
@@ -128,12 +127,7 @@ function sessionsEnv(init: {
 }
 
 /** One assistant message with a reply node and optional reasoning/text. */
-function assistantMessage(init: {
-  text?: string
-  fiber?: unknown
-  reasoning?: string
-  fallback?: boolean
-}): FakeEl {
+function assistantMessage(init: { text?: string; fiber?: unknown; reasoning?: string; fallback?: boolean }): FakeEl {
   const message = new FakeEl()
   const reply = new FakeEl({ text: init.text ?? '' })
   if (init.fiber !== undefined) withFiber(reply, init.fiber)
@@ -158,14 +152,21 @@ function deferred(): { promise: Promise<void>; resolve: () => void } {
 
 test('J: 从 href 解析 id 与标题，按 id 去重，currentId 来自 pathname', () => {
   const env = sessionsEnv({
-    links: [link('会话甲', `/a/chat/s/${VALID_ID}`), link('会话甲', `/a/chat/s/${OTHER_ID}`), link('会话甲', `/a/chat/s/${VALID_ID}`)],
+    links: [
+      link('会话甲', `/a/chat/s/${VALID_ID}`),
+      link('会话甲', `/a/chat/s/${OTHER_ID}`),
+      link('会话甲', `/a/chat/s/${VALID_ID}`),
+    ],
     pathname: `/a/chat/s/${OTHER_ID}`,
   })
 
   const result = readSessionsInPage({ options: LINKS, env })
 
   assert.equal(result.sessions.length, 2, '重复 id 只保留一次')
-  assert.deepEqual(result.sessions.map((entry) => entry.id), [VALID_ID, OTHER_ID])
+  assert.deepEqual(
+    result.sessions.map((entry) => entry.id),
+    [VALID_ID, OTHER_ID],
+  )
   assert.equal(result.currentId, OTHER_ID)
 })
 
@@ -188,7 +189,10 @@ test('J: active 只由 id 相等决定（同标题的另一会话不会被标记
 
   const summaries = toSessionSummaries(readSessionsInPage({ options: LINKS, env }))
 
-  assert.deepEqual(summaries.map((entry) => entry.active), [false, true])
+  assert.deepEqual(
+    summaries.map((entry) => entry.active),
+    [false, true],
+  )
 })
 
 test('J: href 没有 id / 空 id 一律跳过', () => {
@@ -202,7 +206,10 @@ test('J: href 没有 id / 空 id 一律跳过', () => {
 
   const result = readSessionsInPage({ options: LINKS, env })
 
-  assert.deepEqual(result.sessions.map((entry) => entry.id), [VALID_ID])
+  assert.deepEqual(
+    result.sessions.map((entry) => entry.id),
+    [VALID_ID],
+  )
   assert.equal(result.currentId, null, '/ 上没有会话 id')
 })
 
@@ -216,7 +223,13 @@ test('J: normalizeSessionsResult 只信任形状正确的条目', () => {
     currentId: 'abc',
   })
 
-  assert.deepEqual(result, { sessions: [{ id: 'abc', title: 't' }, { id: 'def', title: '' }], currentId: 'abc' })
+  assert.deepEqual(result, {
+    sessions: [
+      { id: 'abc', title: 't' },
+      { id: 'def', title: '' },
+    ],
+    currentId: 'abc',
+  })
 })
 
 // --- K. switching -------------------------------------------------------------
@@ -248,7 +261,9 @@ test('K: 同一个 id 出现两次 → ambiguous，零点击', () => {
   const second = link('乙', `/a/chat/s/${VALID_ID}`)
   const env = sessionsEnv({ links: [first, second] })
 
-  assert.deepEqual(switchChatInPage({ options: { ...SWITCH, conversationId: VALID_ID }, env }), { outcome: 'ambiguous' })
+  assert.deepEqual(switchChatInPage({ options: { ...SWITCH, conversationId: VALID_ID }, env }), {
+    outcome: 'ambiguous',
+  })
   assert.equal(first.clicks + second.clicks, 0)
 })
 
@@ -317,7 +332,10 @@ test('H: user + assistant 顺序与角色由结构决定（不看 hash class）'
 
   const { entries } = readTranscriptInPage({ options: TRANSCRIPT, env: sessionsEnv({ messages: [user, assistant] }) })
 
-  assert.deepEqual(entries.map((entry) => entry.role), ['user', 'assistant'])
+  assert.deepEqual(
+    entries.map((entry) => entry.role),
+    ['user', 'assistant'],
+  )
   assert.equal(entries[0]!.content, '什么是栈？')
   assert.equal(entries[0]!.replyIndex, -1)
   assert.equal(entries[1]!.reasoning, '先想想…')
@@ -326,21 +344,58 @@ test('H: user + assistant 顺序与角色由结构决定（不看 hash class）'
 
 test('18B: 同一条 user 消息的历史图片与文本一起恢复；纯图片消息保留', () => {
   const imageOnly = new FakeEl()
-  imageOnly.map.img = [new FakeEl({ tag: 'IMG', attrs: {
-    src: 'https://files.deepseeksvc.com/api/file?file_id=file-one&state=signed&ty=chat',
-    alt: 'one.png',
-  } })]
+  imageOnly.map.img = [
+    new FakeEl({
+      tag: 'IMG',
+      attrs: {
+        src: 'https://files.deepseeksvc.com/api/file?file_id=file-one&state=signed&ty=chat',
+        alt: 'one.png',
+      },
+    }),
+  ]
   const mixed = new FakeEl({ text: '请描述图片' })
-  mixed.map.img = [new FakeEl({ tag: 'IMG', attrs: {
-    src: '/api/file?file_id=file-two&state=signed&ty=chat',
-    alt: 'two.jpg',
-  } })]
-  const entries = readTranscriptInPage({ options: TRANSCRIPT, env: sessionsEnv({ messages: [imageOnly, mixed] }) }).entries
+  mixed.map.img = [
+    new FakeEl({
+      tag: 'IMG',
+      attrs: {
+        src: '/api/file?file_id=file-two&state=signed&ty=chat',
+        alt: 'two.jpg',
+      },
+    }),
+  ]
+  const entries = readTranscriptInPage({
+    options: TRANSCRIPT,
+    env: sessionsEnv({ messages: [imageOnly, mixed] }),
+  }).entries
   const messages = buildTranscript(normalizeTranscript({ entries }).entries, [])
 
   assert.deepEqual(messages, [
-    { role: 'user', content: '', format: 'text', attachments: [{ id: 'file-one', kind: 'image', name: 'one.png', remoteUrl: 'https://files.deepseeksvc.com/api/file?file_id=file-one&state=signed&ty=chat' }] },
-    { role: 'user', content: '请描述图片', format: 'text', attachments: [{ id: 'file-two', kind: 'image', name: 'two.jpg', remoteUrl: 'https://chat.deepseek.com/api/file?file_id=file-two&state=signed&ty=chat' }] },
+    {
+      role: 'user',
+      content: '',
+      format: 'text',
+      attachments: [
+        {
+          id: 'file-one',
+          kind: 'image',
+          name: 'one.png',
+          remoteUrl: 'https://files.deepseeksvc.com/api/file?file_id=file-one&state=signed&ty=chat',
+        },
+      ],
+    },
+    {
+      role: 'user',
+      content: '请描述图片',
+      format: 'text',
+      attachments: [
+        {
+          id: 'file-two',
+          kind: 'image',
+          name: 'two.jpg',
+          remoteUrl: 'https://chat.deepseek.com/api/file?file_id=file-two&state=signed&ty=chat',
+        },
+      ],
+    },
   ])
 })
 
@@ -348,24 +403,60 @@ test('18B: 无法证明为历史附件的图片不挂到消息，重复 file_id 
   const user = new FakeEl({ text: '文本保留' })
   user.map.img = [
     new FakeEl({ tag: 'IMG', attrs: { src: 'https://evil.example/api/file?file_id=file-one', alt: 'fake.png' } }),
-    new FakeEl({ tag: 'IMG', attrs: { src: 'https://files.deepseeksvc.com/api/file?state=signed', alt: 'missing.png' } }),
-    new FakeEl({ tag: 'IMG', attrs: { src: 'https://files.deepseeksvc.com/api/file?file_id=file-a&state=s', alt: 'a.png' } }),
-    new FakeEl({ tag: 'IMG', attrs: { src: 'https://files.deepseeksvc.com/api/file?file_id=file-a&state=s', alt: 'duplicate.png' } }),
+    new FakeEl({
+      tag: 'IMG',
+      attrs: { src: 'https://files.deepseeksvc.com/api/file?state=signed', alt: 'missing.png' },
+    }),
+    new FakeEl({
+      tag: 'IMG',
+      attrs: { src: 'https://files.deepseeksvc.com/api/file?file_id=file-a&state=s', alt: 'a.png' },
+    }),
+    new FakeEl({
+      tag: 'IMG',
+      attrs: { src: 'https://files.deepseeksvc.com/api/file?file_id=file-a&state=s', alt: 'duplicate.png' },
+    }),
   ]
   const entry = readTranscriptInPage({ options: TRANSCRIPT, env: sessionsEnv({ messages: [user] }) }).entries[0]!
   assert.deepEqual(buildTranscript([entry], []), [{ role: 'user', content: '文本保留', format: 'text' }])
 })
 
 test('18B: Host 再校验页面返回的签名 URL 与 file_id', () => {
-  const entries = normalizeTranscript({ entries: [
-    { role: 'user', content: '保留文本', attachments: [{ id: 'file-a', kind: 'image', name: 'a.png', remoteUrl: 'https://evil.example/api/file?file_id=file-a&state=s' }] },
-    { role: 'user', content: '', attachments: [{ id: 'file-a', kind: 'image', name: 'a.png', remoteUrl: 'https://files.deepseeksvc.com/api/file?file_id=file-b&state=s' }] },
-  ] }).entries
+  const entries = normalizeTranscript({
+    entries: [
+      {
+        role: 'user',
+        content: '保留文本',
+        attachments: [
+          {
+            id: 'file-a',
+            kind: 'image',
+            name: 'a.png',
+            remoteUrl: 'https://evil.example/api/file?file_id=file-a&state=s',
+          },
+        ],
+      },
+      {
+        role: 'user',
+        content: '',
+        attachments: [
+          {
+            id: 'file-a',
+            kind: 'image',
+            name: 'a.png',
+            remoteUrl: 'https://files.deepseeksvc.com/api/file?file_id=file-b&state=s',
+          },
+        ],
+      },
+    ],
+  }).entries
   assert.deepEqual(buildTranscript(entries, []), [{ role: 'user', content: '保留文本', format: 'text' }])
 })
 
 test('H: fiber markdown 命中 → content = 原始 Markdown，format = markdown', () => {
-  const assistant = assistantMessage({ text: '渲染出来的正文', fiber: fiberChain([{ markdown: '# 标题\n\n正文 [citation:1]' }]) })
+  const assistant = assistantMessage({
+    text: '渲染出来的正文',
+    fiber: fiberChain([{ markdown: '# 标题\n\n正文 [citation:1]' }]),
+  })
 
   const { entries } = readTranscriptInPage({ options: TRANSCRIPT, env: sessionsEnv({ messages: [assistant] }) })
 
@@ -456,14 +547,23 @@ test('H: buildTranscript 在无法映射 citations 时省略（不猜）', () =>
 })
 
 test('H: buildTranscript 丢弃空 user 气泡；transcriptNeedsBlocks 只在需要时要求 blocks', () => {
-  assert.deepEqual(buildTranscript([{ role: 'user', content: '', format: 'text', reasoning: '', replyIndex: -1 }], []), [])
+  assert.deepEqual(
+    buildTranscript([{ role: 'user', content: '', format: 'text', reasoning: '', replyIndex: -1 }], []),
+    [],
+  )
 
   const markdownEntries: TranscriptEntryRaw[] = [
     { role: 'assistant', content: 'a', format: 'markdown', reasoning: '', replyIndex: 0 },
   ]
   assert.equal(transcriptNeedsBlocks(markdownEntries), true)
-  assert.equal(transcriptNeedsBlocks([{ role: 'assistant', content: 'a', format: 'text', reasoning: '', replyIndex: 0 }]), false)
-  assert.equal(transcriptNeedsBlocks([{ role: 'user', content: 'q', format: 'text', reasoning: '', replyIndex: -1 }]), false)
+  assert.equal(
+    transcriptNeedsBlocks([{ role: 'assistant', content: 'a', format: 'text', reasoning: '', replyIndex: 0 }]),
+    false,
+  )
+  assert.equal(
+    transcriptNeedsBlocks([{ role: 'user', content: 'q', format: 'text', reasoning: '', replyIndex: -1 }]),
+    false,
+  )
 })
 
 // --- L. store.replaceChatMessages --------------------------------------------
@@ -566,11 +666,13 @@ const TRANSCRIPT_FIXTURE: ChatMessageInput[] = [
 ]
 
 /** A sessions-capable browser stub (deliberately not a mock framework). */
-function stubSessionsBrowser(init: {
-  onSwitch?: () => Promise<void>
-  transcript?: ChatMessageInput[]
-  sessions?: { id: string; title: string; active: boolean }[]
-} = {}): { browser: SessionsCapableBrowser; state: { switches: number; lists: number; reads: number } } {
+function stubSessionsBrowser(
+  init: {
+    onSwitch?: () => Promise<void>
+    transcript?: ChatMessageInput[]
+    sessions?: { id: string; title: string; active: boolean }[]
+  } = {},
+): { browser: SessionsCapableBrowser; state: { switches: number; lists: number; reads: number } } {
   const state = { switches: 0, lists: 0, reads: 0 }
   return {
     state,
@@ -844,24 +946,44 @@ test('P: 页面函数自包含 —— 去掉模块作用域后仍能执行', () 
   const switchOptions = { ...SWITCH, conversationId: VALID_ID }
   const message = assistantMessage({ text: '正文', reasoning: '思考' })
   const imageMessage = new FakeEl()
-  imageMessage.map.img = [new FakeEl({ tag: 'IMG', attrs: {
-    src: '/api/file?file_id=file-isolated&state=signed',
-    alt: 'isolated.png',
-  } })]
+  imageMessage.map.img = [
+    new FakeEl({
+      tag: 'IMG',
+      attrs: {
+        src: '/api/file?file_id=file-isolated&state=signed',
+        alt: 'isolated.png',
+      },
+    }),
+  ]
   const scrollEnv = sessionsEnv({
     messages: [messageWithScrollers(new FakeEl(), [scroller({ scrollHeight: 3545, clientHeight: 840 })])],
   })
   const cases: Array<[string, unknown, unknown, boolean]> = [
     ['readSessionsInPage', readSessionsInPage, { options: LINKS, env: sessionsEnv({ links }) }, true],
     ['switchChatInPage', switchChatInPage, { options: switchOptions, env: sessionsEnv({ links, window: win }) }, true],
-    ['switchChatReadyInPage', switchChatReadyInPage, { options: switchOptions, env: sessionsEnv({ pathname: '/', window: win }) }, true],
-    ['readTranscriptInPage', readTranscriptInPage, { options: TRANSCRIPT, env: sessionsEnv({ messages: [message] }) }, true],
-    ['readTranscriptInPage with image', readTranscriptInPage, { options: TRANSCRIPT, env: sessionsEnv({ messages: [imageMessage] }) }, true],
+    [
+      'switchChatReadyInPage',
+      switchChatReadyInPage,
+      { options: switchOptions, env: sessionsEnv({ pathname: '/', window: win }) },
+      true,
+    ],
+    [
+      'readTranscriptInPage',
+      readTranscriptInPage,
+      { options: TRANSCRIPT, env: sessionsEnv({ messages: [message] }) },
+      true,
+    ],
+    [
+      'readTranscriptInPage with image',
+      readTranscriptInPage,
+      { options: TRANSCRIPT, env: sessionsEnv({ messages: [imageMessage] }) },
+      true,
+    ],
     ['scrollMessagesInPage', scrollMessagesInPage, { options: SCROLL_OPTIONS, position: 'top', env: scrollEnv }, false],
   ]
 
   for (const [name, fn, payload, expectsResult] of cases) {
-    let result: unknown = undefined
+    let result: unknown
     assert.doesNotThrow(() => {
       result = runIsolated(fn, payload)
     }, `${name} 不得引用模块作用域（Playwright 只发送函数源码）`)

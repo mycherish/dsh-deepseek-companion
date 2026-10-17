@@ -4,10 +4,7 @@ import test from 'node:test'
 import { loginStatusFromCurrentUser } from '../src/host/login.ts'
 
 test('已登录信号（code 0 + id）→ logged_in', () => {
-  assert.equal(
-    loginStatusFromCurrentUser({ code: 0, id: '08158f80-c63f-429b-a77e-d7055d5f9e4d' }),
-    'logged_in',
-  )
+  assert.equal(loginStatusFromCurrentUser({ code: 0, id: '08158f80-c63f-429b-a77e-d7055d5f9e4d' }), 'logged_in')
 })
 
 test('未登录信号（code 40002 Missing Token，无 id）→ logged_out', () => {

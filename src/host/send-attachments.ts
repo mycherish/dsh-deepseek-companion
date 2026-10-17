@@ -30,8 +30,7 @@ import type { AttachmentRecord } from './attachment-resources.ts'
  * payload stated them, so a missing/mistyped field stays detectable.
  */
 export type CompletionSubmission =
-  | { ok: true; refFileIds: unknown; chatSessionId?: unknown; parentMessageId?: unknown }
-  | { ok: false }
+  { ok: true; refFileIds: unknown; chatSessionId?: unknown; parentMessageId?: unknown } | { ok: false }
 
 /** The browser capability a send needs (keeps unit tests free of Playwright). */
 export interface AttachmentSendBrowser {
@@ -310,8 +309,7 @@ export interface AttachmentTransactionDeps {
 }
 
 export type PrepareTransactionResult =
-  | { ok: true; transaction?: SendAttachmentTransaction }
-  | { ok: false; error: string; status: 409 }
+  { ok: true; transaction?: SendAttachmentTransaction } | { ok: false; error: string; status: 409 }
 
 /**
  * Prepare the attachment half of one send.
@@ -321,9 +319,7 @@ export type PrepareTransactionResult =
  * the composer's real content unknowable, so the send is refused instead of
  * risking a message that mixes managed and unmanaged images.
  */
-export async function prepareAttachmentTransaction(
-  deps: AttachmentTransactionDeps,
-): Promise<PrepareTransactionResult> {
+export async function prepareAttachmentTransaction(deps: AttachmentTransactionDeps): Promise<PrepareTransactionResult> {
   const attachments = deps.store.getState().composer.attachments
   const pageIdentities = await deps.listDraftIdentities()
   const gate = evaluateDraftGate({ attachments, recordOf: deps.recordOf, pageIdentities })

@@ -231,10 +231,7 @@ export interface DomBlock {
  * their badge count contribute citations. Everything else is dropped — other
  * blocks are unaffected, so partial success is normal.
  */
-export function resolveCitationsByBlock(input: {
-  markdown: string
-  domBlocks: DomBlock[]
-}): Citation[] {
+export function resolveCitationsByBlock(input: { markdown: string; domBlocks: DomBlock[] }): Citation[] {
   const blocks = parseMarkdownBlocks(input.markdown)
   if (blocks.length === 0) return []
 
@@ -313,7 +310,9 @@ export function readDomBlocks(node: unknown): DomBlock[] {
   })
 
   return leaves.map((el) => {
-    const badgeEls = Array.from((el as { querySelectorAll(s: string): ArrayLike<unknown> }).querySelectorAll('.ds-markdown-cite'))
+    const badgeEls = Array.from(
+      (el as { querySelectorAll(s: string): ArrayLike<unknown> }).querySelectorAll('.ds-markdown-cite'),
+    )
     const badges = badgeEls.map((badge) => {
       const b = badge as {
         tagName?: string
@@ -329,7 +328,10 @@ export function readDomBlocks(node: unknown): DomBlock[] {
       // ...or (today's shape) it is nested INSIDE the anchor.
       if (typeof b.closest === 'function') {
         const anchor = b.closest('a[href]') as { getAttribute?: (n: string) => string | null } | null
-        const href = anchor !== null && anchor !== undefined && typeof anchor.getAttribute === 'function' ? anchor.getAttribute('href') : null
+        const href =
+          anchor !== null && anchor !== undefined && typeof anchor.getAttribute === 'function'
+            ? anchor.getAttribute('href')
+            : null
         if (typeof href === 'string' && href !== '') return href
       }
       if (typeof b.querySelector !== 'function') return null
@@ -344,7 +346,13 @@ export function readDomBlocks(node: unknown): DomBlock[] {
     // Visible text WITHOUT the badges (they render as "-5"-style glyphs).
     const source = el as { cloneNode?: (deep: boolean) => unknown; textContent?: string | null }
     let text = source.textContent ?? ''
-    const clone = typeof source.cloneNode === 'function' ? (source.cloneNode(true) as { querySelectorAll?: (s: string) => ArrayLike<unknown>; textContent?: string | null }) : null
+    const clone =
+      typeof source.cloneNode === 'function'
+        ? (source.cloneNode(true) as {
+            querySelectorAll?: (s: string) => ArrayLike<unknown>
+            textContent?: string | null
+          })
+        : null
     if (clone !== null && typeof clone.querySelectorAll === 'function') {
       Array.from(clone.querySelectorAll('.ds-markdown-cite')).forEach((badge) => {
         ;(badge as { remove?: () => void }).remove?.()
@@ -378,7 +386,10 @@ export function readCitationBadges(node: unknown): (string | null)[] {
     }
     if (typeof el.closest === 'function') {
       const anchor = el.closest('a[href]') as { getAttribute?: (name: string) => string | null } | null
-      const href = anchor !== null && anchor !== undefined && typeof anchor.getAttribute === 'function' ? anchor.getAttribute('href') : null
+      const href =
+        anchor !== null && anchor !== undefined && typeof anchor.getAttribute === 'function'
+          ? anchor.getAttribute('href')
+          : null
       if (typeof href === 'string' && href !== '') return href
     }
     if (typeof el.querySelector !== 'function') return null

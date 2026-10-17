@@ -109,10 +109,7 @@ test('E: 多 group 按位置一一映射', () => {
 test('F: group 数与 badge 数不一致 → 不猜，返回空', () => {
   assert.deepEqual(resolveCitations({ groups: [{ markers: [1] }], badges: [] }), [])
   assert.deepEqual(resolveCitations({ groups: [], badges: ['https://a.com'] }), [])
-  assert.deepEqual(
-    resolveCitations({ groups: [{ markers: [1] }], badges: ['https://a.com', 'https://b.com'] }),
-    [],
-  )
+  assert.deepEqual(resolveCitations({ groups: [{ markers: [1] }], badges: ['https://a.com', 'https://b.com'] }), [])
   assert.deepEqual(resolveCitations({ groups: [], badges: [] }), [])
 })
 
@@ -137,10 +134,9 @@ test('H: 同 marker 指向两个不同 URL → 保守失败', () => {
     [],
   )
   // 同一 group 内的重复 marker 也一样
-  assert.deepEqual(
-    resolveCitations({ groups: [{ markers: [5, 5] }], badges: ['https://a.com'] }),
-    [{ marker: 5, url: 'https://a.com', domain: 'a.com' }],
-  )
+  assert.deepEqual(resolveCitations({ groups: [{ markers: [5, 5] }], badges: ['https://a.com'] }), [
+    { marker: 5, url: 'https://a.com', domain: 'a.com' },
+  ])
 })
 
 // --- page-side reader -------------------------------------------------------
@@ -393,7 +389,12 @@ test('L: citations 在正文完成之后才写入，且从不影响 sending / co
 test('L: 上一轮迟到的 citations 不会写进下一轮', async () => {
   const store = createCompanionStateStore()
   const lateCallbacks: ((citations: Citation[]) => void)[] = []
-  const send = async (_message: string, onDelta: (reply: AssistantReply) => void, _r: unknown, onCitations: (c: Citation[]) => void) => {
+  const send = async (
+    _message: string,
+    onDelta: (reply: AssistantReply) => void,
+    _r: unknown,
+    onCitations: (c: Citation[]) => void,
+  ) => {
     onDelta({ content: '回答', format: 'markdown' })
     lateCallbacks.push(onCitations)
     return { content: '回答', format: 'markdown' } satisfies AssistantReply

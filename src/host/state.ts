@@ -139,7 +139,8 @@ function equivalentMessages(current: ChatMessage[], next: ChatMessageInput[]): b
   if (current.length !== next.length) return false
   return current.every((message, index) => {
     const other = next[index]!
-    if (message.role !== other.role || message.content !== other.content || message.format !== other.format) return false
+    if (message.role !== other.role || message.content !== other.content || message.format !== other.format)
+      return false
     if (!sameReasoning(message.reasoning, other.reasoning)) return false
     if (!attachmentsUnchangedByRead(message.attachments, other.attachments)) return false
     const a = message.citations
@@ -205,10 +206,7 @@ export interface CompanionStateStore {
    */
   addComposerAttachment(input: { name: string; mimeType: string; bytes: number }): ComposerAttachment
   /** Move one draft attachment through its lifecycle (status / error text). */
-  updateComposerAttachment(
-    id: string,
-    patch: { status?: ComposerAttachmentStatus; error?: string | null },
-  ): void
+  updateComposerAttachment(id: string, patch: { status?: ComposerAttachmentStatus; error?: string | null }): void
   /** Drop exactly one draft attachment (the page card is removed by the caller). */
   removeComposerAttachment(id: string): void
   /**
@@ -316,7 +314,12 @@ export function createCompanionStateStore(): CompanionStateStore {
       if (disposed) return
       if (state.deepseek.status === status) return
       // The legacy mirror and the unified connection view move together.
-      state = withConnection({ ...state, deepseek: { ...state.deepseek, status } }, status, state.connection.browserReady, recovering)
+      state = withConnection(
+        { ...state, deepseek: { ...state.deepseek, status } },
+        status,
+        state.connection.browserReady,
+        recovering,
+      )
       notify(state)
     },
 
@@ -340,8 +343,7 @@ export function createCompanionStateStore(): CompanionStateStore {
       const current = state.currentSession
       // A `null` title never erases a title that is already known for the SAME
       // conversation (the sidebar is read far less often than the URL changes).
-      const title =
-        session.title == null ? (session.id === current.id ? current.title : null) : session.title
+      const title = session.title == null ? (session.id === current.id ? current.title : null) : session.title
       const next: CurrentSession = { id: session.id, title }
       if (sameSession(current, next)) return
       state = {
@@ -475,10 +477,13 @@ export function createCompanionStateStore(): CompanionStateStore {
       if (state.chat.sending === sending) return
       // One write, three fields: the legacy gate, the unified composer view, and
       // the end of a stopping round (a stop can never outlive its send).
-      state = withComposer({ ...state, chat: { ...state.chat, sending } }, {
-        sending,
-        stopping: sending ? state.composer.stopping : false,
-      })
+      state = withComposer(
+        { ...state, chat: { ...state.chat, sending } },
+        {
+          sending,
+          stopping: sending ? state.composer.stopping : false,
+        },
+      )
       notify(state)
     },
 

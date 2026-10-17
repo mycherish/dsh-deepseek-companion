@@ -13,13 +13,20 @@ test('20B2: unverified recovery refuses send before appending a message', async 
   store.appendChatMessage('user', 'preserved')
   store.markSessionUnverified('uncertain')
   let called = false
-  const result = await handleChatMessage(store, async () => {
-    called = true
-    return reply('unexpected')
-  }, 'new message')
+  const result = await handleChatMessage(
+    store,
+    async () => {
+      called = true
+      return reply('unexpected')
+    },
+    'new message',
+  )
   assert.equal(result.status, 409)
   assert.equal(called, false)
-  assert.deepEqual(store.getState().chat.messages.map((entry) => entry.content), ['preserved'])
+  assert.deepEqual(
+    store.getState().chat.messages.map((entry) => entry.content),
+    ['preserved'],
+  )
   assert.equal(store.getState().chat.sending, false)
 })
 
@@ -286,9 +293,13 @@ test('08.2: status 绑定到本轮消息 —— 下一轮发送不会改写上�
 test('08.2: send 抛错 → error 状态（不回写成 finished）', async () => {
   const store = createCompanionStateStore()
 
-  await handleChatMessage(store, async () => {
-    throw new Error('boom')
-  }, '你好')
+  await handleChatMessage(
+    store,
+    async () => {
+      throw new Error('boom')
+    },
+    '你好',
+  )
 
   assert.equal(store.getState().chat.messages[1]!.status, 'error')
 })
@@ -297,7 +308,13 @@ test('08.2: send 抛错 → error 状态（不回写成 finished）', async () =
 
 test('20B1 commit point: onCommitted 恰好一次，带本轮 Host user/assistant id', async () => {
   const store = createCompanionStateStore()
-  const seen: Array<{ ok: boolean; sessionId: unknown; parentMessageId: unknown; userId: string; assistantId: string }> = []
+  const seen: Array<{
+    ok: boolean
+    sessionId: unknown
+    parentMessageId: unknown
+    userId: string
+    assistantId: string
+  }> = []
 
   const result = await handleChatMessage(
     store,
@@ -310,7 +327,9 @@ test('20B1 commit point: onCommitted 恰好一次，带本轮 Host user/assistan
     undefined,
     undefined,
     (submitted, ids) => {
-      const anchor = submitted.ok ? { sessionId: submitted.chatSessionId, parentMessageId: submitted.parentMessageId } : { sessionId: undefined, parentMessageId: undefined }
+      const anchor = submitted.ok
+        ? { sessionId: submitted.chatSessionId, parentMessageId: submitted.parentMessageId }
+        : { sessionId: undefined, parentMessageId: undefined }
       seen.push({ ok: submitted.ok, ...anchor, userId: ids.userMessageId, assistantId: ids.assistantMessageId })
     },
   )

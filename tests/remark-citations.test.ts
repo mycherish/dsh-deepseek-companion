@@ -117,7 +117,10 @@ test('K: 嵌套结构（列表 / 引用 / 表格单元）仍会处理，但不�
           },
         ],
       },
-      { type: 'blockquote', children: [{ type: 'paragraph', children: [{ type: 'text', value: '引用[citation:7]' }] }] },
+      {
+        type: 'blockquote',
+        children: [{ type: 'paragraph', children: [{ type: 'text', value: '引用[citation:7]' }] }],
+      },
     ],
   }
   remarkCitations({ urls: new Map([[2, 'https://b.com']]) })(tree)

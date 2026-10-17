@@ -41,6 +41,9 @@
     }
   },
   "scripts": {
+    "format": "prettier --write \"src/**/*.{ts,tsx}\" \"tests/**/*.ts\" \"*.{ts,json}\" \"docs/**/*.md\" README.md AGENTS.md",
+    "format:check": "prettier --check \"src/**/*.{ts,tsx}\" \"tests/**/*.ts\" \"*.{ts,json}\" \"docs/**/*.md\" README.md AGENTS.md",
+    "lint": "biome lint src tests --error-on-warnings",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "build": "tsdown && tsdown --config tsdown.client.config.ts",
     "test": "node --test tests/*.test.ts"
@@ -59,6 +62,7 @@
     "react-dom": "^18.2.0"
   },
   "devDependencies": {
+    "@biomejs/biome": "2.5.15",
     "@deepseek-ai/cordis": "^4.0.2",
     "@deepseek-ai/dsh-api-session-controller": "0.1.5-rc.2",
     "@deepseek-ai/dsh-client-connection": "0.1.5-rc.2",
@@ -69,6 +73,7 @@
     "@types/node": "^22.10.1",
     "@types/react": "~18.3.31",
     "@types/react-dom": "~18.3.7",
+    "prettier": "3.9.10",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-markdown": "^10.1.0",

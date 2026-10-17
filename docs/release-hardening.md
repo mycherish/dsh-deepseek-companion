@@ -12,18 +12,24 @@
 
 ## 烟测结果
 
-| 场景 | 结果 |
-|---|---|
-| tarball 内容 | 仅包含 Host/Client 的 JS 与类型声明、patch、package.json、README、LICENSE |
-| 干净 profile | 打包插件加载，DSH Web 显示“DS快速聊天”；无登录态时状态为 `login_required / logged_out`，显示登录入口，页面无运行时错误 |
-| 已登录 profile 副本 | Companion 状态为 `online / logged_in`；通过 UI 发送一条标记测试消息，得到一条已完成的 user 消息与一条已完成的 assistant 回复 |
-| 历史图片 | UI 切换到图片测试会话后，Host 有 10 条消息、7 个附件；Client 的 7 个历史图片节点均加载成功 |
-| 图片请求失败 | 拦截 `/api/file` 请求后，Client 保留 7 个文件名标签，图片节点与破图均为 0 |
-| Chromium 故障 | 仅终止临时 profile 的唯一 Chromium 主进程；未刷新的 DSH Web 观察到 `recovering → online`，恢复后仍已登录，原会话、10 条消息 ID 和 7 个附件保持一致 |
+| 场景                | 结果                                                                                                                                               |
+| ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| tarball 内容        | 仅包含 Host/Client 的 JS 与类型声明、patch、package.json、README、LICENSE                                                                          |
+| 干净 profile        | 打包插件加载，DSH Web 显示“DS快速聊天”；无登录态时状态为 `login_required / logged_out`，显示登录入口，页面无运行时错误                             |
+| 已登录 profile 副本 | Companion 状态为 `online / logged_in`；通过 UI 发送一条标记测试消息，得到一条已完成的 user 消息与一条已完成的 assistant 回复                       |
+| 历史图片            | UI 切换到图片测试会话后，Host 有 10 条消息、7 个附件；Client 的 7 个历史图片节点均加载成功                                                         |
+| 图片请求失败        | 拦截 `/api/file` 请求后，Client 保留 7 个文件名标签，图片节点与破图均为 0                                                                          |
+| Chromium 故障       | 仅终止临时 profile 的唯一 Chromium 主进程；未刷新的 DSH Web 观察到 `recovering → online`，恢复后仍已登录，原会话、10 条消息 ID 和 7 个附件保持一致 |
 
 验收使用本机 macOS、DSH Web、Playwright Chromium 与临时 profile。已登录场景使用测试 profile 的隔离副本；干净安装场景使用新建 profile。脚本只输出状态、数量和加载结果，不输出 token、cookie、签名 URL 或会话正文；用于目视核对的临时历史截图已随 profile 副本清理。原始 profile 未修改。
 
 文本发送烟测在测试账号的 DeepSeek 服务端留下了一条以 `P0 release smoke 2026-10-17` 开头的测试会话；本轮未删除该会话。
+
+## 工程检查门禁
+
+已加入锁定版本的 Prettier（源码、测试、配置与 Markdown 格式检查）和 Biome（源码、测试 lint）。开发与提交前依次运行 `pnpm format:check`、`pnpm lint`、`pnpm typecheck`、`pnpm build`、`pnpm test`。`pnpm format` 用于修复格式。
+
+首次接入时统一整理了现有文件的格式。Biome 保留推荐规则；对项目中有意采用的非空断言、页面内临时属性访问、用于触发滚动的 React effect 依赖、拖拽分隔元素、赋值式循环和控制字符过滤正则设置了例外。Phase 25 的完整 Web 回归仍需单独执行。
 
 ## 范围边界
 

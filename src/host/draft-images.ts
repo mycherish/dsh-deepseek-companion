@@ -78,9 +78,7 @@ export function isDraftIdentity(value: unknown): value is string {
  *      message container. A sent image is rendered in the transcript, sometimes
  *      from its local `blob:` URL, and must never be mistaken for a draft.
  */
-export function readDraftIdentitiesInPage(
-  payload: { env?: DraftImageEnv; messageSelector?: string } = {},
-): string[] {
+export function readDraftIdentitiesInPage(payload: { env?: DraftImageEnv; messageSelector?: string } = {}): string[] {
   const env: DraftImageEnv = payload.env ?? (globalThis as unknown as DraftImageEnv)
   const doc = env.document
   if (doc === undefined || doc === null) return []
@@ -465,7 +463,8 @@ export function normalizeUploadResponse(input: { status: number; body: unknown }
   if (body.code !== 0) return { ok: false, error: `upload rejected (code ${String(body.code ?? 'missing')})` }
 
   const data = asRecord(body.data)
-  if (data.biz_code !== 0) return { ok: false, error: `upload rejected (biz_code ${String(data.biz_code ?? 'missing')})` }
+  if (data.biz_code !== 0)
+    return { ok: false, error: `upload rejected (biz_code ${String(data.biz_code ?? 'missing')})` }
 
   const biz = asRecord(data.biz_data)
   const fileId = biz.id

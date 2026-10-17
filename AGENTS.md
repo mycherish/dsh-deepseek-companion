@@ -14,6 +14,8 @@
 必须依次执行并确保全部通过：
 
 ```sh
+pnpm format:check
+pnpm lint
 pnpm typecheck
 pnpm build
 pnpm test

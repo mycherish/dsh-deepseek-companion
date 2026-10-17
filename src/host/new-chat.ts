@@ -92,7 +92,10 @@ export function newChatInPage(payload: { options: NewChatOptions; env?: NewChatE
   const doc = env.document
   if (doc === undefined || doc === null) return { outcome: 'missing' }
 
-  const squash = (value: unknown): string => String(value ?? '').replace(/\s+/g, '').toLowerCase()
+  const squash = (value: unknown): string =>
+    String(value ?? '')
+      .replace(/\s+/g, '')
+      .toLowerCase()
   const labels = options.labels.map(squash)
 
   const tagOf = (el: unknown): string => String((el as { tagName?: unknown }).tagName ?? '').toUpperCase()

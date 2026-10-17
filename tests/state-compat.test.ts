@@ -142,7 +142,10 @@ test('兼容层: 丢弃形状不对的消息，保留可用的（坏数据不拖
     },
   })
 
-  assert.deepEqual(state.chat.messages.map((message) => message.id), ['ok'])
+  assert.deepEqual(
+    state.chat.messages.map((message) => message.id),
+    ['ok'],
+  )
 })
 
 test('兼容层: 同一份 Host 状态在三个 surface 上归一化结果完全相同（三界面一致）', () => {
@@ -167,7 +170,11 @@ function attachmentState(): Record<string, unknown> {
     status: 'ready',
     revision: 3,
     instanceId: 'host-1',
-    deepseek: { status: 'logged_in', deepThink: { available: false, enabled: false }, search: { available: false, enabled: false } },
+    deepseek: {
+      status: 'logged_in',
+      deepThink: { available: false, enabled: false },
+      search: { available: false, enabled: false },
+    },
     composer: {
       sending: false,
       stopping: false,
@@ -175,7 +182,15 @@ function attachmentState(): Record<string, unknown> {
       search: { available: false, enabled: false },
       attachments: [
         { id: 'att-1', kind: 'image', name: 'a.png', mimeType: 'image/png', bytes: 1024, status: 'ready' },
-        { id: 'att-2', kind: 'image', name: 'b.png', mimeType: 'image/jpeg', bytes: 2048, status: 'error', error: 'upload failed' },
+        {
+          id: 'att-2',
+          kind: 'image',
+          name: 'b.png',
+          mimeType: 'image/jpeg',
+          bytes: 2048,
+          status: 'error',
+          error: 'upload failed',
+        },
       ],
     },
     chat: {
@@ -303,8 +318,17 @@ test('20A 兼容层: 新 Host 的 connection.status=recovering 原样保留（�
     revision: 9,
     instanceId: 'host-1',
     connection: { status: 'recovering', browserReady: true },
-    deepseek: { status: 'error', deepThink: { available: false, enabled: false }, search: { available: false, enabled: false } },
-    composer: { sending: false, stopping: false, deepThink: { available: false, enabled: false }, search: { available: false, enabled: false } },
+    deepseek: {
+      status: 'error',
+      deepThink: { available: false, enabled: false },
+      search: { available: false, enabled: false },
+    },
+    composer: {
+      sending: false,
+      stopping: false,
+      deepThink: { available: false, enabled: false },
+      search: { available: false, enabled: false },
+    },
     chat: { sending: false, messages: [] },
   })
 

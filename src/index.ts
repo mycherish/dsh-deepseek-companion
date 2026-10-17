@@ -24,7 +24,7 @@ import {
 } from './host/sessions.ts'
 import { handleStopRequest } from './host/stop.ts'
 import { createCompanionStateStore, type CompanionStateStore } from './host/state.ts'
-import type { CompanionState, DeepSeekStatus } from './shared/state.ts'
+import type { CompanionState } from './shared/state.ts'
 
 /** Cordis plugin id, referenced by the bundle patch to insert this plugin. */
 export const name = 'deepseek-companion'
@@ -437,11 +437,7 @@ export function apply(ctx: Context): void {
           if (ready === null) return Response.json({ error: 'browser not ready' }, { status: 503 })
           const result = await handleAttachmentRequest({ store, resources, browser: ready, guard: pageGuard }, body)
           if (result.status >= 400) {
-            console.warn(
-              '[dsh-deepseek-companion] attachment request not applied:',
-              result.status,
-              result.body.error,
-            )
+            console.warn('[dsh-deepseek-companion] attachment request not applied:', result.status, result.body.error)
           }
           return Response.json(result.body, { status: result.status })
         },

@@ -74,11 +74,7 @@ test('B: SSE 在停止期间反复推送 sending=true 也不会清掉 停止中�
 // --- C / D. request did not stop anything -----------------------------------
 
 test('C: Stop API 失败 → stopping 清除 → 恢复 停止，且可以再点一次', () => {
-  const state = replay([
-    { type: 'host-sending', sending: true },
-    { type: 'click' },
-    { type: 'request-failed' },
-  ])
+  const state = replay([{ type: 'host-sending', sending: true }, { type: 'click' }, { type: 'request-failed' }])
 
   assert.equal(state.stopping, false)
   assert.equal(label(state), '停止')
@@ -88,11 +84,7 @@ test('C: Stop API 失败 → stopping 清除 → 恢复 停止，且可以再点
 })
 
 test('D: API 返回 stopped:false → stopping 清除（不永久停在 停止中…）', () => {
-  const state = replay([
-    { type: 'host-sending', sending: true },
-    { type: 'click' },
-    { type: 'request-refused' },
-  ])
+  const state = replay([{ type: 'host-sending', sending: true }, { type: 'click' }, { type: 'request-refused' }])
 
   assert.equal(state.stopping, false)
   assert.equal(label(state), '停止')
@@ -161,11 +153,7 @@ test('未生成时的 click 不会显示 停止中…（sending 优先）', () =
 })
 
 test('未知事件之外的重复 click 幂等（stopping 保持 true）', () => {
-  const state = replay([
-    { type: 'host-sending', sending: true },
-    { type: 'click' },
-    { type: 'click' },
-  ])
+  const state = replay([{ type: 'host-sending', sending: true }, { type: 'click' }, { type: 'click' }])
 
   assert.deepEqual(state, { sending: true, stopping: true })
 })

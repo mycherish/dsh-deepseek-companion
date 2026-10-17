@@ -61,10 +61,10 @@ React Client 只负责渲染，**不得**成为聊天状态的唯一 Owner。
 
 Companion Dock 在用户点击 sidebar 入口时打开。打开时根据当前 Session 的 `blank` 标志，选择一个官方 Surface 占用：
 
-| 当前 Session | Surface | 槽位 / Scope | 效果 |
-|---|---|---|---|
-| 非 blank（`blank === false`） | `rightbar` | 单槽、`root` scope | conversation 真实缩窄，dock 在官方右侧列内（`openRightbar(true, false)` 保留 grid track） |
-| blank（`blank === true`）或无当前 Session | `shell.overlay` | 列表槽、`root` scope | frame-right 浮层（fixed right 420px），conversation 不缩窄 |
+| 当前 Session                              | Surface         | 槽位 / Scope         | 效果                                                                                      |
+| ----------------------------------------- | --------------- | -------------------- | ----------------------------------------------------------------------------------------- |
+| 非 blank（`blank === false`）             | `rightbar`      | 单槽、`root` scope   | conversation 真实缩窄，dock 在官方右侧列内（`openRightbar(true, false)` 保留 grid track） |
+| blank（`blank === true`）或无当前 Session | `shell.overlay` | 列表槽、`root` scope | frame-right 浮层（fixed right 420px），conversation 不缩窄                                |
 
 ### 规则
 
@@ -80,10 +80,10 @@ DSH 0.1.2-rc.1 的 `AppFrame` 在 blank Session 时强制 `details` 宽度为 0�
 
 ### Width Ownership（谁拥有布局，谁拥有宽度）
 
-| Surface | 宽度拥有者 | 调整方式 | 持久化 |
-|---|---|---|---|
-| `shell.overlay` | Companion | 自定义 resize handle（Pointer Capture） | ✅ browser localStorage |
-| `rightbar` | DSH | DSH 原生 DragHandle（0.1.5 rightbar 列） | ❌ Companion 不持久化 / 不同步 |
+| Surface         | 宽度拥有者 | 调整方式                                 | 持久化                         |
+| --------------- | ---------- | ---------------------------------------- | ------------------------------ |
+| `shell.overlay` | Companion  | 自定义 resize handle（Pointer Capture）  | ✅ browser localStorage        |
+| `rightbar`      | DSH        | DSH 原生 DragHandle（0.1.5 rightbar 列） | ❌ Companion 不持久化 / 不同步 |
 
 overlay 与 rightbar 的宽度**故意独立**，绝不相同步。
 
@@ -151,11 +151,11 @@ DSH Host
 
 Companion 支持三种界面形态，三者**复用同一份 Host State**（都渲染同一个 `HostStateView`、订阅同一条 SSE 通道），互不新增状态逻辑：
 
-| 形态 | 实现 | 说明 |
-|---|---|---|
-| 右侧停靠 | `rightbar`（non-blank session）/ `shell.overlay`（blank session，右侧停靠样式） | 打开 Companion 的默认形态 |
-| 页面内浮窗 | `shell.overlay`（`position: fixed` 浮窗样式，`CompanionFloat`） | 标题栏拖动、右下角调整宽高、限制在可视区域 |
-| 独立浏览器窗口 | browser-native `window.open`（Phase 06A） | 单独存在，可与其他形态并存 |
+| 形态           | 实现                                                                            | 说明                                       |
+| -------------- | ------------------------------------------------------------------------------- | ------------------------------------------ |
+| 右侧停靠       | `rightbar`（non-blank session）/ `shell.overlay`（blank session，右侧停靠样式） | 打开 Companion 的默认形态                  |
+| 页面内浮窗     | `shell.overlay`（`position: fixed` 浮窗样式，`CompanionFloat`）                 | 标题栏拖动、右下角调整宽高、限制在可视区域 |
+| 独立浏览器窗口 | browser-native `window.open`（Phase 06A）                                       | 单独存在，可与其他形态并存                 |
 
 - 停靠 ↔ 浮窗互斥（同一时刻只有其一），通过 `DockController` 的 `enterFloat()` / `dockBack()` 切换；独立窗口独立存在。
 - 浮窗位置/尺寸是**内存态**（`float.ts` 的纯函数 `clampFloatPosition` / `clampFloatSize`），本阶段不持久化。
@@ -520,12 +520,12 @@ DeepSeek page（URL pathname / 侧栏 href，标准 DOM）
 
 ### 对现有 transcript reader 的影响
 
-| 场景 | 现状（实测） | 结论 |
-|---|---|---|
-| 图片 + 文本 | 文本保留，图片被静默忽略 | 不破坏现有行为 |
-| 只有图片 | user 消息被丢弃 | ✗ 必须处理（18B） |
-| role 判定 | 结构判定（是否含 assistant 容器）不受图片影响 | 不需改动 |
-| session 恢复 | 图片不进入 `content` / `reasoning` / `citations` | 不污染现有字段 |
+| 场景         | 现状（实测）                                     | 结论              |
+| ------------ | ------------------------------------------------ | ----------------- |
+| 图片 + 文本  | 文本保留，图片被静默忽略                         | 不破坏现有行为    |
+| 只有图片     | user 消息被丢弃                                  | ✗ 必须处理（18B） |
+| role 判定    | 结构判定（是否含 assistant 容器）不受图片影响    | 不需改动          |
+| session 恢复 | 图片不进入 `content` / `reasoning` / `citations` | 不污染现有字段    |
 
 ### 数据模型（两个类型，**不复用**）
 
@@ -534,10 +534,10 @@ DeepSeek page（URL pathname / 侧栏 href，标准 DOM）
 export interface ChatAttachment {
   id: string
   kind: 'image'
-  name: string | null        // 原始文件名（历史恢复时来自 img.alt）
+  name: string | null // 原始文件名（历史恢复时来自 img.alt）
   mimeType?: string
   bytes?: number
-  remoteUrl?: string         // 历史恢复的 CDN 签名 URL（会过期，仅展示；18B）
+  remoteUrl?: string // 历史恢复的 CDN 签名 URL（会过期，仅展示；18B）
 }
 // ChatMessage += { attachments?: ChatAttachment[] }
 
@@ -576,10 +576,10 @@ export interface ComposerAttachment {
 ```ts
 /** 只存在于 Host 内存的附件资源记录：id 与 ComposerAttachment.id 一一对应。 */
 interface AttachmentRecord {
-  id: string                 // att-<uuid>，与 shared state 里的 ComposerAttachment.id 相同
-  tempPath: string           // 随机文件名的临时文件（Host 私有）
-  previewIdentity?: string   // 页面草稿缩略图的 blob src（仅 Host/Browser 使用）
-  deepSeekFileId?: string    // file-<uuid>（仅 Host 使用；Client 无用途，不下发）
+  id: string // att-<uuid>，与 shared state 里的 ComposerAttachment.id 相同
+  tempPath: string // 随机文件名的临时文件（Host 私有）
+  previewIdentity?: string // 页面草稿缩略图的 blob src（仅 Host/Browser 使用）
+  deepSeekFileId?: string // file-<uuid>（仅 Host 使用；Client 无用途，不下发）
 }
 ```
 
@@ -593,11 +593,11 @@ interface AttachmentRecord {
 
 ### 文件传输边界（三种方案对比）
 
-| 方案 | 机制 | 内存 | 大图 | 文件名/MIME | DSH 能力 | 结论 |
-|---|---|---|---|---|---|---|
-| A | Client 直接把 `File` 交给 Host API，Host 再交给 Playwright | 全量驻留 Host | 受 buffered cap 限制 | 需显式传 name/type | `connection.fetch` 的 route 只有 `GET/HEAD/POST` + `buffered | streaming` 两种 body 模式，**没有** multipart helper | 不可行（`File` 不能跨 HTTP 直接传） |
-| B | Client base64/DataURL → Host 落临时文件 → `setInputFiles` | base64 膨胀 33%，Host 内存峰值高 | 受 `buffered` 上限（**300 MiB**）约束，桥接层整包驻留内存 | name/type 由 Client 提供，需校验 | 与 DSH 官方图片通道同构（官方 cap 就是按「200 MiB 聚合图片 + base64」推导的） | **可用，推荐** |
-| C | Client 二进制 POST（`requestBody: 'streaming'`）→ Host 边写盘边转发 | 常驻低（背压） | 无聚合上限 | 需在 header/query 带 name/type | 0.1.5-rc.2 的 `ConnectionFetchRoute.requestBody` 支持 `'streaming'`（无聚合上限、有背压） | 可行，但需自建一条 route + 流式落盘 + 清理，复杂度高于 B |
+| 方案 | 机制                                                                | 内存                             | 大图                                                      | 文件名/MIME                      | DSH 能力                                                                                  | 结论                                                     |
+| ---- | ------------------------------------------------------------------- | -------------------------------- | --------------------------------------------------------- | -------------------------------- | ----------------------------------------------------------------------------------------- | -------------------------------------------------------- |
+| A    | Client 直接把 `File` 交给 Host API，Host 再交给 Playwright          | 全量驻留 Host                    | 受 buffered cap 限制                                      | 需显式传 name/type               | `connection.fetch` 的 route 只有 `GET/HEAD/POST` + `buffered                              | streaming` 两种 body 模式，**没有** multipart helper     | 不可行（`File` 不能跨 HTTP 直接传） |
+| B    | Client base64/DataURL → Host 落临时文件 → `setInputFiles`           | base64 膨胀 33%，Host 内存峰值高 | 受 `buffered` 上限（**300 MiB**）约束，桥接层整包驻留内存 | name/type 由 Client 提供，需校验 | 与 DSH 官方图片通道同构（官方 cap 就是按「200 MiB 聚合图片 + base64」推导的）             | **可用，推荐**                                           |
+| C    | Client 二进制 POST（`requestBody: 'streaming'`）→ Host 边写盘边转发 | 常驻低（背压）                   | 无聚合上限                                                | 需在 header/query 带 name/type   | 0.1.5-rc.2 的 `ConnectionFetchRoute.requestBody` 支持 `'streaming'`（无聚合上限、有背压） | 可行，但需自建一条 route + 流式落盘 + 清理，复杂度高于 B |
 
 **推荐：方案 B**，但**只用于 `add` 这一个动作用**：Client 把**一张**图片 base64 后 POST 给 Host，Host 落临时文件并驱动页面上传；**最终 `POST /chat` 不再携带任何图片字节**（矛盾点已消除，见下）。
 
@@ -605,25 +605,25 @@ interface AttachmentRecord {
 
 **临时文件生命周期**（`<profileDir>/deepseek-companion-uploads/`，与浏览器 profile 同域）：
 
-| 时机 | 行为 |
-|---|---|
-| `add` 成功 | 文件保留（发送前页面随时可能需要重试/展示） |
-| `add` 失败 / 超时 | **立即删除**该临时文件，Host 记 `error`（保留草稿条目让用户看到失败） |
-| `remove` 成功 | 删除对应临时文件 |
-| send commit 确认（见「状态一致性」） | **只删 snapshot（consumedAttachmentIds）里条目的临时文件** |
-| send pre-submit 失败 | **不删**（草稿仍在，用户可重试） |
-| `newChat` / `switch` / 外部导航 / page 重建 / 插件 dispose | 清空草稿 → 删除全部临时文件 |
-| `remove` 一个 `error` 条目 | 见下「失败草稿的 remove 规则」；删除临时文件**幂等** |
-| Host 启动 | 扫描并清理遗留目录（上次异常退出的残留） |
+| 时机                                                       | 行为                                                                  |
+| ---------------------------------------------------------- | --------------------------------------------------------------------- |
+| `add` 成功                                                 | 文件保留（发送前页面随时可能需要重试/展示）                           |
+| `add` 失败 / 超时                                          | **立即删除**该临时文件，Host 记 `error`（保留草稿条目让用户看到失败） |
+| `remove` 成功                                              | 删除对应临时文件                                                      |
+| send commit 确认（见「状态一致性」）                       | **只删 snapshot（consumedAttachmentIds）里条目的临时文件**            |
+| send pre-submit 失败                                       | **不删**（草稿仍在，用户可重试）                                      |
+| `newChat` / `switch` / 外部导航 / page 重建 / 插件 dispose | 清空草稿 → 删除全部临时文件                                           |
+| `remove` 一个 `error` 条目                                 | 见下「失败草稿的 remove 规则」；删除临时文件**幂等**                  |
+| Host 启动                                                  | 扫描并清理遗留目录（上次异常退出的残留）                              |
 
 **失败草稿的 remove 规则（18A 定稿）**
 
 upload 失败时 record 有两种形态，remove 必须区分处理：
 
-| 失败发生点 | record 状态 | remove 行为 |
-|---|---|---|
+| 失败发生点                                                                                       | record 状态                                                                                                    | remove 行为                                                                                                                                                                                         |
+| ------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **blob preview 已经出现**后失败（服务端 500 / `code: 50000` / 元数据校验不通过，页面已画出卡片） | **保留 `previewIdentity`**；临时文件按上表规则删除；`ComposerAttachment` 保持 `status: 'error'` + `error` 文案 | ① 按 `previewIdentity` 精确删除**页面上的失败卡片**（与正常草稿同一段几何点击逻辑，仍要求“目标 identity 消失、其它 identity 仍在”）；② 页面卡片确认消失后，才删除 Host 的 error attachment / record |
-| **blob preview 出现之前**就失败（`upload_file` 被 abort / 超时） | record **没有 `previewIdentity`** | **不执行任何页面点击**，只清 Host 的 error attachment / record |
+| **blob preview 出现之前**就失败（`upload_file` 被 abort / 超时）                                 | record **没有 `previewIdentity`**                                                                              | **不执行任何页面点击**，只清 Host 的 error attachment / record                                                                                                                                      |
 
 - `previewIdentity` 只在“页面确实画出了卡片”时写入，因此它**不会指向不存在的元素**；找不到 identity → 安全失败（409），绝不误删其它草稿。
 - 清理临时文件**必须幂等**：`unlink` 忽略 `ENOENT`（同一 record 可能经 remove / commit 清理 / newChat 清空 / dispose 多条路径到达），清理失败绝不允许阻断后续清理。
@@ -792,6 +792,7 @@ expectedFileIds = consumedAttachmentIds → AttachmentRecord[] → deepSeekFileI
 ```
 
 **绝不**用 `dedupe(sort(actual)) === dedupe(sort(expected))` 这类比较：它会把重复项藏起来（`[A]` 与 `[A, A]` 会被误判为相等），而**重复的 file id 本身就是异常**（同一张图片被引用两次），必须暴露为 mismatch。
+
 - 校验**通过** → 把 snapshot 写成 `ChatAttachment[]` 写入本轮 user 消息 → 从 composer 移除 snapshot 的 id → 删除这些临时文件。
 - 校验**不通过**（request 已发出）→ **post-submit integrity error**：页面已经提交，附件的归属无法确证，因此
   - **绝不**把附件放回 composer（页面已消费，回滚只会再次分叉）；
@@ -800,11 +801,11 @@ expectedFileIds = consumedAttachmentIds → AttachmentRecord[] → deepSeekFileI
 
 **三阶段最终定义**：
 
-| 阶段 | 触发条件 | 结果 |
-|---|---|---|
-| **PRE-SUBMIT** | 校验失败 / browser 未就绪 / PageGuard busy / **page↔Host draft identity 不一致** / ready record 缺 `previewIdentity` 或 `deepSeekFileId` / fill 或 click 抛错 / **completion REQUEST 未出现（request waiter 超时）** | composer、record、临时文件**全部保留**（等于没发生过）；user 消息沿用现有文本语义，不带 attachments；可重试 |
-| **COMMITTED** | **completion REQUEST 已出现**（`waitForRequest` 兑现） | 本轮 snapshot 进入已提交生命周期；`ref_file_ids` 唯一性集合校验**通过**则写入 `message.attachments`；一次且仅一次 `onSubmitted`。此后**任何**异常都不再回退（含 payload 无法解析） |
-| **POST-SUBMIT** | response 超时 / HTTP error / `response.finished()` 失败 / Stop / sessionInterrupted / 生成中途错误 / **`response.request() !== committedRequest`** / **ref_file_ids 不一致** / **malformed payload**（postData 为 null、JSON 解析失败、非 object、`ref_file_ids` 非 array 或含非 string、duplicate id） | **不恢复**草稿；只清理 **snapshot 的** record + 临时文件；不影响其它 attachment；**不写** `message.attachments`；记录明确 Host error |
+| 阶段            | 触发条件                                                                                                                                                                                                                                                                                                | 结果                                                                                                                                                                               |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **PRE-SUBMIT**  | 校验失败 / browser 未就绪 / PageGuard busy / **page↔Host draft identity 不一致** / ready record 缺 `previewIdentity` 或 `deepSeekFileId` / fill 或 click 抛错 / **completion REQUEST 未出现（request waiter 超时）**                                                                                    | composer、record、临时文件**全部保留**（等于没发生过）；user 消息沿用现有文本语义，不带 attachments；可重试                                                                        |
+| **COMMITTED**   | **completion REQUEST 已出现**（`waitForRequest` 兑现）                                                                                                                                                                                                                                                  | 本轮 snapshot 进入已提交生命周期；`ref_file_ids` 唯一性集合校验**通过**则写入 `message.attachments`；一次且仅一次 `onSubmitted`。此后**任何**异常都不再回退（含 payload 无法解析） |
+| **POST-SUBMIT** | response 超时 / HTTP error / `response.finished()` 失败 / Stop / sessionInterrupted / 生成中途错误 / **`response.request() !== committedRequest`** / **ref_file_ids 不一致** / **malformed payload**（postData 为 null、JSON 解析失败、非 object、`ref_file_ids` 非 array 或含非 string、duplicate id） | **不恢复**草稿；只清理 **snapshot 的** record + 临时文件；不影响其它 attachment；**不写** `message.attachments`；记录明确 Host error                                               |
 
 **`ChatMessage.attachments` 的写入时机（最终规则）**：`/chat` 先按现有语义创建 user 消息（纯文本行为不变）→ commit 点确认 + `ref_file_ids` 校验通过后才 `update` 该消息的 `attachments`。**request 发出前绝不写入永久 attachments**；已经提交但校验失败时**保持为空**（宁缺毋假）。
 
@@ -818,15 +819,15 @@ expectedFileIds = consumedAttachmentIds → AttachmentRecord[] → deepSeekFileI
 
 现状（真实代码）：**send 不持有 `PageGuard`** —— `handleChatMessage` 只在入口检查 `pageGuard.inProgress()`；guard 仅被 `newChat` / `switchChat` / 外部 session sync 在各自操作期间 claim。生成期间 `chat.sending === true` 才是互斥信号。因此 18A 的规则是：
 
-| 场景 | 规则 |
-|---|---|
-| `chat.sending === true` | **attach / remove / newChat / switch 一律 409**（新 route 必须显式检查 `sending`，不能只看 guard）；Client 图片按钮同时 disabled |
-| `attach` / `remove` 执行期间 | `guard.tryClaim()` 成功才继续，`finally` 释放；guard 被占用 → 409 `page operation in progress`（沿用现状） |
-| `send` 入口 | 现有 `guard.inProgress()` 检查即已覆盖“有 attach/remove 在飞”竞态 → **snapshot 取定时不可能有 attach/remove 在途** |
-| 草稿里有 `uploading` / `error` | 禁止 send（409 + Client 禁用） |
-| `newChat` / `switchChat` / 外部导航 / page 重建 | 清空 `composer.attachments` + 删临时文件 + 删内部 record；外部导航由 sessionSync 触发同一段清理 |
-| `Stop generation` | **不动草稿**（首版生成期间不允许新增，所以无需任何草稿善后） |
-| `attach` 失败/超时 | 删该临时文件，条目留 `error`（用户可 remove / 重选） |
+| 场景                                            | 规则                                                                                                                             |
+| ----------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `chat.sending === true`                         | **attach / remove / newChat / switch 一律 409**（新 route 必须显式检查 `sending`，不能只看 guard）；Client 图片按钮同时 disabled |
+| `attach` / `remove` 执行期间                    | `guard.tryClaim()` 成功才继续，`finally` 释放；guard 被占用 → 409 `page operation in progress`（沿用现状）                       |
+| `send` 入口                                     | 现有 `guard.inProgress()` 检查即已覆盖“有 attach/remove 在飞”竞态 → **snapshot 取定时不可能有 attach/remove 在途**               |
+| 草稿里有 `uploading` / `error`                  | 禁止 send（409 + Client 禁用）                                                                                                   |
+| `newChat` / `switchChat` / 外部导航 / page 重建 | 清空 `composer.attachments` + 删临时文件 + 删内部 record；外部导航由 sessionSync 触发同一段清理                                  |
+| `Stop generation`                               | **不动草稿**（首版生成期间不允许新增，所以无需任何草稿善后）                                                                     |
+| `attach` 失败/超时                              | 删该临时文件，条目留 `error`（用户可 remove / 重选）                                                                             |
 
 **生成期间不复制 DeepSeek 的“可继续挂图”能力**（YAGNI）：真实页面允许，但那会让 consumed snapshot 与下一轮草稿并发、并把 `PageGuard` 生命周期复杂化；18A 首版明确禁止，扩展留到后续 Phase。
 
@@ -882,27 +883,27 @@ expectedFileIds = consumedAttachmentIds → AttachmentRecord[] → deepSeekFileI
 
 **代码落点**
 
-| 文件 | 职责 |
-|---|---|
-| `src/host/attachments.ts` | magic MIME / 严格 base64 / 限额（20 MiB · 40 MiB · 5 张）/ 随机临时文件 / 幂等清理 |
-| `src/host/attachment-resources.ts` | Host 私有记录（`tempPath`/`previewIdentity`/`deepSeekFileId`）与按 id 精确清理 |
-| `src/host/draft-images.ts` | **自包含**页面函数（草稿 identity / 卡片 / 删除控件 / file input 选择）+ 纯校验助手 |
-| `src/host/send-attachments.ts` | 发送事务：snapshot、身份集合闸门、`ref_file_ids` 唯一性集合校验、commit 语义 |
-| `src/host/attachment-route.ts` | `/chat/attachment` 的 add / remove 流程（400 / 409 / 503 全边界） |
-| `src/client/attachment-ui.ts` + `ChatView.tsx` | attachment card（无像素）、图片按钮、三界面共用 |
+| 文件                                           | 职责                                                                                |
+| ---------------------------------------------- | ----------------------------------------------------------------------------------- |
+| `src/host/attachments.ts`                      | magic MIME / 严格 base64 / 限额（20 MiB · 40 MiB · 5 张）/ 随机临时文件 / 幂等清理  |
+| `src/host/attachment-resources.ts`             | Host 私有记录（`tempPath`/`previewIdentity`/`deepSeekFileId`）与按 id 精确清理      |
+| `src/host/draft-images.ts`                     | **自包含**页面函数（草稿 identity / 卡片 / 删除控件 / file input 选择）+ 纯校验助手 |
+| `src/host/send-attachments.ts`                 | 发送事务：snapshot、身份集合闸门、`ref_file_ids` 唯一性集合校验、commit 语义        |
+| `src/host/attachment-route.ts`                 | `/chat/attachment` 的 add / remove 流程（400 / 409 / 503 全边界）                   |
+| `src/client/attachment-ui.ts` + `ChatView.tsx` | attachment card（无像素）、图片按钮、三界面共用                                     |
 
 **实机验收结果（真实 DSH + DeepSeek 页面；8 个核心场景通过）**
 
-| 场景 | 结果 |
-|---|---|
-| 单张 PNG 上传 → attachment card `ready` | ✅ 真机 |
+| 场景                                                                                   | 结果    |
+| -------------------------------------------------------------------------------------- | ------- |
+| 单张 PNG 上传 → attachment card `ready`                                                | ✅ 真机 |
 | 图片 + 文本发送（`ref_file_ids` 精确匹配 → `user message.attachments` 写入、草稿消费） | ✅ 真机 |
-| 只发图片（`prompt === ""`） | ✅ 真机 |
-| 两张图一起发送（两个 file id 全部匹配） | ✅ 真机 |
-| 三张里删中间一张（目标消失、其它保留、下一次发送仍通过闸门） | ✅ 真机 |
-| Stop（`stopped:true`、`status:interrupted`、已发出内容保留、草稿不回滚） | ✅ 真机 |
-| New chat → 草稿清空 | ✅ 真机 |
-| Session 切换 → 草稿清空 | ✅ 真机 |
+| 只发图片（`prompt === ""`）                                                            | ✅ 真机 |
+| 两张图一起发送（两个 file id 全部匹配）                                                | ✅ 真机 |
+| 三张里删中间一张（目标消失、其它保留、下一次发送仍通过闸门）                           | ✅ 真机 |
+| Stop（`stopped:true`、`status:interrupted`、已发出内容保留、草稿不回滚）               | ✅ 真机 |
+| New chat → 草稿清空                                                                    | ✅ 真机 |
+| Session 切换 → 草稿清空                                                                | ✅ 真机 |
 
 **以下安全路径没有完整真机驱动，由单测覆盖**（不要读成「全部实机通过」）：
 
@@ -929,30 +930,30 @@ expectedFileIds = consumedAttachmentIds → AttachmentRecord[] → deepSeekFileI
 
 ### 0. 实现状态（20A 已实现并验证，2026-09-24）
 
-| 设计小节 | 实现位置 |
-|---|---|
-| §5 健康分类 / §7 预算 | `src/host/recovery.ts`（纯函数 `classifyPageHealth` / `createRecoveryBudget` / `maxAttemptsFor` / `backoffForAttempt`，单测覆盖） |
-| §11 `recovering` | `src/shared/state.ts`（`ConnectionStatus`）+ `src/host/state.ts`（`setRecovering`）+ `src/client/api.ts`（`CONNECTION_STATUSES`） |
-| §3 epoch / §8 listener ownership | `src/host/browser.ts`：`pageEpoch` / `browserEpoch` + `mountPage`（`WeakSet` 去重 + 每个回调先查 `disposed` / epoch） |
-| §6 single-flight | `recover()` / `runRecovery()`：`recoveryPromise` + `pendingRecovery`（settle 后仍不健康才再跑） |
-| §10.1 navigation suppression | `recoveryNavigationActive`（`mountPage` 的 `framenavigated` 分支）+ `recovery.onMarkKnown` |
-| §9 / §10 Level 1/3 | `rebuildPage()` / `rebuildBrowser()`（Level 3 重装 `exposeFunction` + 复用同一 `profileDir`） |
-| §8 recoverTarget / 状态保留 | `recovery.getRecoverTarget`（index.ts 由 `currentSession` 构造）+ 恢复期不改 `currentSession` / `messages` |
-| §13 route 接线 | `index.ts` 的 `readyBrowser()`：chat / attachment / deep-think / search / new-chat / sessions / switch / show 在 page 操作前 `ensureReady()` |
+| 设计小节                         | 实现位置                                                                                                                                     |
+| -------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| §5 健康分类 / §7 预算            | `src/host/recovery.ts`（纯函数 `classifyPageHealth` / `createRecoveryBudget` / `maxAttemptsFor` / `backoffForAttempt`，单测覆盖）            |
+| §11 `recovering`                 | `src/shared/state.ts`（`ConnectionStatus`）+ `src/host/state.ts`（`setRecovering`）+ `src/client/api.ts`（`CONNECTION_STATUSES`）            |
+| §3 epoch / §8 listener ownership | `src/host/browser.ts`：`pageEpoch` / `browserEpoch` + `mountPage`（`WeakSet` 去重 + 每个回调先查 `disposed` / epoch）                        |
+| §6 single-flight                 | `recover()` / `runRecovery()`：`recoveryPromise` + `pendingRecovery`（settle 后仍不健康才再跑）                                              |
+| §10.1 navigation suppression     | `recoveryNavigationActive`（`mountPage` 的 `framenavigated` 分支）+ `recovery.onMarkKnown`                                                   |
+| §9 / §10 Level 1/3               | `rebuildPage()` / `rebuildBrowser()`（Level 3 重装 `exposeFunction` + 复用同一 `profileDir`）                                                |
+| §8 recoverTarget / 状态保留      | `recovery.getRecoverTarget`（index.ts 由 `currentSession` 构造）+ 恢复期不改 `currentSession` / `messages`                                   |
+| §13 route 接线                   | `index.ts` 的 `readyBrowser()`：chat / attachment / deep-think / search / new-chat / sessions / switch / show 在 page 操作前 `ensureReady()` |
 
 **真实故障注入结果**（`companion-test` profile 副本，2026-09-24）：
 
-| 场景 | 结果 | 恢复耗时 |
-|---|---|---|
-| A `page.close()` → Level 1 | ✅ recovering → online，transcript 未清，markKnown 恰好一次 | ~1.2 s |
-| B renderer crash → Level 1 | ✅ close + newPage 恢复（crash 页不可复用） | ~1.5 s |
-| C `about:blank` → PAGE_INVALID → Level 1 | ✅ 不等 30 s locator timeout | ~1.3 s |
-| D kill Chromium → Level 3 | ✅ 同 profile 登录态保留、bridge 重装 | ~1.6 s |
-| E 流式中 kill（commit point 后） | ✅ send `rejected`（324 ms，不卡 60 s）、不自动重发、恢复后 logged_in | — |
-| F 5 并发 `ensureReady` | ✅ 只一次 recovery（`recovering` true→false 仅一轮） | ~1.3 s |
-| G ready attachment + Level 1/3 page loss | ✅ 真实上传 PNG → page.close 与 kill 各一次：composer draft、AttachmentRecord、temp file 全部清空，currentSession / transcript 保留 | — |
-| H 已打开的 Client/SSE 跨 recovery | ✅ 真实 DSH Client（未刷新，navigation 恒为 1）：SSE 观测到 `online → recovering → online`，恢复后同一 Client 发消息 streaming 正常、切开关状态保持 | — |
-| I recovery 后 session watcher 恢复 | ✅ 真实页面点击 A→B→A→New chat：recovery 的 goto(A) 被 suppression 挡住（locationLog 未增长）、markKnown(A) 恰好一次、watcher 完整恢复 | — |
+| 场景                                     | 结果                                                                                                                                                | 恢复耗时 |
+| ---------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- | -------- |
+| A `page.close()` → Level 1               | ✅ recovering → online，transcript 未清，markKnown 恰好一次                                                                                         | ~1.2 s   |
+| B renderer crash → Level 1               | ✅ close + newPage 恢复（crash 页不可复用）                                                                                                         | ~1.5 s   |
+| C `about:blank` → PAGE_INVALID → Level 1 | ✅ 不等 30 s locator timeout                                                                                                                        | ~1.3 s   |
+| D kill Chromium → Level 3                | ✅ 同 profile 登录态保留、bridge 重装                                                                                                               | ~1.6 s   |
+| E 流式中 kill（commit point 后）         | ✅ send `rejected`（324 ms，不卡 60 s）、不自动重发、恢复后 logged_in                                                                               | —        |
+| F 5 并发 `ensureReady`                   | ✅ 只一次 recovery（`recovering` true→false 仅一轮）                                                                                                | ~1.3 s   |
+| G ready attachment + Level 1/3 page loss | ✅ 真实上传 PNG → page.close 与 kill 各一次：composer draft、AttachmentRecord、temp file 全部清空，currentSession / transcript 保留                 | —        |
+| H 已打开的 Client/SSE 跨 recovery        | ✅ 真实 DSH Client（未刷新，navigation 恒为 1）：SSE 观测到 `online → recovering → online`，恢复后同一 Client 发消息 streaming 正常、切开关状态保持 | —        |
+| I recovery 后 session watcher 恢复       | ✅ 真实页面点击 A→B→A→New chat：recovery 的 goto(A) 被 suppression 挡住（locationLog 未增长）、markKnown(A) 恰好一次、watcher 完整恢复              | —        |
 
 **与定稿设计的偏差（如实登记）**：
 
@@ -978,15 +979,15 @@ index.ts ctx.effect
      失败 → warn + setBrowserReady(false) + status 'error'   ← **之后永不重试**（只有 plugin reload 才会再试）
 ```
 
-| 事实 | 结论 |
-|---|---|
-| **事件监听** | `browser.on('disconnected')`、`context.on('close')`、`page.on('close')`、`page.on('crash')` **全部缺失**（只有 `load` / `response` / `framenavigated`） |
-| 探活 | 无周期探活；`page.isClosed()` 只在 `showLogin()` 里用了一次 |
-| page 引用 | 可变闭包 `page` → **Level-1 重建只要重新赋值 `page`，其余方法自动自愈**（它们都在调用时读 `page`） |
-| context 引用 | `const context` → Level-3 必须改成可变，并**重装 context 级桥** |
+| 事实          | 结论                                                                                                                                                     |
+| ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **事件监听**  | `browser.on('disconnected')`、`context.on('close')`、`page.on('close')`、`page.on('crash')` **全部缺失**（只有 `load` / `response` / `framenavigated`）  |
+| 探活          | 无周期探活；`page.isClosed()` 只在 `showLogin()` 里用了一次                                                                                              |
+| page 引用     | 可变闭包 `page` → **Level-1 重建只要重新赋值 `page`，其余方法自动自愈**（它们都在调用时读 `page`）                                                       |
+| context 引用  | `const context` → Level-3 必须改成可变，并**重装 context 级桥**                                                                                          |
 | `showLogin()` | 仅当 `page.isClosed()` 才新开 page（+ attachListeners + attachSessionWatcher + `onPageReplaced`）→ **crash 页面 `isClosed() === false`，它救不了 crash** |
-| `dispose()` | `disposed = true` + 清 delta receiver + `await context.close()`；index.ts 里 **不 await**（`void browser.dispose()`） |
-| 路由 | `browser === null → 503`；页面操作 guard 一律 `finally` 释放；`/chat` 一律 `finally` 清 `chat.sending` |
+| `dispose()`   | `disposed = true` + 清 delta receiver + `await context.close()`；index.ts 里 **不 await**（`void browser.dispose()`）                                    |
+| 路由          | `browser === null → 503`；页面操作 guard 一律 `finally` 释放；`/chat` 一律 `finally` 清 `chat.sending`                                                   |
 
 **没有任何一处会在故障后改变 `connection`**：`setBrowserReady` / `setDeepSeekStatus` 只由启动成败与 `runDetect()`（load / `/users/current` response）驱动 → 浏览器死掉后 Host 仍报 `online`，Client 的发送按钮**仍然可点**，点下去才失败（错误文案是原始 Playwright 英文错误）。
 
@@ -994,24 +995,24 @@ index.ts ctx.effect
 
 **事件可靠性**
 
-| 故障 | `page.on('close')` | `page.on('crash')` | `context.on('close')` | `browser.on('disconnected')` |
-|---|---|---|---|---|
-| `page.close()` | ✅ | ✖ | ✖ | ✖ |
-| renderer crash（`chrome://crash`） | ✖（只有 `ctx.close()` 时才补触发） | ✅（~300 ms） | ✖ | ✖ |
-| `context.close()` | ✖ | ✖ | ✅ | ✅ |
-| `kill -9` Chromium 主进程 | ✅ | ✖ | ✖ | ✅（**+28~38 ms**） |
+| 故障                               | `page.on('close')`                 | `page.on('crash')` | `context.on('close')` | `browser.on('disconnected')` |
+| ---------------------------------- | ---------------------------------- | ------------------ | --------------------- | ---------------------------- |
+| `page.close()`                     | ✅                                 | ✖                  | ✖                     | ✖                            |
+| renderer crash（`chrome://crash`） | ✖（只有 `ctx.close()` 时才补触发） | ✅（~300 ms）      | ✖                     | ✖                            |
+| `context.close()`                  | ✖                                  | ✖                  | ✅                    | ✅                           |
+| `kill -9` Chromium 主进程          | ✅                                 | ✖                  | ✖                     | ✅（**+28~38 ms**）          |
 
 **状态与错误（关键）**
 
-| 观测 | `page.close()` | renderer crash | `context.close()` | `kill -9` |
-|---|---|---|---|---|
-| `page.isClosed()` | `true` | **`false`（不变）** | `true` | `true` |
-| `page.url()` | 抛错 | **仍返回旧 URL（陈旧）** | 抛错 | 抛错 |
-| `browser.isConnected()` | `true` | **`true`** | `false` | `false`（+28 ms） |
-| `context.pages().length` | `0` | `1` | `0`（不抛） | `0` |
-| `context.newPage()` | ✅ 260 ms | ✅ | ✖ `TargetClosedError` | ✖ `TargetClosedError` |
-| 页面操作报错 | `TargetClosedError: …: Target page, context or browser has been closed` | `page.goto: Page crashed` / `page.evaluate: Target crashed` / `locator.count: Target crashed` | `TargetClosedError` | `TargetClosedError` |
-| 关闭全部 page | 浏览器仍活着，`newPage()` 可用 | — | — | — |
+| 观测                     | `page.close()`                                                          | renderer crash                                                                                | `context.close()`     | `kill -9`             |
+| ------------------------ | ----------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- | --------------------- | --------------------- |
+| `page.isClosed()`        | `true`                                                                  | **`false`（不变）**                                                                           | `true`                | `true`                |
+| `page.url()`             | 抛错                                                                    | **仍返回旧 URL（陈旧）**                                                                      | 抛错                  | 抛错                  |
+| `browser.isConnected()`  | `true`                                                                  | **`true`**                                                                                    | `false`               | `false`（+28 ms）     |
+| `context.pages().length` | `0`                                                                     | `1`                                                                                           | `0`（不抛）           | `0`                   |
+| `context.newPage()`      | ✅ 260 ms                                                               | ✅                                                                                            | ✖ `TargetClosedError` | ✖ `TargetClosedError` |
+| 页面操作报错             | `TargetClosedError: …: Target page, context or browser has been closed` | `page.goto: Page crashed` / `page.evaluate: Target crashed` / `locator.count: Target crashed` | `TargetClosedError`   | `TargetClosedError`   |
+| 关闭全部 page            | 浏览器仍活着，`newPage()` 可用                                          | —                                                                                             | —                     | —                     |
 
 - **崩溃页不能复用**：crash 后 `page.goto()` / `page.reload()` 都抛 `Page crashed`，`evaluate` / locator 抛 `Target crashed`；`page.close()` 可用，随后 `context.newPage()` 正常 → **crash 的恢复路径必须是 close + newPage**。
 - **pending waiter 会快速失败，不会挂到超时**：`kill -9` 时 pending 的 `waitForResponse` 在 **28 ms** 内 reject；`response.finished()`（真实流式中）在 **22 ms** 内 reject，均为 `TargetClosedError`。**因此 `chat.sending` / guard 都能立刻归零，不存在「卡到 60 s 超时」的情况。**
@@ -1019,28 +1020,28 @@ index.ts ctx.effect
 
 **时间（用于 retry/backoff）**
 
-| 操作 | 实测 |
-|---|---|
-| `launchPersistentContext`（首次 / 热重启） | 1453–1567 ms / 555–711 ms |
-| `context.newPage()` | 260 ms |
-| `goto(HOME)` + `domcontentloaded` + 检测 | ~2–4 s |
-| 第二次启动（同 profile、第一个实例存活） | **176 ms 快速失败**，错误信息**误导**：`…launchPersistentContext: Target page, context or browser has been closed` |
-| 同 profile 立即重启（`close()` 未 await / SIGKILL 之后） | **成功**（621 / 555 ms） |
+| 操作                                                     | 实测                                                                                                               |
+| -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `launchPersistentContext`（首次 / 热重启）               | 1453–1567 ms / 555–711 ms                                                                                          |
+| `context.newPage()`                                      | 260 ms                                                                                                             |
+| `goto(HOME)` + `domcontentloaded` + 检测                 | ~2–4 s                                                                                                             |
+| 第二次启动（同 profile、第一个实例存活）                 | **176 ms 快速失败**，错误信息**误导**：`…launchPersistentContext: Target page, context or browser has been closed` |
+| 同 profile 立即重启（`close()` 未 await / SIGKILL 之后） | **成功**（621 / 555 ms）                                                                                           |
 
 **persistent context 特有事实**：`context.browser()` 非 `null`（`isConnected()` 可用、`version()` = 151.0.7922.34），但 **`browser.process()` 不存在** → Playwright 侧拿不到 PID（测试要靠进程树）。
 
 ### 3. 故障类别与当前行为
 
-| # | 故障 | 当前行为 | Host state | Client 看到 | 现状可否自动恢复 | 需重建 |
-|---|---|---|---|---|---|---|
-| A | **page 被关闭** | 无事件 → 无状态变化；页面操作快速抛 `TargetClosedError` | `browserReady=true` · status `logged_in` | 仍 `online`、按钮可点 → 发送后显示原始 Playwright 错误 | ✖（只有用户手动「打开登录窗口」能救） | **page** |
-| B | **page crash** | 无监听；`isClosed()===false` 使 `showLogin()` 也不触发重建；操作抛 `Target crashed` | 同上 | 同上 | ✖ | **page（close + newPage）** |
-| C | **context 被关闭** | `browser:disconnected` 触发但无人监听 | 同上 | 同上 | ✖ | **browser（= context）** |
-| D | **browser / 进程死亡** | `disconnected` 28 ms 触发、无人监听；pending waiter 快速 reject | 同上 | 同上 | ✖ | **browser** |
-| E | **页面跳到非预期路由** | `load` → `runDetect` → `/users/current` 失败 → status `error` → `offline` | status `error` | 状态变为离线（当前无横幅渲染） | 部分自愈：未知路由 / 已登录时的 `/sign_in` 都被 DeepSeek **重定向回 `/`**（实测） | 无需重建 |
-| F | **页面活着但 DOM 永不可用** | 同 E（无周期探活）；发送会**等满 locator timeout（~30 s）** 才失败 | 视 `load` 是否触发 | 长时间等待后失败 | ✖ | page（或先探活再决定） |
-| G | **网络短暂异常** | completion 失败 → 500 + assistant `error`；**与浏览器故障无关** | 不变 | 正常错误提示 | —（**不应**触发重建） | 无 |
-| H | **DSH 活着、Playwright 子进程死** | 等价于 D；Host 进程存活（等价 Node 进程实测未崩） | 同 D | 同 D | ✖ | browser |
+| #   | 故障                              | 当前行为                                                                            | Host state                               | Client 看到                                            | 现状可否自动恢复                                                                  | 需重建                      |
+| --- | --------------------------------- | ----------------------------------------------------------------------------------- | ---------------------------------------- | ------------------------------------------------------ | --------------------------------------------------------------------------------- | --------------------------- |
+| A   | **page 被关闭**                   | 无事件 → 无状态变化；页面操作快速抛 `TargetClosedError`                             | `browserReady=true` · status `logged_in` | 仍 `online`、按钮可点 → 发送后显示原始 Playwright 错误 | ✖（只有用户手动「打开登录窗口」能救）                                             | **page**                    |
+| B   | **page crash**                    | 无监听；`isClosed()===false` 使 `showLogin()` 也不触发重建；操作抛 `Target crashed` | 同上                                     | 同上                                                   | ✖                                                                                 | **page（close + newPage）** |
+| C   | **context 被关闭**                | `browser:disconnected` 触发但无人监听                                               | 同上                                     | 同上                                                   | ✖                                                                                 | **browser（= context）**    |
+| D   | **browser / 进程死亡**            | `disconnected` 28 ms 触发、无人监听；pending waiter 快速 reject                     | 同上                                     | 同上                                                   | ✖                                                                                 | **browser**                 |
+| E   | **页面跳到非预期路由**            | `load` → `runDetect` → `/users/current` 失败 → status `error` → `offline`           | status `error`                           | 状态变为离线（当前无横幅渲染）                         | 部分自愈：未知路由 / 已登录时的 `/sign_in` 都被 DeepSeek **重定向回 `/`**（实测） | 无需重建                    |
+| F   | **页面活着但 DOM 永不可用**       | 同 E（无周期探活）；发送会**等满 locator timeout（~30 s）** 才失败                  | 视 `load` 是否触发                       | 长时间等待后失败                                       | ✖                                                                                 | page（或先探活再决定）      |
+| G   | **网络短暂异常**                  | completion 失败 → 500 + assistant `error`；**与浏览器故障无关**                     | 不变                                     | 正常错误提示                                           | —（**不应**触发重建）                                                             | 无                          |
+| H   | **DSH 活着、Playwright 子进程死** | 等价于 D；Host 进程存活（等价 Node 进程实测未崩）                                   | 同 D                                     | 同 D                                                   | ✖                                                                                 | browser                     |
 
 > **E / F 两类（非预期路由 / 页面活着但 DOM 不可用）在 §5 统一收口为 `C. PAGE_INVALID`**：`about:blank` 这类「活着但不可用」的页面不允许继续走 30 s locator 慢失败，而 sign-in 页面（天生没有 composer）不算 invalid。
 
@@ -1072,13 +1073,13 @@ Level 3 — 重建 browser（disconnected / isConnected()===false / Level 1 失�
 
 **「活着但不可用」的页面不能靠 `isClosed()` 发现**：实测 `about:blank` 时 `page.isClosed() === false`、`browser.isConnected() === true`，但 composer 不存在 → 发送要**等满 locator timeout（~30 s）**才失败。因此 `probe()` 是**五分类**，`ensureReady()` 在任何页面操作前按分类决策：
 
-| 分类 | 判定（只用生命周期状态 / URL / bounded DOM，**禁止 message matching**） | 动作 |
-|---|---|---|
-| **A. HEALTHY_CHAT** | `!isClosed()` · 无 crash 标记 · `isConnected()` · origin 是 DeepSeek · 非 sign-in · composer readiness 通过 | 直接执行（零额外 IO） |
-| **B. LOGIN_REQUIRED** | 生命周期健康 + origin 是 DeepSeek，但 **URL 是 sign-in 路由**（`/sign_in`，或页面已渲染 sign-in 表单 / `detectStatus` 结论为 `logged_out`） | **不 recovery**；`connection → login_required`；`currentSession` / messages **保留** |
-| **C. PAGE_INVALID** | `!isClosed()` · 无 crash 标记 · `isConnected()`，但 **origin 不是 DeepSeek**（`about:blank` / `chrome://…` / 其它站点）**或** DeepSeek origin 下 **bounded readiness 内拿不到核心 composer DOM** | **Level 1**（close → newPage → attach → goto(recoverTarget) → detect） |
-| **D. PAGE_DEAD** | `page.isClosed()` **或** crash 标记（`page.on('crash')` 已置位） | **Level 1** |
-| **E. BROWSER_DEAD** | `!browser.isConnected()` **或** 收到 `disconnected` **或** Level 1 自身抛 `TargetClosedError` | **Level 3** |
+| 分类                  | 判定（只用生命周期状态 / URL / bounded DOM，**禁止 message matching**）                                                                                                                          | 动作                                                                                 |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------ |
+| **A. HEALTHY_CHAT**   | `!isClosed()` · 无 crash 标记 · `isConnected()` · origin 是 DeepSeek · 非 sign-in · composer readiness 通过                                                                                      | 直接执行（零额外 IO）                                                                |
+| **B. LOGIN_REQUIRED** | 生命周期健康 + origin 是 DeepSeek，但 **URL 是 sign-in 路由**（`/sign_in`，或页面已渲染 sign-in 表单 / `detectStatus` 结论为 `logged_out`）                                                      | **不 recovery**；`connection → login_required`；`currentSession` / messages **保留** |
+| **C. PAGE_INVALID**   | `!isClosed()` · 无 crash 标记 · `isConnected()`，但 **origin 不是 DeepSeek**（`about:blank` / `chrome://…` / 其它站点）**或** DeepSeek origin 下 **bounded readiness 内拿不到核心 composer DOM** | **Level 1**（close → newPage → attach → goto(recoverTarget) → detect）               |
+| **D. PAGE_DEAD**      | `page.isClosed()` **或** crash 标记（`page.on('crash')` 已置位）                                                                                                                                 | **Level 1**                                                                          |
+| **E. BROWSER_DEAD**   | `!browser.isConnected()` **或** 收到 `disconnected` **或** Level 1 自身抛 `TargetClosedError`                                                                                                    | **Level 3**                                                                          |
 
 规则：
 
@@ -1130,15 +1131,15 @@ epoch: number                            // 每次成功重建 +1
 
 **每一步自身都必须 bounded**（否则「有限重试」没有意义）：
 
-| 步骤 | 上限（建议） | 依据 / 说明 |
-|---|---|---|
-| `closeQuietly(旧 page / 旧 context)` | **≤2 s** | 超时即放弃（吞掉错误）；旧进程仍活着时 launch 会 176 ms 快速失败，重试会处理 |
-| `context.newPage()` | **≤5 s** | 实测 260 ms，留足余量 |
-| `page.goto(目标)` | **≤30 s**（`domcontentloaded`） | 与现有 `check()` / `showLogin()` 的 30 s 预算一致；**不再追加** `networkidle` 长等待 |
-| login detection（`detectStatus` → `/users/current`） | **≤10 s** | 复用现有 detect 的预算 |
-| composer readiness（判 A / C） | **≤2 s** | 唯一 DOM 判据，见 §5 |
-| **单次 recovery 尝试总上限** | **≤45 s** | 超出即判本次失败 → 进入下一次（或耗尽 → `offline`） |
-| **整个 recovery 的全局预算** | **60 s**（`RECOVERY_TOTAL_BUDGET`，定稿） | 从 `recoveryPromise` 创建起算；下面的次数上限受它二次约束 |
+| 步骤                                                 | 上限（建议）                              | 依据 / 说明                                                                          |
+| ---------------------------------------------------- | ----------------------------------------- | ------------------------------------------------------------------------------------ |
+| `closeQuietly(旧 page / 旧 context)`                 | **≤2 s**                                  | 超时即放弃（吞掉错误）；旧进程仍活着时 launch 会 176 ms 快速失败，重试会处理         |
+| `context.newPage()`                                  | **≤5 s**                                  | 实测 260 ms，留足余量                                                                |
+| `page.goto(目标)`                                    | **≤30 s**（`domcontentloaded`）           | 与现有 `check()` / `showLogin()` 的 30 s 预算一致；**不再追加** `networkidle` 长等待 |
+| login detection（`detectStatus` → `/users/current`） | **≤10 s**                                 | 复用现有 detect 的预算                                                               |
+| composer readiness（判 A / C）                       | **≤2 s**                                  | 唯一 DOM 判据，见 §5                                                                 |
+| **单次 recovery 尝试总上限**                         | **≤45 s**                                 | 超出即判本次失败 → 进入下一次（或耗尽 → `offline`）                                  |
+| **整个 recovery 的全局预算**                         | **60 s**（`RECOVERY_TOTAL_BUDGET`，定稿） | 从 `recoveryPromise` 创建起算；下面的次数上限受它二次约束                            |
 
 - 任何一步都要有**自己的** timeout 与 `catch`；**禁止**出现「某一步无限等待」把有限重试架空。
 - **全局 wall-clock 预算（定稿）：`RECOVERY_TOTAL_BUDGET = 60 s`** —— 从 single-flight `recoveryPromise` 创建开始计时。Level 1 / Level 3 的**全部**重试、backoff（0 / 250 / 750 ms）与每一步（closeQuietly / newPage / goto / login detection / composer readiness）**共享同一个 60 s 总预算**。每一步的实际 timeout 取 `effectiveTimeout = min(stepTimeout, remainingRecoveryBudget)`；`remaining ≤ 0` 时**立即停止 retry** → `connection = offline`，保持 last-known `currentSession` / `messages`，并在 `finally` 里清空 `recoveryPromise`、`pendingRecovery` 与全部锁。
@@ -1170,13 +1171,13 @@ if (disposed || myPage !== pageEpoch) return   // 过期事件：不 forward、�
 
 - **必须覆盖的路径**（每一条都对应一个真实的污染面）：
 
-| 路径 | 若不过滤会怎样 |
-|---|---|
-| 旧 page 的 `framenavigated` | 旧页导航改写 `currentSession`，把重建后的真实位置覆盖掉 |
-| 旧 page 的 `response(…/users/current)` | 旧页的 auth 结论覆盖新页的 `status` |
-| 旧 send 的 `__onReplyDelta` 回调 | 旧页/旧 send 的增量写进新页的 assistant 消息 |
-| 旧 send 的 `__onReasoningDelta` 回调 | 同上（reasoning 内容串台） |
-| 旧 send 结束时的**最终 DOM 读取**（final reply read / citation hydration / `JSHandle`） | 旧页（已 close/crash）的读取结果被当成这一轮的真实回复 |
+| 路径                                                                                    | 若不过滤会怎样                                          |
+| --------------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| 旧 page 的 `framenavigated`                                                             | 旧页导航改写 `currentSession`，把重建后的真实位置覆盖掉 |
+| 旧 page 的 `response(…/users/current)`                                                  | 旧页的 auth 结论覆盖新页的 `status`                     |
+| 旧 send 的 `__onReplyDelta` 回调                                                        | 旧页/旧 send 的增量写进新页的 assistant 消息            |
+| 旧 send 的 `__onReasoningDelta` 回调                                                    | 同上（reasoning 内容串台）                              |
+| 旧 send 结束时的**最终 DOM 读取**（final reply read / citation hydration / `JSHandle`） | 旧页（已 close/crash）的读取结果被当成这一轮的真实回复  |
 
 - **`currentDeltaReceiver` / `currentReasoningReceiver`**：page 替换时**立即置 null**，新 send 自己重新赋值 —— 旧 send 的接收器不会再被调用（这是 §9「send 中崩溃」语义的实现基础）。
 - **`dispose()` 也走 epoch**（+1）→ 关闭后的所有过期回调天然被忽略。
@@ -1184,15 +1185,15 @@ if (disposed || myPage !== pageEpoch) return   // 过期事件：不 forward、�
 
 ### 9. 故障期间的操作语义
 
-| 场景 | 语义 |
-|---|---|
-| **sendMessage 中崩溃** | pending waiter 22–28 ms 内 reject → `chat.ts` 的 `finally` 清 `chat.sending`，assistant 消息 `status='error'`（已流出的内容保留）。**绝不自动重发用户消息。** |
-| **Stop 中崩溃** | `stopGeneration` 快速失败 → 503/500；`chat.sending` 仍由 send 流程收尾 → 不会永久 `stopping` |
-| **attachment 上传中崩溃** | `upload_file` waiter reject → 该 attachment `status='error'`（页面预览若已出现则保留 `previewIdentity`）；composer 不静默清空 |
-| **attachment 已 ready 但页面丢失** | **沿用 Phase 18A 规则**：page 重建 = 草稿失效 → `onPageReplaced()` → 清 `composer.attachments` + records + temp files |
-| **newChat / switch 中崩溃** | guard `finally` 释放（页面操作快速失败）→ 无永久忙；transcript **保持不动**（page-first 原则） |
-| **外部会话同步中崩溃** | `run()` 的 `catch` 吞掉错误 + `finally` 释放 guard；`lastKnown` 不更新，下次导航可重试 |
-| **共性要求** | 所有 `finally` 必须释放：`chat.sending`、`composer.stopping`、PageGuard、**recoveryPromise**；恢复本身不引入新的「永久忙」 |
+| 场景                               | 语义                                                                                                                                                          |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **sendMessage 中崩溃**             | pending waiter 22–28 ms 内 reject → `chat.ts` 的 `finally` 清 `chat.sending`，assistant 消息 `status='error'`（已流出的内容保留）。**绝不自动重发用户消息。** |
+| **Stop 中崩溃**                    | `stopGeneration` 快速失败 → 503/500；`chat.sending` 仍由 send 流程收尾 → 不会永久 `stopping`                                                                  |
+| **attachment 上传中崩溃**          | `upload_file` waiter reject → 该 attachment `status='error'`（页面预览若已出现则保留 `previewIdentity`）；composer 不静默清空                                 |
+| **attachment 已 ready 但页面丢失** | **沿用 Phase 18A 规则**：page 重建 = 草稿失效 → `onPageReplaced()` → 清 `composer.attachments` + records + temp files                                         |
+| **newChat / switch 中崩溃**        | guard `finally` 释放（页面操作快速失败）→ 无永久忙；transcript **保持不动**（page-first 原则）                                                                |
+| **外部会话同步中崩溃**             | `run()` 的 `catch` 吞掉错误 + `finally` 释放 guard；`lastKnown` 不更新，下次导航可重试                                                                        |
+| **共性要求**                       | 所有 `finally` 必须释放：`chat.sending`、`composer.stopping`、PageGuard、**recoveryPromise**；恢复本身不引入新的「永久忙」                                    |
 
 ### 10. 恢复期与恢复后的 session / transcript 策略
 
@@ -1222,11 +1223,11 @@ Recovery 自己会产生 `newPage` / `goto('/')` / `goto('/a/chat/s/<id>')`。�
 4. **然后清** `recoveryNavigationActive`（`finally`，含失败路径）。
 5. `pageEpoch` / `browserEpoch`（§8）继续拦截**旧 page** 的 `framenavigated` / auth response / delta / reasoning / final DOM read。
 
-| 三层防护（定稿） | 职责 |
-|---|---|
-| `recoveryNavigationActive` suppression | 挡**当前新 page** 上由 Recovery 自己制造的合法导航 |
+| 三层防护（定稿）                        | 职责                                                  |
+| --------------------------------------- | ----------------------------------------------------- |
+| `recoveryNavigationActive` suppression  | 挡**当前新 page** 上由 Recovery 自己制造的合法导航    |
 | `sessionSync.markKnown(actualLocation)` | 对齐 `sessionSync.lastKnown`（不 rebuild transcript） |
-| `pageEpoch` / `browserEpoch` | 挡**旧 Browser / Page** 的 stale callbacks |
+| `pageEpoch` / `browserEpoch`            | 挡**旧 Browser / Page** 的 stale callbacks            |
 
 **20A 的可见结果**：浏览器崩了 → 自动恢复 → 用户不刷新 DSH → **Host 现有 transcript 不被误清** → 恢复成功后页面回到 `recoverTarget` 的 URL（原会话尽量重新打开）→ 用户可以**继续发送**。
 
@@ -1238,10 +1239,10 @@ Recovery 自己会产生 `newPage` / `goto('/')` / `goto('/a/chat/s/<id>')`。�
 
 ```ts
 type ConnectionStatus =
-  | 'online'          // Browser/Page 已验证可正常使用
-  | 'offline'         // Recovery 失败 / 预算耗尽 / 网络或 Browser 状态无法恢复
-  | 'login_required'  // Browser/Page 健康，但 DeepSeek 明确要求登录
-  | 'recovering'      // single-flight recovery 正在执行
+  | 'online' // Browser/Page 已验证可正常使用
+  | 'offline' // Recovery 失败 / 预算耗尽 / 网络或 Browser 状态无法恢复
+  | 'login_required' // Browser/Page 健康，但 DeepSeek 明确要求登录
+  | 'recovering' // single-flight recovery 正在执行
 ```
 
 - **`recovering` 的精确语义**：single-flight `recoveryPromise` 在飞行中（含 Level 1/3）＝ **Client 操作禁用**（所有既有 `connection !== 'online'` 门禁天然生效）＝ **不代表 login lost** ＝ **不改 `currentSession` / `messages`**。
@@ -1378,27 +1379,27 @@ N9. **单步 timeout > 剩余预算**：实际等待取 `min(stepTimeout, remain
 
 **代码结构**
 
-| 位置 | 内容 |
-|---|---|
-| `src/host/history-idb.ts` | 只读 IDB reader（`deepseek-chat`→`history-message`）+ `parseHistoryEntry` 结构校验（**按 parent chain 重建顺序**，见下） |
-| `src/host/reconcile.ts` | 纯逻辑：三层 identity（`resolveIdentity`）、`buildReconcilePlan`、`createCommittedAnchorRegistry`、`readAndPlanReconcile`（读 → bounded stability wait → 校验 → plan）、`RECONCILE_TOTAL_BUDGET_MS = 30s` |
-| `src/host/browser.ts` | `readHistorySnapshot(sessionId)`（epoch 栅栏 + `stale`）、`onSettled` 钩子（recovery 的**最后一步**是 reconcile，`recovering` 覆盖全程） |
-| `src/host/state.ts` | `applyChatReconcile`（bindings + patches + appends **一次 notify**）；`ChatMessage.deepSeekMessageId` |
-| `src/host/chat.ts` / `src/index.ts` | commit point 始终记录 anchor（Host-only，跨 recovery 保留；newChat / switch / 成功 reconcile / dispose 清理） |
+| 位置                                | 内容                                                                                                                                                                                                      |
+| ----------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/host/history-idb.ts`           | 只读 IDB reader（`deepseek-chat`→`history-message`）+ `parseHistoryEntry` 结构校验（**按 parent chain 重建顺序**，见下）                                                                                  |
+| `src/host/reconcile.ts`             | 纯逻辑：三层 identity（`resolveIdentity`）、`buildReconcilePlan`、`createCommittedAnchorRegistry`、`readAndPlanReconcile`（读 → bounded stability wait → 校验 → plan）、`RECONCILE_TOTAL_BUDGET_MS = 30s` |
+| `src/host/browser.ts`               | `readHistorySnapshot(sessionId)`（epoch 栅栏 + `stale`）、`onSettled` 钩子（recovery 的**最后一步**是 reconcile，`recovering` 覆盖全程）                                                                  |
+| `src/host/state.ts`                 | `applyChatReconcile`（bindings + patches + appends **一次 notify**）；`ChatMessage.deepSeekMessageId`                                                                                                     |
+| `src/host/chat.ts` / `src/index.ts` | commit point 始终记录 anchor（Host-only，跨 recovery 保留；newChat / switch / 成功 reconcile / dispose 清理）                                                                                             |
 
 **测试**：新增 5 个文件 / 84 项（`history-idb` / `reconcile` / `reconcile-apply` / chat commit point / anchor）→ 全量 619 tests。
 
 **真机验收（companion-test profile 临时副本，真实 Chromium + 真实会话）**
 
-| 场景 | 结果 |
-|---|---|
-| A idle recovery | ✅ 恢复 2.4 s → `online`，Host message id 不变；reconcile `skipped:reasoning mismatch`（见下 ②） |
-| B commit 后 kill | ⚠️ **数据安全全通过**（无重复消息、Host id 不变、不自动 resend、不 full replace）；补全未发生（见下 ④） |
-| C mid-stream kill | ✅ 无重复、Host id 不变、不自动 resend、partial 保留 |
-| D Stop 后 recovery | ⚠️ 时序未命中（回复先完成 → `finished`）；Stop 语义由既有单测覆盖 |
-| E/F 图片轮次 | ⚠️ 上传与发送本身 OK（`attachImage` 返回真实的 `deepSeekFileId`）；**附件落库未在 harness 覆盖**（验收脚本未接 18A attachment transaction），该部分由单测覆盖（`reconcile-apply`：patch 不触碰 attachments；`reconcile`：FILE 不覆盖 Host attachments） |
-| G reconcile 中途切换 | ✅ `skipped:stale snapshot`，store 完全不变 |
-| H 连续两次 recovery | ✅ 两次恢复，消息数与 Host id 全程不变 |
+| 场景                 | 结果                                                                                                                                                                                                                                                    |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A idle recovery      | ✅ 恢复 2.4 s → `online`，Host message id 不变；reconcile `skipped:reasoning mismatch`（见下 ②）                                                                                                                                                        |
+| B commit 后 kill     | ⚠️ **数据安全全通过**（无重复消息、Host id 不变、不自动 resend、不 full replace）；补全未发生（见下 ④）                                                                                                                                                 |
+| C mid-stream kill    | ✅ 无重复、Host id 不变、不自动 resend、partial 保留                                                                                                                                                                                                    |
+| D Stop 后 recovery   | ⚠️ 时序未命中（回复先完成 → `finished`）；Stop 语义由既有单测覆盖                                                                                                                                                                                       |
+| E/F 图片轮次         | ⚠️ 上传与发送本身 OK（`attachImage` 返回真实的 `deepSeekFileId`）；**附件落库未在 harness 覆盖**（验收脚本未接 18A attachment transaction），该部分由单测覆盖（`reconcile-apply`：patch 不触碰 attachments；`reconcile`：FILE 不覆盖 Host attachments） |
+| G reconcile 中途切换 | ✅ `skipped:stale snapshot`，store 完全不变                                                                                                                                                                                                             |
+| H 连续两次 recovery  | ✅ 两次恢复，消息数与 Host id 全程不变                                                                                                                                                                                                                  |
 
 **真机发现（与设计前提不一致，实现按设计保持 safe-fail）**
 
@@ -1414,6 +1415,7 @@ N9. **单步 timeout > 剩余预算**：实际等待取 `min(stepTimeout, remain
 → 这是 20B1 的**功能边界**：补全要求"reconcile 时 IDB 已含该轮"，实测在 commit→kill→立即恢复的时序下不满足。
 
 **已知限制**
+
 - ~~commit→kill 的自动补全不会生效~~ → **已解决**（§7.1 单次前端刷新；B/C 真机补全通过）。数据安全（不丢、不重、不重发）同样真机确认。
 - Level 3 strict bootstrap 的 reasoning 规则已按真机放宽为「Host 是 server 的严格前缀」（② 已解决，2026-09-27）；Level 2（有 anchor）为常规路径（实测 `applied, level=2, bindings=2, patches=1`）。
 - reconcile 只覆盖当前 committed turn（设计范围，历史无 anchor 消息不会补 id）。
@@ -1445,15 +1447,15 @@ N9. **单步 timeout > 剩余预算**：实际等待取 `min(stepTimeout, remain
 
 **② 前端 cache 协议（本轮查清，20B1 的关键）**
 
-| 观测 | 事实 |
-|---|---|
-| `cache_control` | **`REPLACE` = 全量快照；`MERGE` = 增量**（相对客户端携带的 cache 版本） |
-| 请求参数 | 客户端**有**本地 cache 时带 `?cache_version=2&cache_reset_at=<unix ts>` → 服务端返回 `MERGE`（实测 msgCount=0 表示无增量）；**无** cache 时不带参数 → 返回 `REPLACE`（实测 msgCount=2、ids=[1,2]） |
-| **cache 位置** | **IndexedDB `deepseek-chat` → objectStore `history-message`，`key = session id`** |
-| entry 结构 | `{ data: { chat_session{...current_message_id}, chat_messages:[...完整数组...], cache_control, cache_reset_at }, version, key, cacheResetAt, timestamp, frontendVersion:"fv-6" }` |
-| 合并规则 | 前端把 `REPLACE`（覆盖）或 `MERGE`（并入）写回该 IDB entry；`cache_control` 记录最后一次操作；A→B→A **不再发请求**（IDB 命中） |
+| 观测                         | 事实                                                                                                                                                                                                                                |
+| ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `cache_control`              | **`REPLACE` = 全量快照；`MERGE` = 增量**（相对客户端携带的 cache 版本）                                                                                                                                                             |
+| 请求参数                     | 客户端**有**本地 cache 时带 `?cache_version=2&cache_reset_at=<unix ts>` → 服务端返回 `MERGE`（实测 msgCount=0 表示无增量）；**无** cache 时不带参数 → 返回 `REPLACE`（实测 msgCount=2、ids=[1,2]）                                  |
+| **cache 位置**               | **IndexedDB `deepseek-chat` → objectStore `history-message`，`key = session id`**                                                                                                                                                   |
+| entry 结构                   | `{ data: { chat_session{...current_message_id}, chat_messages:[...完整数组...], cache_control, cache_reset_at }, version, key, cacheResetAt, timestamp, frontendVersion:"fv-6" }`                                                   |
+| 合并规则                     | 前端把 `REPLACE`（覆盖）或 `MERGE`（并入）写回该 IDB entry；`cache_control` 记录最后一次操作；A→B→A **不再发请求**（IDB 命中）                                                                                                      |
 | **deterministic 拿完整历史** | **直接读 IDB entry**（`page.evaluate` + `indexedDB.open('deepseek-chat')`，无需网络、无需 token）✓；备选：删除该 entry + 重新导航 → 前端发无参数请求 → `REPLACE` 全量（实测可行，但 `deleteDatabase` 会 `blocked`，需处理前端连接） |
-| 手动 `fetch` 直连 API | **不可靠**：需要精确复制前端的 `authorization`/`x-device-id` 等 header（实测缺 header 返回 `40002/40003`），因此**不作为 Host 依赖** |
+| 手动 `fetch` 直连 API        | **不可靠**：需要精确复制前端的 `authorization`/`x-device-id` 等 header（实测缺 header 返回 `40002/40003`），因此**不作为 Host 依赖**                                                                                                |
 
 > 结论：**Host 不需要 HistoryAccumulator**。前端自身已在 IDB 维护该 session 的历史；Host 读 IDB 得到的是 **validated cached snapshot（可验证缓存快照）** —— 结构可由 Host 校验，但**新鲜度不是**：它由前端写入，可能落后于服务端。只有在 IDB **没有**该 entry（从未打开过）时才需要先导航一次让前端写入；entry **过旧**时由 §7.1 的单次前端刷新修正。
 
@@ -1517,13 +1519,13 @@ Level 3 — Strict bootstrap（无 ID 且无可用 anchor）
 
 ### 4. 「谁是真相」按阶段定义
 
-| 阶段 | 真相 | 规则 |
-|---|---|---|
-| PRE-SUBMIT | Host | Host 有未提交 user entry，server 没有 → **不删** |
+| 阶段                                 | 真相                      | 规则                                                                          |
+| ------------------------------------ | ------------------------- | ----------------------------------------------------------------------------- |
+| PRE-SUBMIT                           | Host                      | Host 有未提交 user entry，server 没有 → **不删**                              |
 | COMMITTED（assistant error/partial） | server 优先，**只能补全** | server content/reasoning **≥ Host 才采用**；server 更短 → 保留 Host（不倒退） |
-| Stop / interrupted | **Host** | Host `interrupted` **永不自动改 `finished`**（即使 server 后来 FINISHED） |
-| server WIP | Host | 不缩短、不升级 status，等 stability wait |
-| transient status / Host id | Host | `streaming`/`error`/`interrupted` 与 Host message id 保留 |
+| Stop / interrupted                   | **Host**                  | Host `interrupted` **永不自动改 `finished`**（即使 server 后来 FINISHED）     |
+| server WIP                           | Host                      | 不缩短、不升级 status，等 stability wait                                      |
+| transient status / Host id           | Host                      | `streaming`/`error`/`interrupted` 与 Host message id 保留                     |
 
 ### 5.1 Level 2 — Parent-anchor binding（当前 committed turn）
 
@@ -1576,11 +1578,11 @@ Level 3 — Strict bootstrap（无 ID 且无可用 anchor）
 
 ### 7. server 新增消息的 append 策略（收紧）
 
-| 情形 | 20B1 行为 |
-|---|---|
-| A. 当前 committed turn 的 assistant（Host 已有 placeholder/error 消息） | **原地 patch**（按 `deepSeekMessageId` 或 bootstrap 绑定），**绝不 append duplicate** |
-| B. server 产生 Host 没有的 assistant，且其 `parent_id` **精确指向已绑定的 Host user** | 允许 append（新 Host id + `deepSeekMessageId`） |
-| C. server 出现 Host **不认识**的 user message（外部页面操作 / image-only 历史 / switch race） | **不盲 append** → 视为 bootstrap 失败或 safe-skip |
+| 情形                                                                                          | 20B1 行为                                                                             |
+| --------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| A. 当前 committed turn 的 assistant（Host 已有 placeholder/error 消息）                       | **原地 patch**（按 `deepSeekMessageId` 或 bootstrap 绑定），**绝不 append duplicate** |
+| B. server 产生 Host 没有的 assistant，且其 `parent_id` **精确指向已绑定的 Host user**         | 允许 append（新 Host id + `deepSeekMessageId`）                                       |
+| C. server 出现 Host **不认识**的 user message（外部页面操作 / image-only 历史 / switch race） | **不盲 append** → 视为 bootstrap 失败或 safe-skip                                     |
 
 原则：**没有明确 parent/chain evidence 就不 append。**
 
@@ -1608,25 +1610,25 @@ reload 导致的导航被 suppression 吞掉（不会被当成用户切换）；
 
 **真机实测（fresh session）**
 
-| 场景 | 结果 |
-|---|---|
-| B commit 后 kill | `refreshes = 1`；`applied, level 2, bindings 2, patches 1`；assistant 原地补全为服务端全文并 `finished`；Host id 不变、无重复、无重发 |
-| C mid-stream kill | 同上（partial → 服务端全文，928 chars） |
-| A idle recovery | `refreshes = 0`、reconcile 10 ms、transcript 不变（**不变慢**） |
-| 刷新耗时 | reload + 前端写入 ≈ 6 s（reload 15 s 上限内） |
-| B/C 的 `recovering` 总时长 | ≈ 20 s（等待服务端 + 刷新 + 补全），仍在 30 s 预算内 |
+| 场景                       | 结果                                                                                                                                  |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| B commit 后 kill           | `refreshes = 1`；`applied, level 2, bindings 2, patches 1`；assistant 原地补全为服务端全文并 `finished`；Host id 不变、无重复、无重发 |
+| C mid-stream kill          | 同上（partial → 服务端全文，928 chars）                                                                                               |
+| A idle recovery            | `refreshes = 0`、reconcile 10 ms、transcript 不变（**不变慢**）                                                                       |
+| 刷新耗时                   | reload + 前端写入 ≈ 6 s（reload 15 s 上限内）                                                                                         |
+| B/C 的 `recovering` 总时长 | ≈ 20 s（等待服务端 + 刷新 + 补全），仍在 30 s 预算内                                                                                  |
 
 **仍存在的边界**：会话若因反复实验/分支而成为**树形**（`parent_id` 分叉，实测 `cache_control='REPLACE'` 也可能分叉），entry 判定 `malformed` → 不刷新、直接 safe-fail（reload 无法修复结构）。
 
 ### 8. status merge 最终规则
 
-| server | Host 当前 | 结果 |
-|---|---|---|
-| WIP | partial / error | **不缩短、不升级**（等 stability wait） |
-| FINISHED | error / partial **且 identity 已唯一确认** | 补全 content/reasoning → `finished` |
-| FINISHED | finished | no-op |
-| FINISHED 但 server 更短 | partial | **保持 Host**（不倒退） |
-| 任意 | **interrupted（Stop）** | **保持 interrupted**（20B1 永不自动改 finished） |
+| server                  | Host 当前                                  | 结果                                             |
+| ----------------------- | ------------------------------------------ | ------------------------------------------------ |
+| WIP                     | partial / error                            | **不缩短、不升级**（等 stability wait）          |
+| FINISHED                | error / partial **且 identity 已唯一确认** | 补全 content/reasoning → `finished`              |
+| FINISHED                | finished                                   | no-op                                            |
+| FINISHED 但 server 更短 | partial                                    | **保持 Host**（不倒退）                          |
+| 任意                    | **interrupted（Stop）**                    | **保持 interrupted**（20B1 永不自动改 finished） |
 
 因 `interrupted` 保守规则，**E（Stop + browser failure）不再是 20B1 blocker**，但登记为真机验收项。
 

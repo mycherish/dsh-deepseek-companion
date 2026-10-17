@@ -99,7 +99,11 @@ test('18A gate: ready + 记录完整 + 页面集合相同（顺序无关）→ �
 
   assert.equal(result.ok, true)
   if (!result.ok) return
-  assert.deepEqual(result.snapshot.map((entry) => entry.id), [a.id, b.id], 'snapshot 按 composer 顺序')
+  assert.deepEqual(
+    result.snapshot.map((entry) => entry.id),
+    [a.id, b.id],
+    'snapshot 按 composer 顺序',
+  )
   assert.deepEqual(result.expectedFileIds, [FILE_A, FILE_B])
 })
 
@@ -268,13 +272,9 @@ test('18A integrity: 非数组 / 非 string / 意外 id / expected 自身脏 →
 type SendFn = Parameters<typeof handleChatMessage>[1]
 
 function makeSend(
-  behaviour: (
-    onSubmitted: Parameters<SendFn>[4],
-    onDelta: (reply: AssistantReply) => void,
-  ) => Promise<AssistantReply>,
+  behaviour: (onSubmitted: Parameters<SendFn>[4], onDelta: (reply: AssistantReply) => void) => Promise<AssistantReply>,
 ): SendFn {
-  return async (_message, onDelta, _onReasoning, _onCitations, onSubmitted) =>
-    behaviour(onSubmitted, onDelta)
+  return async (_message, onDelta, _onReasoning, _onCitations, onSubmitted) => behaviour(onSubmitted, onDelta)
 }
 
 async function runSend(
@@ -309,10 +309,15 @@ async function runSend(
 test('18A send: 纯文本轮没有 transaction，也不会调用 onSubmitted', async () => {
   const draft = makeDraft()
   let submittedCalls = 0
-  const result = await runSend(draft, '你好', [], makeSend(async (onSubmitted) => {
-    submittedCalls += onSubmitted === undefined ? 0 : 1
-    return reply('回答')
-  }))
+  const result = await runSend(
+    draft,
+    '你好',
+    [],
+    makeSend(async (onSubmitted) => {
+      submittedCalls += onSubmitted === undefined ? 0 : 1
+      return reply('回答')
+    }),
+  )
 
   assert.equal(result.result.status, 200)
   assert.equal(result.transaction, undefined, '没有草稿 → 没有事务')
@@ -325,11 +330,16 @@ test('18A send: ref_file_ids 匹配 → 写入 user message.attachments，仅消
   const { id, fileId } = addDraft(draft, { name: '照片.png' })
 
   let calls = 0
-  const { result } = await runSend(draft, '看这张', [ID_A], makeSend(async (onSubmitted) => {
-    calls += 1
-    await onSubmitted?.(submission([fileId]))
-    return reply('看到了')
-  }))
+  const { result } = await runSend(
+    draft,
+    '看这张',
+    [ID_A],
+    makeSend(async (onSubmitted) => {
+      calls += 1
+      await onSubmitted?.(submission([fileId]))
+      return reply('看到了')
+    }),
+  )
 
   assert.equal(result.status, 200)
   assert.equal(calls, 1, 'onSubmitted 恰好一次')
@@ -345,25 +355,35 @@ test('18A send: 只发图片（message === ""）→ 允许，user 消息只有�
   const draft = makeDraft()
   const { id, fileId } = addDraft(draft)
 
-  const { result } = await runSend(draft, '', [ID_A], makeSend(async (onSubmitted) => {
-    await onSubmitted?.(submission([fileId]))
-    return reply('这是蓝色')
-  }))
+  const { result } = await runSend(
+    draft,
+    '',
+    [ID_A],
+    makeSend(async (onSubmitted) => {
+      await onSubmitted?.(submission([fileId]))
+      return reply('这是蓝色')
+    }),
+  )
 
   assert.equal(result.status, 200)
   const user = draft.store.getState().chat.messages[0]!
   assert.equal(user.content, '')
   assert.equal(user.attachments?.length, 1)
-  assert.equal(user.attachments?.[0]!.id, id)
+  assert.equal(user.attachments?.[0]?.id, id)
 })
 
 test('18A send: PRE-SUBMIT —— request 未出现（send 抛错）→ 草稿全保留、消息无附件、不清理', async () => {
   const draft = makeDraft()
   const { id } = addDraft(draft)
 
-  const { result } = await runSend(draft, '看这张', [ID_A], makeSend(async () => {
-    throw new Error('completion request never appeared')
-  }))
+  const { result } = await runSend(
+    draft,
+    '看这张',
+    [ID_A],
+    makeSend(async () => {
+      throw new Error('completion request never appeared')
+    }),
+  )
 
   assert.equal(result.status, 500)
   assert.deepEqual(
@@ -380,11 +400,16 @@ test('18A send: POST-SUBMIT —— request 已发出但 response 超时 → 附�
   const draft = makeDraft()
   const { id, fileId } = addDraft(draft)
 
-  const { result } = await runSend(draft, '看这张', [ID_A], makeSend(async (onSubmitted, onDelta) => {
-    onDelta(reply('部分'))
-    await onSubmitted?.(submission([fileId]))
-    throw new Error('response timeout')
-  }))
+  const { result } = await runSend(
+    draft,
+    '看这张',
+    [ID_A],
+    makeSend(async (onSubmitted, onDelta) => {
+      onDelta(reply('部分'))
+      await onSubmitted?.(submission([fileId]))
+      throw new Error('response timeout')
+    }),
+  )
 
   assert.equal(result.status, 500)
   const user = draft.store.getState().chat.messages[0]!
@@ -467,7 +492,7 @@ test('18A send: Stop / 外部切换打断 → 附件仍属于 user 消息，stat
 test('18A send: 闸门失败时根本不进入 send（不点击 Send）', async () => {
   const draft = makeDraft()
   addDraft(draft, { identity: ID_A })
-  let sendCalls = 0
+  const sendCalls = 0
 
   const prepared = await prepareAttachmentTransaction({
     store: draft.store,
@@ -508,10 +533,15 @@ test('18A send: 三界面看到同一份结果（附件消费与消息写入都�
   draft.store.subscribe((state) => float.push(JSON.stringify(state.composer.attachments)))
   draft.store.subscribe((state) => popout.push(JSON.stringify(state.composer.attachments)))
 
-  await runSend(draft, '看这张', [ID_A], makeSend(async (onSubmitted) => {
-    await onSubmitted?.(submission([fileId]))
-    return reply('好')
-  }))
+  await runSend(
+    draft,
+    '看这张',
+    [ID_A],
+    makeSend(async (onSubmitted) => {
+      await onSubmitted?.(submission([fileId]))
+      return reply('好')
+    }),
+  )
 
   assert.deepEqual(dock, float)
   assert.deepEqual(float, popout)

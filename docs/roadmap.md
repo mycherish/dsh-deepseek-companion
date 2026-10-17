@@ -55,6 +55,6 @@
 
 当前：**Phase 20 Browser Recovery 已完成（20A + 20B1 + 20B2）**。20B1 的 IDB reader、三层 identity、原地 patch、30 s 共享 deadline 与单次前端刷新已完成，真机确认 commit→kill / mid-stream kill 的原地补全。20B2 的删除证据、标题刷新和恢复提示已完成；对不能确认的重定向保留 Host 消息并阻止发送。**Phase 18A 已完成；18B 历史图片恢复已实现并完成 reader 与 Client 界面复验（含图片加载失败后的文件名降级）**。后续依次为 21 Proxy、22 Handoff、23 Task Brief、24 UI Polish、25 Regression / Release。`parent_message_id=null` 的极快连续发送与树形/分支 IDB entry 保持 safe-fail，分别作为 anchor identity 与 history branch resolution 的独立后续任务；不回填 20B。
 
-P0 Release Hardening（Web 最小版本）：2026-10-17 已完成 tarball 内容检查、干净 profile 的安装与 Cordis patch 激活、已登录 profile 副本的文本发送 / 历史图片 / 文件名降级 / Chromium 故障恢复烟测。安装步骤和验收边界见 [release-hardening.md](release-hardening.md)。这项验证不改变 Phase 21–25 的功能范围。
+P0 Release Hardening（Web 最小版本）：2026-10-17 已完成 tarball 内容检查、干净 profile 的安装与 Cordis patch 激活、已登录 profile 副本的文本发送 / 历史图片 / 文件名降级 / Chromium 故障恢复烟测，并加入 Prettier / Biome 工程检查门禁。安装步骤、验收边界和检查命令见 [release-hardening.md](release-hardening.md)。这项验证不改变 Phase 21–25 的功能范围；Phase 25 完整 Web 回归仍待执行。
 
 每次只完成一个 Phase，禁止顺手实现下一阶段。

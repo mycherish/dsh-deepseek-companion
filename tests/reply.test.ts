@@ -182,7 +182,9 @@ test('fallback 不会读到 reasoning 容器内的节点（excludeWithin）', ()
 })
 
 test('excludeWithin 过滤掉全部候选时安全返回空', () => {
-  const fallback: FakeNode[] = [{ textContent: '思考内容', closest: (selector: string) => (selector === '.think' ? {} : null) }]
+  const fallback: FakeNode[] = [
+    { textContent: '思考内容', closest: (selector: string) => (selector === '.think' ? {} : null) },
+  ]
   const h = makeHarness([], fallback)
   installReplyReader({ options: { ...readOptions(), excludeWithin: '.think' }, env: h.env })
 

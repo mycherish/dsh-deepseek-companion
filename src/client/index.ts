@@ -70,8 +70,7 @@ function createDockController(ctx: Context): DockController {
   }
 
   /** Docked surface for the current session: non-blank → rightbar, else overlay. */
-  const decideDockSurface = (): CompanionSurface =>
-    currentSessionBlank(ctx) === false ? 'rightbar' : 'overlay'
+  const decideDockSurface = (): CompanionSurface => (currentSessionBlank(ctx) === false ? 'rightbar' : 'overlay')
 
   const unmount = (): void => {
     if (disposer) {

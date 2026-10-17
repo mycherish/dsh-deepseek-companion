@@ -111,7 +111,10 @@ const MAX_NAME_LENGTH = 200
  */
 export function sanitizeDisplayName(name: string): string {
   // eslint-disable-next-line no-control-regex
-  return name.replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, MAX_NAME_LENGTH)
+  return name
+    .replace(/[\u0000-\u001f\u007f]/g, '')
+    .trim()
+    .slice(0, MAX_NAME_LENGTH)
 }
 
 // --- add validation -----------------------------------------------------------
@@ -123,8 +126,7 @@ export interface AttachmentDraftSnapshot {
 }
 
 export type AttachmentAddResult =
-  | { ok: true; name: string; mimeType: ImageMime; bytes: Buffer }
-  | { ok: false; error: string }
+  { ok: true; name: string; mimeType: ImageMime; bytes: Buffer } | { ok: false; error: string }
 
 function formatMiB(bytes: number): string {
   return `${Math.round(bytes / (1024 * 1024))} MiB`
@@ -183,11 +185,7 @@ export function attachmentTempName(mime: ImageMime): string {
 }
 
 /** Write one validated image to a fresh temp file; returns its absolute path. */
-export async function writeAttachmentTempFile(
-  dir: string,
-  bytes: Uint8Array,
-  mime: ImageMime,
-): Promise<string> {
+export async function writeAttachmentTempFile(dir: string, bytes: Uint8Array, mime: ImageMime): Promise<string> {
   await mkdir(dir, { recursive: true })
   const path = join(dir, attachmentTempName(mime))
   await writeFile(path, bytes)
@@ -248,9 +246,6 @@ export async function prepareAttachmentTempDir(dir: string): Promise<void> {
 
 function isMissing(error: unknown): boolean {
   return (
-    error !== null &&
-    typeof error === 'object' &&
-    'code' in error &&
-    (error as { code?: unknown }).code === 'ENOENT'
+    error !== null && typeof error === 'object' && 'code' in error && (error as { code?: unknown }).code === 'ENOENT'
   )
 }

@@ -19,13 +19,7 @@
  * Design: `docs/architecture.md` → "Phase 20B — Session Reconciliation" §3–§8.
  */
 
-import type {
-  ChatAttachment,
-  ChatFormat,
-  ChatMessage,
-  ChatReasoning,
-  MessageStatus,
-} from '../shared/state.ts'
+import type { ChatAttachment, ChatFormat, ChatMessage, ChatReasoning, MessageStatus } from '../shared/state.ts'
 import type { DeepSeekHistoryMessage, ReconcileHistoryReader } from './history-idb.ts'
 
 /** The browser capability reconciliation consumes — part of this module's surface. */
@@ -93,8 +87,7 @@ export interface IdentityBinding {
 }
 
 export type IdentityResolution =
-  | { ok: true; level: IdentityLevel; bindings: IdentityBinding[] }
-  | { ok: false; reason: string }
+  { ok: true; level: IdentityLevel; bindings: IdentityBinding[] } | { ok: false; reason: string }
 
 function fail(reason: string): IdentityResolution {
   return { ok: false, reason }
@@ -125,8 +118,7 @@ export function resolveIdentity(input: {
     return { ok: true, level: 1, bindings: [] }
   }
 
-  const anchor =
-    input.anchor !== undefined && input.anchor.sessionId === input.sessionId ? input.anchor : undefined
+  const anchor = input.anchor !== undefined && input.anchor.sessionId === input.sessionId ? input.anchor : undefined
   if (anchor !== undefined) return bindByAnchor(input.messages, input.hostMessages, anchor)
 
   return bootstrapStrict(input.messages, input.hostMessages)
@@ -250,7 +242,10 @@ function isStrictPrefix(host: string, server: string): boolean {
  * which for identity purposes is a mismatch, never a silent pass (that history
  * is Phase 18B's business, not 20B1's).
  */
-function filesMatch(attachments: ChatAttachment[] | undefined, files: readonly { name: string; size: number }[]): boolean {
+function filesMatch(
+  attachments: ChatAttachment[] | undefined,
+  files: readonly { name: string; size: number }[],
+): boolean {
   const hostFiles = attachments ?? []
   if (hostFiles.length !== files.length) return false
   if (hostFiles.length === 0) return true
@@ -295,8 +290,7 @@ export interface ChatReconcilePatch {
 }
 
 export type ReconcilePlan =
-  | { kind: 'no-op'; reason: string }
-  | { kind: 'apply'; level: IdentityLevel; patch: ChatReconcilePatch }
+  { kind: 'no-op'; reason: string } | { kind: 'apply'; level: IdentityLevel; patch: ChatReconcilePatch }
 
 /**
  * Build the ONE plan a reconcile may apply (design §3–§8). Identity first, then
@@ -450,8 +444,7 @@ export interface ReconcileRunDeps {
 }
 
 export type ReconcileRunResult =
-  | { kind: 'plan'; level: IdentityLevel; patch: ChatReconcilePatch }
-  | { kind: 'skipped'; reason: string }
+  { kind: 'plan'; level: IdentityLevel; patch: ChatReconcilePatch } | { kind: 'skipped'; reason: string }
 
 /**
  * Read → (bounded stability wait) → validate → plan. The caller owns the page

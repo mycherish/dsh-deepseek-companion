@@ -40,8 +40,6 @@ import type {
   SearchState,
 } from '../shared/state.ts'
 
-
-
 const rootStyle: CSSProperties = {
   display: 'flex',
   flexDirection: 'column',
@@ -233,8 +231,6 @@ const attachButtonStyle = (disabled: boolean): CSSProperties => ({
   gap: 4,
   fontSize: 13,
 })
-
-
 
 /**
  * While a reply streams the same slot becomes the stop control (Phase 07J).
@@ -555,9 +551,7 @@ const markdownComponents: Components = {
   del: ({ children }) => (
     <del style={{ textDecoration: 'line-through', color: 'var(--dsw-alias-label-secondary)' }}>{children}</del>
   ),
-  hr: () => (
-    <hr style={{ border: 'none', borderTop: '1px solid var(--dsw-alias-border-l3)', margin: '10px 0' }} />
-  ),
+  hr: () => <hr style={{ border: 'none', borderTop: '1px solid var(--dsw-alias-border-l3)', margin: '10px 0' }} />,
   pre: ({ children }) => <pre style={preStyle}>{children}</pre>,
   code: ({ className, children }) => {
     const text = typeof children === 'string' ? children : Array.isArray(children) ? children.join('') : ''
@@ -592,16 +586,10 @@ const markdownComponents: Components = {
 function MarkdownBlock({ content, citations }: { content: string; citations?: Citation[] }): ReactNode {
   // marker number → resolved url. Only rebuilt when the citations change, so a
   // late hydration simply re-renders the same block once (Phase 07I).
-  const urls = useMemo(
-    () => new Map((citations ?? []).map((entry) => [entry.marker, entry.url] as const)),
-    [citations],
-  )
+  const urls = useMemo(() => new Map((citations ?? []).map((entry) => [entry.marker, entry.url] as const)), [citations])
   return (
     <div style={markdownRootStyle}>
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm, [remarkCitations, { urls }] as never]}
-        components={markdownComponents}
-      >
+      <ReactMarkdown remarkPlugins={[remarkGfm, [remarkCitations, { urls }] as never]} components={markdownComponents}>
         {content}
       </ReactMarkdown>
     </div>
@@ -764,7 +752,9 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
   // the authority (it follows the real page, manual navigation included); the
   // list's own `active` flag is only used while the Host has no id yet.
   const activeId =
-    currentSession.id ?? (recoveryNotice === null ? (sessions ?? []).find((session) => session.active)?.id : null) ?? null
+    currentSession.id ??
+    (recoveryNotice === null ? (sessions ?? []).find((session) => session.active)?.id : null) ??
+    null
 
   useEffect(() => {
     if (recoveryNotice !== 'session_deleted') return
@@ -1053,12 +1043,20 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
 
   return (
     <div style={rootStyle}>
-      {recovering ? <div role="status" style={hintStyle}>正在恢复 DeepSeek…</div> : null}
+      {recovering ? (
+        <div role="status" style={hintStyle}>
+          正在恢复 DeepSeek…
+        </div>
+      ) : null}
       {!recovering && recoveryNotice === 'session_deleted' ? (
-        <div role="status" style={hintStyle}>原会话已在 DeepSeek 中删除，已清空本地聊天记录。</div>
+        <div role="status" style={hintStyle}>
+          原会话已在 DeepSeek 中删除，已清空本地聊天记录。
+        </div>
       ) : null}
       {!recovering && sessionUnverified ? (
-        <div role="alert" style={hintStyle}>无法确认原会话状态；已保留聊天记录。请新建聊天或切换历史会话后继续。</div>
+        <div role="alert" style={hintStyle}>
+          无法确认原会话状态；已保留聊天记录。请新建聊天或切换历史会话后继续。
+        </div>
       ) : null}
       <div ref={listRef} style={messagesStyle}>
         {messages.length === 0 ? <div style={hintStyle}>输入消息开始对话</div> : null}
@@ -1104,9 +1102,7 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
         {historyOpen ? (
           <div ref={historyPanelRef} style={historyOverlayStyle}>
             {sessions === null ? <div style={historyHintStyle}>{loadingSessions ? '读取中…' : '暂无数据'}</div> : null}
-            {sessions !== null && sessions.length === 0 ? (
-              <div style={historyHintStyle}>没有可用的历史会话</div>
-            ) : null}
+            {sessions !== null && sessions.length === 0 ? <div style={historyHintStyle}>没有可用的历史会话</div> : null}
             {(sessions ?? []).map((session) => {
               // Phase 08.2: the Host's `currentSession` is the authority (it
               // follows the real page, including manual navigation inside

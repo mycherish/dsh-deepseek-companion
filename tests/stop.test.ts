@@ -371,9 +371,7 @@ test('I: Stop 后 citations 回调仍然只写给本条 assistant', async () => 
   )
 
   late!([{ marker: 1, url: 'https://a.com', domain: 'a.com' }])
-  assert.deepEqual(store.getState().chat.messages[1]!.citations, [
-    { marker: 1, url: 'https://a.com', domain: 'a.com' },
-  ])
+  assert.deepEqual(store.getState().chat.messages[1]!.citations, [{ marker: 1, url: 'https://a.com', domain: 'a.com' }])
   assert.equal(store.getState().chat.messages[1]!.content, '部分正文')
 })
 

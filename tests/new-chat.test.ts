@@ -58,10 +58,7 @@ function fakeElement(init: FakeElementInit): FakeElement {
   const element: FakeElement = {
     nodeType: 1,
     tagName: init.tag ?? 'DIV',
-    childNodes: [
-      ...(init.text !== undefined ? [{ nodeType: 3 as const, textContent: init.text }] : []),
-      ...children,
-    ],
+    childNodes: [...(init.text !== undefined ? [{ nodeType: 3 as const, textContent: init.text }] : []), ...children],
     parentElement: null,
     contains(other: unknown): boolean {
       return children.some((child) => (child as unknown) === other || child.contains(other))
@@ -424,10 +421,7 @@ test('E: sending 为 true 时清空也不会改变 sending 字段', () => {
 
 // --- F. the next chat is a clean slate ---------------------------------------
 
-const send = async (
-  _message: string,
-  onDelta: (reply: AssistantReply) => void,
-): Promise<AssistantReply> => {
+const send = async (_message: string, onDelta: (reply: AssistantReply) => void): Promise<AssistantReply> => {
   onDelta({ content: '回答', format: 'markdown' })
   return { content: '回答', format: 'markdown' }
 }

@@ -22,7 +22,6 @@ import {
 const PNG_MAGIC = Buffer.from('89504e470d0a1a0a', 'hex')
 const JPEG_MAGIC = Buffer.from('ffd8ffe000104a464946', 'hex')
 const GIF89_MAGIC = Buffer.from('474946383961', 'hex')
-const GIF87_MAGIC = Buffer.from('474946383761', 'hex')
 const WEBP_MAGIC = Buffer.concat([Buffer.from('RIFF'), Buffer.from('00000000', 'hex'), Buffer.from('WEBP')])
 
 const MAGIC = {
@@ -262,7 +261,14 @@ test('18A cleanup: 启动时创建目录并清掉上次异常退出的遗留文�
 
     await prepareAttachmentTempDir(dir) // 再次启动
 
-    assert.equal(await stat(leftover).then(() => true, () => false), false, '遗留文件被清理')
+    assert.equal(
+      await stat(leftover).then(
+        () => true,
+        () => false,
+      ),
+      false,
+      '遗留文件被清理',
+    )
     assert.deepEqual(await readdir(dir), [])
   })
 })

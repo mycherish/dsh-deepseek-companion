@@ -17,10 +17,7 @@ import type { AttachImageResult } from '../src/host/browser.ts'
  * 也就是真正会在生产里跑的那两条路径。
  */
 
-const PNG = Buffer.concat([
-  Buffer.from('89504e470d0a1a0a', 'hex'),
-  Buffer.alloc(24, 5),
-])
+const PNG = Buffer.concat([Buffer.from('89504e470d0a1a0a', 'hex'), Buffer.alloc(24, 5)])
 
 function addBody(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -176,7 +173,10 @@ test('18A add: 上传失败但页面已出现卡片 → 200 error，记录保留
     assert.equal(record?.previewIdentity, IDENTITY_A, '失败卡片仍可被精确删除')
     assert.equal(record?.deepSeekFileId, undefined)
     assert.equal(
-      await stat(record!.tempPath).then(() => true, () => false),
+      await stat(record!.tempPath).then(
+        () => true,
+        () => false,
+      ),
       false,
       '失败的字节立即丢弃（重试是新的 entry）',
     )
@@ -218,7 +218,13 @@ test('18A remove: 页面确认删掉卡片后才清 Host（state + 记录 + 临�
     assert.equal(result.status, 200)
     assert.deepEqual(h.store.getState().composer.attachments, [])
     assert.equal(h.resources.get(id), undefined)
-    assert.equal(await stat(tempPath).then(() => true, () => false), false)
+    assert.equal(
+      await stat(tempPath).then(
+        () => true,
+        () => false,
+      ),
+      false,
+    )
     assert.deepEqual(h.calls.removedIdentities, [IDENTITY_A], '按 identity 精确删除')
   })
 })
@@ -243,7 +249,13 @@ test('18A remove: 页面删除失败 → 409，且 Host 三样东西全部保持
     assert.equal(result.status, 409)
     assert.equal(h.store.getState().composer.attachments.length, 1)
     assert.equal(h.resources.get(id)?.previewIdentity, IDENTITY_A)
-    assert.equal(await stat(tempPath).then(() => true, () => false), true)
+    assert.equal(
+      await stat(tempPath).then(
+        () => true,
+        () => false,
+      ),
+      true,
+    )
   })
 })
 
@@ -307,7 +319,13 @@ test('18A resources: resetDraft 清空 state + 记录 + 临时文件，且幂等
     assert.deepEqual(h.store.getState().composer.attachments, [])
     assert.deepEqual(h.resources.list(), [])
     for (const path of paths) {
-      assert.equal(await stat(path).then(() => true, () => false), false)
+      assert.equal(
+        await stat(path).then(
+          () => true,
+          () => false,
+        ),
+        false,
+      )
     }
   })
 })
@@ -323,9 +341,22 @@ test('18A resources: consume 只删被消费的那一条，绝不动其它草稿
     await h.resources.consume([consumed.body.attachment!.id])
 
     assert.equal(h.resources.get(consumed.body.attachment!.id), undefined)
-    assert.equal(await stat(consumedPath).then(() => true, () => false), false)
+    assert.equal(
+      await stat(consumedPath).then(
+        () => true,
+        () => false,
+      ),
+      false,
+    )
     assert.notEqual(h.resources.get(kept.body.attachment!.id), undefined, '别的草稿仍然在')
-    assert.equal(await stat(keptPath).then(() => true, () => false), true, '别的临时文件没被删')
+    assert.equal(
+      await stat(keptPath).then(
+        () => true,
+        () => false,
+      ),
+      true,
+      '别的临时文件没被删',
+    )
     assert.equal(h.store.getState().composer.attachments.length, 2, 'consume 只清记录与文件，不改草稿 state')
   })
 })
