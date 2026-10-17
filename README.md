@@ -34,4 +34,21 @@ pnpm build
 pnpm test
 ```
 
+## Web 插件安装预览
+
+当前只支持 DSH Web。先在本仓库构建并打包，再把 tarball 安装到要运行的 DSH profile：
+
+```sh
+pnpm build
+pnpm pack
+PACKAGE_TGZ="$(pwd)/dsh-deepseek-companion-0.0.1.tgz"
+cd "${DSH_HOME:-$HOME/.dsh}/profiles/web"
+pnpm add "$PACKAGE_TGZ"
+dsh --profile web --patch "${DSH_HOME:-$HOME/.dsh}/profiles/web/node_modules/dsh-deepseek-companion/cordis.patch.yml" --no-open
+```
+
+`pnpm add` 只安装包；`--patch` 才把 Companion 插入 Cordis 插件树。若要每次启动都加载，可将包内 `cordis.patch.yml` 的 `insert` 项合并到该 profile 现有的 `cordis.patch.yml` 列表中，保留原有条目。首次使用新 profile 时，Companion 会显示 DeepSeek 登录入口。
+
+打包安装与真实 Web 烟测记录见 [docs/release-hardening.md](docs/release-hardening.md)。
+
 详见 [docs/roadmap.md](docs/roadmap.md) 与 [docs/architecture.md](docs/architecture.md)。
