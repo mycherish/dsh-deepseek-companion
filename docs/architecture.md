@@ -866,6 +866,7 @@ expectedFileIds = consumedAttachmentIds → AttachmentRecord[] → deepSeekFileI
 - 页面返回后 Host 再次验证 URL 域名、路径、签名和 `file_id` 一致性。`ChatAttachment` 只承载 `id/name/remoteUrl`；图片不混入正文、reasoning 或 citations。纯图片 user 消息因有附件而保留；空且无附件的占位消息仍丢弃。
 - Host transcript 等价比较纳入**本次确证**的附件：同一文本后来出现历史图片时触发状态更新；相同图片重复读取不推送；本次未读到附件（实时页面仍是 `blob:`）时不抹掉 Host 已验证的 18A 附件。Client 对带历史 URL 的附件显示图片和文件名，加载失败（包括签名过期）时仅显示文件名；18A 实时发送的附件仍显示元数据卡片。
 - 自动测试覆盖纯图片、图文混合、跨消息归属、异常 URL/重复 ID safe-fail、Host 二次校验、同文本附件更新及 `blob:` 重读保护；Client 通过 typecheck/build 验证。独立 `companion-test` profile 临时副本的只读缓存扫描定位到 3 个带 FILE 的历史会话；真实 Chromium 页面里的 user 消息分别有 1、2、1 张 `files.deepseeksvc.com/api/file` 图片，页面 reader 分别恢复 1、2、1 个附件，未打印会话内容或签名参数。此副本没有纯图片历史轮次；纯图片保留由自动测试和设计期结构探测覆盖。**Client 界面复验（2026-10-16）**：在临时 DSH Web profile 的真实 Chromium 中打开 Companion，验证图文混合消息、纯图片消息和 7 个历史图片节点的正常加载；拦截 `/api/file` 图片请求后，所有图片均由 Client `onError` 路径退化为文件名，未留下破图。临时 profile、截图和测试脚本均在验证后清理，未修改原始 profile。
+- **Web 回归补充（2026-10-19）**：新发送图片后立即从“新建聊天”切回历史时，DeepSeek SPA 可能继续显示已发送消息的 `blob:` 图片；reader 不能把它当作历史签名 URL。历史读取只在检测到这类页面临时图片时触发一次有预算的前端刷新，重新读取后要求会话 ID 不变，并逐条核对原 user 消息的图片数量已成为可验证的签名附件。若证据仍不足则保持原 Host transcript。真实 DSH Web 的新图片轮次已通过立即切换复验；见 [release-hardening.md](release-hardening.md)。
 
 ### 风险与未决项（实现前已知，均可接受）
 

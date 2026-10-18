@@ -57,4 +57,6 @@
 
 P0 Release Hardening（Web 最小版本）：2026-10-17 已完成 tarball 内容检查、干净 profile 的安装与 Cordis patch 激活、已登录 profile 副本的文本发送 / 历史图片 / 文件名降级 / Chromium 故障恢复烟测，并加入 Prettier / Biome 工程检查门禁。安装步骤、验收边界和检查命令见 [release-hardening.md](release-hardening.md)。这项验证不改变 Phase 21–25 的功能范围；Phase 25 完整 Web 回归仍待执行。
 
+2026-10-19 Web 回归补充：发现“新发图片立即切换历史”时 DeepSeek SPA 仍保留页面临时 `blob:` 地址；已加入仅在此证据出现时的一次有预算前端刷新、签名图片复核与失败保留 Host 的路径。真实 DSH Web 测试轮次已复验 Host 附件和 Client 图片恢复。详情见 [release-hardening.md](release-hardening.md)。Phase 25 全量回归与正式发布批准仍待完成。
+
 每次只完成一个 Phase，禁止顺手实现下一阶段。

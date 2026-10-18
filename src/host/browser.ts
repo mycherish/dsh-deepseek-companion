@@ -64,6 +64,7 @@ import {
   normalizeSessionsResult,
   normalizeSwitchOutcome,
   normalizeTranscript,
+  pageLocalImagesReplaced,
   readSessionsInPage,
   readTranscriptInPage,
   sameLocation,
@@ -247,6 +248,8 @@ const SWITCH_CONFIRM_TIMEOUT = 8000
  */
 const SWITCH_STABLE_TIMEOUT = 4000
 const SWITCH_STABLE_INTERVAL = 350
+/** A freshly sent image may remain a page-local blob until DeepSeek reloads its history. */
+const HISTORY_IMAGE_REFRESH_BUDGET = REFRESH_TIMEOUT_MS + REFRESH_SETTLE_TIMEOUT
 const TRANSCRIPT_OPTIONS: TranscriptOptions = {
   messageSelector: MESSAGE_SELECTOR,
   replySelector: REPLY_SELECTOR,
@@ -1782,8 +1785,34 @@ export async function createDeepSeekBrowser(
    */
   const readTranscript = async (): Promise<ChatMessageInput[]> => {
     await ensureFullHistory()
-
-    const raw = normalizeTranscript(await page.evaluate(readTranscriptInPage, { options: TRANSCRIPT_OPTIONS }))
+    let raw = normalizeTranscript(await page.evaluate(readTranscriptInPage, { options: TRANSCRIPT_OPTIONS }))
+    if (raw.pageLocalImages) {
+      const beforeRefresh = raw
+      if (beforeRefresh.pageLocalImageRequirements.length === 0)
+        throw new Error('page-local image evidence is incomplete')
+      // DeepSeek keeps a just-sent image as blob: in its SPA cache, including
+      // after a sidebar switch. Only its own fresh page load yields a signed
+      // history URL. Never turn the blob into a Host attachment.
+      const sessionId = conversationIdFromPath(page.url(), SESSION_HREF_MARKER)
+      if (sessionId === null) throw new Error('cannot refresh page-local image outside a chat session')
+      await refreshHistoryView(HISTORY_IMAGE_REFRESH_BUDGET)
+      if (conversationIdFromPath(page.url(), SESSION_HREF_MARKER) !== sessionId)
+        throw new Error('chat session changed during image history refresh')
+      await page.waitForFunction(
+        (selector: string) => document.querySelectorAll(selector).length > 0,
+        MESSAGE_SELECTOR,
+        {
+          timeout: SWITCH_CONFIRM_TIMEOUT,
+        },
+      )
+      await waitForMessageCountStable()
+      await ensureFullHistory()
+      raw = normalizeTranscript(await page.evaluate(readTranscriptInPage, { options: TRANSCRIPT_OPTIONS }))
+      if (conversationIdFromPath(page.url(), SESSION_HREF_MARKER) !== sessionId)
+        throw new Error('chat session changed during image history read')
+      if (!pageLocalImagesReplaced(beforeRefresh, raw))
+        throw new Error('signed image history did not replace the page-local images')
+    }
 
     /** DOM blocks per assistant reply, in reply order (only when needed). */
     const readReplyBlocks = async (): Promise<DomBlock[][]> => {

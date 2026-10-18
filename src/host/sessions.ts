@@ -228,6 +228,14 @@ export interface TranscriptEntryRaw {
   attachments?: ChatAttachment[]
 }
 
+export interface TranscriptRead {
+  entries: TranscriptEntryRaw[]
+  /** Sent images still backed by page-local blob URLs. */
+  pageLocalImages: boolean
+  /** The user entries and image counts that must become signed after one refresh. */
+  pageLocalImageRequirements: { entryIndex: number; imageCount: number }[]
+}
+
 /**
  * Rebuild the CURRENT conversation's transcript from the page, in DOM order.
  *
@@ -238,13 +246,11 @@ export interface TranscriptEntryRaw {
  * and falls back to the rendered text; reasoning is read from its own container.
  * Only plain data ever leaves the page.
  */
-export function readTranscriptInPage(payload: { options: TranscriptOptions; env?: SessionsEnv }): {
-  entries: TranscriptEntryRaw[]
-} {
+export function readTranscriptInPage(payload: { options: TranscriptOptions; env?: SessionsEnv }): TranscriptRead {
   const options = payload.options
   const env: SessionsEnv = payload.env ?? (globalThis as unknown as SessionsEnv)
   const doc = env.document
-  if (doc === undefined || doc === null) return { entries: [] }
+  if (doc === undefined || doc === null) return { entries: [], pageLocalImages: false, pageLocalImageRequirements: [] }
 
   /** Raw Markdown off the fiber chain, or null (mirrors `reply.ts`). */
   const scanMarkdown = (node: unknown): { content: string; format: 'markdown' } | null => {
@@ -286,6 +292,8 @@ export function readTranscriptInPage(payload: { options: TranscriptOptions; env?
   const useFallback = doc.querySelectorAll(options.replySelector).length === 0
 
   const entries: TranscriptEntryRaw[] = []
+  let pageLocalImages = false
+  const pageLocalImageRequirements: { entryIndex: number; imageCount: number }[] = []
   let replyIndex = -1
   for (const message of messages) {
     const reply =
@@ -299,6 +307,15 @@ export function readTranscriptInPage(payload: { options: TranscriptOptions; env?
       const images = Array.from(
         (message as { querySelectorAll?: (s: string) => ArrayLike<unknown> }).querySelectorAll?.('img') ?? [],
       )
+      if (
+        images.some((image) => {
+          const src = (image as { getAttribute?: (name: string) => unknown }).getAttribute?.('src')
+          return typeof src === 'string' && src.startsWith('blob:')
+        })
+      ) {
+        pageLocalImages = true
+        pageLocalImageRequirements.push({ entryIndex: entries.length, imageCount: images.length })
+      }
       const attachments: ChatAttachment[] = []
       const seen = new Set<string>()
       let validImages = true
@@ -370,7 +387,7 @@ export function readTranscriptInPage(payload: { options: TranscriptOptions; env?
       replyIndex,
     })
   }
-  return { entries }
+  return { entries, pageLocalImages, pageLocalImageRequirements }
 }
 
 export interface ScrollMessagesOptions {
@@ -729,8 +746,11 @@ export function normalizeSessionsResult(value: unknown): { sessions: SessionLink
 }
 
 /** Coerce the transcript read back from the page. */
-export function normalizeTranscript(value: unknown): { entries: TranscriptEntryRaw[] } {
-  const raw = value !== null && typeof value === 'object' ? (value as { entries?: unknown }) : {}
+export function normalizeTranscript(value: unknown): TranscriptRead {
+  const raw =
+    value !== null && typeof value === 'object'
+      ? (value as { entries?: unknown; pageLocalImages?: unknown; pageLocalImageRequirements?: unknown })
+      : {}
   const entries: TranscriptEntryRaw[] = []
   if (Array.isArray(raw.entries)) {
     for (const entry of raw.entries) {
@@ -801,7 +821,39 @@ export function normalizeTranscript(value: unknown): { entries: TranscriptEntryR
       entries.push(normalized)
     }
   }
-  return { entries }
+  const pageLocalImageRequirements: { entryIndex: number; imageCount: number }[] = []
+  if (Array.isArray(raw.pageLocalImageRequirements)) {
+    for (const item of raw.pageLocalImageRequirements) {
+      if (item === null || typeof item !== 'object') continue
+      const { entryIndex, imageCount } = item as { entryIndex?: unknown; imageCount?: unknown }
+      if (
+        typeof entryIndex === 'number' &&
+        Number.isInteger(entryIndex) &&
+        entryIndex >= 0 &&
+        entryIndex < entries.length &&
+        typeof imageCount === 'number' &&
+        Number.isInteger(imageCount) &&
+        imageCount > 0
+      )
+        pageLocalImageRequirements.push({ entryIndex, imageCount })
+    }
+  }
+  return { entries, pageLocalImages: raw.pageLocalImages === true, pageLocalImageRequirements }
+}
+
+/** A refresh only resolves the blob gap when the same user entries gain signed attachments. */
+export function pageLocalImagesReplaced(before: TranscriptRead, after: TranscriptRead): boolean {
+  if (!before.pageLocalImages || before.pageLocalImageRequirements.length === 0 || after.pageLocalImages) return false
+  return before.pageLocalImageRequirements.every(({ entryIndex, imageCount }) => {
+    const prior = before.entries[entryIndex]
+    const current = after.entries[entryIndex]
+    return (
+      prior?.role === 'user' &&
+      current?.role === 'user' &&
+      prior.content === current.content &&
+      (current.attachments?.length ?? 0) >= imageCount
+    )
+  })
 }
 
 // --- Host-side request flows --------------------------------------------------

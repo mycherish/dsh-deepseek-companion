@@ -15,6 +15,7 @@ import {
   normalizeSessionsResult,
   normalizeSwitchOutcome,
   normalizeTranscript,
+  pageLocalImagesReplaced,
   readSessionsInPage,
   readTranscriptInPage,
   scrollMessagesInPage,
@@ -418,6 +419,61 @@ test('18B: 无法证明为历史附件的图片不挂到消息，重复 file_id 
   ]
   const entry = readTranscriptInPage({ options: TRANSCRIPT, env: sessionsEnv({ messages: [user] }) }).entries[0]!
   assert.deepEqual(buildTranscript([entry], []), [{ role: 'user', content: '文本保留', format: 'text' }])
+})
+
+test('25: 已发送消息中的 blob 图片要求前端刷新，且不伪造历史附件', () => {
+  const user = new FakeEl({ text: '刚发送的图片' })
+  user.map.img = [new FakeEl({ tag: 'IMG', attrs: { src: 'blob:https://chat.deepseek.com/page-local' } })]
+
+  const read = readTranscriptInPage({ options: TRANSCRIPT, env: sessionsEnv({ messages: [user] }) })
+  assert.equal(read.pageLocalImages, true)
+  assert.deepEqual(read.pageLocalImageRequirements, [{ entryIndex: 0, imageCount: 1 }])
+  assert.equal(read.entries[0]?.attachments, undefined)
+  assert.equal(normalizeTranscript(read).pageLocalImages, true)
+  assert.deepEqual(normalizeTranscript(read).pageLocalImageRequirements, [{ entryIndex: 0, imageCount: 1 }])
+  assert.equal(normalizeTranscript({ entries: read.entries, pageLocalImages: 'true' }).pageLocalImages, false)
+  assert.deepEqual(
+    normalizeTranscript({ entries: read.entries, pageLocalImageRequirements: [{ entryIndex: 8, imageCount: 1 }] })
+      .pageLocalImageRequirements,
+    [],
+  )
+})
+
+test('25: 刷新后仅接受同一 user 消息的已签名图片', () => {
+  const before = normalizeTranscript({
+    entries: [{ role: 'user', content: '图片轮次' }],
+    pageLocalImages: true,
+    pageLocalImageRequirements: [{ entryIndex: 0, imageCount: 1 }],
+  })
+  const signed = normalizeTranscript({
+    entries: [
+      {
+        role: 'user',
+        content: '图片轮次',
+        attachments: [
+          {
+            id: 'file-one',
+            kind: 'image',
+            name: 'one.png',
+            remoteUrl: 'https://files.deepseeksvc.com/api/file?file_id=file-one&state=signed',
+          },
+        ],
+      },
+    ],
+  })
+  assert.equal(pageLocalImagesReplaced(before, signed), true)
+  assert.equal(
+    pageLocalImagesReplaced(before, normalizeTranscript({ entries: [{ role: 'user', content: '图片轮次' }] })),
+    false,
+  )
+  assert.equal(pageLocalImagesReplaced(before, normalizeTranscript({ ...signed, pageLocalImages: true })), false)
+  assert.equal(
+    pageLocalImagesReplaced(
+      before,
+      normalizeTranscript({ ...signed, entries: [{ ...signed.entries[0], content: '别的轮次' }] }),
+    ),
+    false,
+  )
 })
 
 test('18B: Host 再校验页面返回的签名 URL 与 file_id', () => {
