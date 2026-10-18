@@ -1,6 +1,6 @@
 # Web Release Hardening 验收记录
 
-日期：2026-10-17。目标：验证当前 tarball 可在 DSH Web 中安装、加载和运行最小聊天链路；本次不扩展 Phase 21–25。
+初始验收：2026-10-17。目标：验证 tarball 可在 DSH Web 中安装、加载和运行最小聊天链路。2026-10-19 已继续执行 Web 最小版回归，范围与发布阻塞见 [web-regression.md](web-regression.md)。
 
 ## 安装路径
 
@@ -29,7 +29,7 @@
 
 已加入锁定版本的 Prettier（源码、测试、配置与 Markdown 格式检查）和 Biome（源码、测试 lint）。开发与提交前依次运行 `pnpm format:check`、`pnpm lint`、`pnpm typecheck`、`pnpm build`、`pnpm test`。`pnpm format` 用于修复格式。
 
-首次接入时统一整理了现有文件的格式。Biome 保留推荐规则；对项目中有意采用的非空断言、页面内临时属性访问、用于触发滚动的 React effect 依赖、拖拽分隔元素、赋值式循环和控制字符过滤正则设置了例外。Phase 25 的完整 Web 回归仍需单独执行。
+首次接入时统一整理了现有文件的格式。Biome 保留推荐规则；对项目中有意采用的非空断言、页面内临时属性访问、用于触发滚动的 React effect 依赖、拖拽分隔元素、赋值式循环和控制字符过滤正则设置了例外。后续 Web 最小版回归矩阵见 [web-regression.md](web-regression.md)。
 
 ## 2026-10-19 Web 回归补充
 
@@ -38,6 +38,10 @@
 修复后，只有历史读取遇到已发送消息中的 `blob:` 图片才让 DeepSeek 前端执行一次有预算的页面刷新；随后重新读取，并要求同一会话、同一 user 消息中的图片数量均得到签名地址验证。刷新失败、会话变化或图片仍不可验证时，切换失败并保留原 Host transcript，不伪造附件。原始复现场景用新图片轮次复验两次：切换均为 HTTP 200，耗时约 4 s，Host 附件 1 个、Client 图片节点 1 个且加载成功，控制台错误 0 个。针对 `blob:` 检测、Host 归一化和刷新后附件对应关系增加自动测试。
 
 本次测试使用真实 DeepSeek 测试账号，留下多个以 `P25 Web regression` 开头的测试轮次，未删除。测试只输出状态、计数和耗时，不输出认证信息、签名 URL、会话 ID 或会话正文。此补充不代表 Phase 25 全量验收完成。
+
+## 当前发布状态
+
+Web 最小版验收矩阵已执行，包含干净安装、流式 Markdown、reasoning、跨窗口 Stop、浮窗窄屏、图片历史、失败降级、Chromium 恢复和 dispose。浮窗 2px 溢出已修复。随后已完成 **SSE 断流恢复 P0**：重连前保留消息与输入并禁用操作，新快照恢复后 Dock 与独立窗口重新一致；EOF、请求失败与 dispose 的两轮真实 Web 复验通过，无聊天自动重发。候选仍待 Review、提交与发布准备。实测结果和剩余项见 [web-regression.md](web-regression.md)。
 
 ## 范围边界
 

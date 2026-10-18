@@ -15,6 +15,7 @@ import {
 
 const rootStyle: CSSProperties = {
   position: 'fixed',
+  boxSizing: 'border-box',
   display: 'flex',
   flexDirection: 'column',
   overflow: 'hidden',

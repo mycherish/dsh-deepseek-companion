@@ -6,6 +6,7 @@
  * is `about:blank`, so it must not rely on its own relative URL).
  */
 import { connectionFrom } from '../shared/state.ts'
+import { subscribeStateStream, type StateStreamStatus } from './state-stream.ts'
 import type {
   ChatAttachment,
   ChatMessage,
@@ -23,7 +24,7 @@ import type {
   SearchState,
 } from '../shared/state.ts'
 
-export type { CompanionState }
+export type { CompanionState, StateStreamStatus }
 
 /** Read-only Host route returning the shared Companion state. */
 const STATE_PATH = '/api/deepseek-companion/state'
@@ -455,52 +456,16 @@ export async function fetchCompanionState(origin: string, signal?: AbortSignal):
 /**
  * Subscribe to the Host SSE stream. The Host pushes the current state on
  * connect and then every revision bump. Returns an unsubscribe function that
- * aborts the connection; no auto-reconnect in this phase.
+ * aborts the connection and any retry. EOF and transport failures reconnect
+ * with capped backoff; only a fresh valid Host snapshot marks it connected.
  */
 export function subscribeCompanionState(
   origin: string,
   onState: (state: CompanionState) => void,
   onError?: (error: unknown) => void,
+  onStatus?: (status: StateStreamStatus) => void,
 ): () => void {
-  const controller = new AbortController()
-  let disposed = false
-
-  void (async () => {
-    try {
-      const response = await fetch(`${origin}${STREAM_PATH}`, {
-        credentials: 'include',
-        signal: controller.signal,
-      })
-      if (!response.ok) throw new Error(`HTTP ${response.status}`)
-      if (!response.body) throw new Error('no stream body')
-
-      const reader = response.body.getReader()
-      const decoder = new TextDecoder()
-      let buffer = ''
-
-      for (;;) {
-        const { done, value } = await reader.read()
-        if (done) break
-        buffer += decoder.decode(value, { stream: true })
-
-        let separator: number
-        while ((separator = buffer.indexOf('\n\n')) !== -1) {
-          const rawEvent = buffer.slice(0, separator)
-          buffer = buffer.slice(separator + 2)
-          const state = parseSseData(rawEvent)
-          if (state !== null) onState(state)
-        }
-      }
-    } catch (error) {
-      if (disposed || (error instanceof Error && error.name === 'AbortError')) return
-      onError?.(error)
-    }
-  })()
-
-  return () => {
-    disposed = true
-    controller.abort()
-  }
+  return subscribeStateStream({ url: `${origin}${STREAM_PATH}`, parseEvent: parseSseData, onState, onError, onStatus })
 }
 
 /** Parse one `data: {...}` SSE event body into a CompanionState, or null. */
@@ -510,7 +475,18 @@ function parseSseData(rawEvent: string): CompanionState | null {
     const text = line.slice('data: '.length).trim()
     if (text === '') return null
     try {
-      return normalizeCompanionState(JSON.parse(text))
+      const value: unknown = JSON.parse(text)
+      if (value === null || typeof value !== 'object') return null
+      const source = value as { status?: unknown; instanceId?: unknown; revision?: unknown }
+      if (
+        source.status !== 'ready' ||
+        typeof source.instanceId !== 'string' ||
+        source.instanceId === '' ||
+        typeof source.revision !== 'number' ||
+        !Number.isFinite(source.revision)
+      )
+        return null
+      return normalizeCompanionState(value)
     } catch {
       return null
     }

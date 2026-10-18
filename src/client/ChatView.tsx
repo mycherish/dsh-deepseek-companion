@@ -13,6 +13,7 @@ import {
   stopChatMessage,
   subscribeCompanionState,
   switchChatSession,
+  type StateStreamStatus,
 } from './api.ts'
 import {
   IMAGE_MIME_TYPES,
@@ -660,8 +661,9 @@ function ReasoningBlock({ reasoning }: { reasoning: ChatReasoning }): ReactNode 
  */
 export function ChatView({ origin }: { origin: string }): JSX.Element {
   const [status, setStatus] = useState<DeepSeekStatus>('checking')
+  const [streamStatus, setStreamStatus] = useState<StateStreamStatus>('connecting')
   /**
-   * Unified connection (Phase 08.2): the ONE field the send gate reads. The
+   * Unified Host connection (Phase 08.2). Local SSE readiness is a separate gate. The
    * three login screens below still key off `deepseek.status` — it stays the
    * source of the texts, and both are pushed from the same Host state.
    */
@@ -711,29 +713,34 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
 
   useEffect(
     () =>
-      subscribeCompanionState(origin, (state) => {
-        setStatus(state.deepseek.status)
-        setConnection(state.connection)
-        setCurrentSession(state.currentSession)
-        setRecoveryNotice(state.recoveryNotice)
-        setMessages(state.chat.messages)
-        // The unified composer group is the single source for the controls
-        // (Phase 08.2); the legacy mirrors carry the same values.
-        setDeepThinkState(state.composer.deepThink)
-        setSearchState(state.composer.search)
-        // The draft is Host state: a failed upload, a removal on another
-        // surface and a send that consumed it all arrive here the same way.
-        setAttachments(state.composer.attachments)
-        // The reducer is the ONLY place that folds the Host's composer state
-        // into the slot: `host-stopping` shows 停止中… on surfaces that did not
-        // click, and `host-sending: false` is the only thing that ends it.
-        setStopUi((ui) =>
-          reduceStopUi(reduceStopUi(ui, { type: 'host-stopping', stopping: state.composer.stopping }), {
-            type: 'host-sending',
-            sending: state.composer.sending,
-          }),
-        )
-      }),
+      subscribeCompanionState(
+        origin,
+        (state) => {
+          setStatus(state.deepseek.status)
+          setConnection(state.connection)
+          setCurrentSession(state.currentSession)
+          setRecoveryNotice(state.recoveryNotice)
+          setMessages(state.chat.messages)
+          // The unified composer group is the single source for the controls
+          // (Phase 08.2); the legacy mirrors carry the same values.
+          setDeepThinkState(state.composer.deepThink)
+          setSearchState(state.composer.search)
+          // The draft is Host state: a failed upload, a removal on another
+          // surface and a send that consumed it all arrive here the same way.
+          setAttachments(state.composer.attachments)
+          // The reducer is the ONLY place that folds the Host's composer state
+          // into the slot: `host-stopping` shows 停止中… on surfaces that did not
+          // click, and `host-sending: false` is the only thing that ends it.
+          setStopUi((ui) =>
+            reduceStopUi(reduceStopUi(ui, { type: 'host-stopping', stopping: state.composer.stopping }), {
+              type: 'host-sending',
+              sending: state.composer.sending,
+            }),
+          )
+        },
+        undefined,
+        setStreamStatus,
+      ),
     [origin],
   )
 
@@ -746,8 +753,9 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
   // Any in-flight page operation (sending, new chat, switch) blocks the other
   // entry points — the Host refuses the same combinations with 409.
   const recovering = connection.status === 'recovering'
+  const streamConnected = streamStatus === 'connected'
   const sessionUnverified = recoveryNotice === 'session_unverified'
-  const pageBusy = busy || startingNew || switching || recovering
+  const pageBusy = busy || startingNew || switching || recovering || !streamConnected
   // Which history entry is「当前」(Phase 08.2): the Host's `currentSession` is
   // the authority (it follows the real page, manual navigation included); the
   // list's own `active` flag is only used while the Host has no id yet.
@@ -800,7 +808,7 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
   const canSend = canSendRound({
     text: input,
     attachments,
-    busy,
+    busy: busy || !streamConnected,
     attaching,
     connection: connection.status,
   })
@@ -853,7 +861,7 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
 
   /** Ask the Host to drop one draft image (Host + real page card together). */
   const dropAttachment = async (id: string): Promise<void> => {
-    if (busy || removingId !== null) return
+    if (pageBusy || removingId !== null) return
     setRemovingId(id)
     setError(null)
     try {
@@ -890,7 +898,7 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
    * this button back into 「发送」 on every surface at once.
    */
   const stop = async (): Promise<void> => {
-    if (stopping || !busy) return
+    if (!streamConnected || stopping || !busy) return
     setStopUi((ui) => reduceStopUi(ui, { type: 'click' }))
     setError(null)
     try {
@@ -1008,21 +1016,25 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
     }
   }
 
+  const streamNotice = streamConnected ? null : (
+    <div role="status" style={hintStyle}>
+      {streamStatus === 'connecting' ? '正在连接聊天服务…' : '聊天连接已中断，正在重连…'}
+    </div>
+  )
+
   if (status === 'checking' && !recovering) {
-    return (
-      <div style={rootStyle}>
-        <div style={hintStyle}>检测中…</div>
-      </div>
-    )
+    return <div style={rootStyle}>{streamNotice ?? <div style={hintStyle}>检测中…</div>}</div>
   }
 
   if (status === 'logged_out' && !recovering) {
     return (
       <div style={rootStyle}>
+        {streamNotice}
         <div style={hintStyle}>未登录 DeepSeek</div>
         <button
           type="button"
           style={sendButtonStyle}
+          disabled={!streamConnected}
           onClick={() => {
             void showDeepSeekBrowser(origin).catch(() => {})
           }}
@@ -1036,6 +1048,7 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
   if (status === 'error' && !recovering) {
     return (
       <div style={rootStyle}>
+        {streamNotice}
         <div style={hintStyle}>检测失败</div>
       </div>
     )
@@ -1043,6 +1056,7 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
 
   return (
     <div style={rootStyle}>
+      {streamNotice}
       {recovering ? (
         <div role="status" style={hintStyle}>
           正在恢复 DeepSeek…
@@ -1236,7 +1250,7 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
             type="button"
             style={busy ? stopButtonStyle : sendButtonStyle}
             onClick={() => (busy ? void stop() : void send())}
-            disabled={recovering || sessionUnverified || (busy ? stopping : !canSend)}
+            disabled={!streamConnected || recovering || sessionUnverified || (busy ? stopping : !canSend)}
           >
             {STOP_PHASE_LABEL[busy ? phase : 'send']}
           </button>

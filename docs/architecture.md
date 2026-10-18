@@ -131,6 +131,14 @@ overlay 与 rightbar 的宽度**故意独立**，绝不相同步。
   - `/api/deepseek-companion/state/stream` — `text/event-stream` 实时推送通道（复用 Connection 的流式 `Response.body`，bridge 逐 chunk 转发，客户端断开会触发 `request.signal` abort）。
 - **Client 读取**：`src/client/api.ts` 的 `fetchCompanionState`（快照）与 `subscribeCompanionState`（fetch + ReadableStream 解析 SSE，返回 unsubscribe）。Dock 与 Pop-out 共用同一份 reader，各自持独立 SSE 连接。
 
+### Web P0：状态通道断流恢复（2026-10-19）
+
+`subscribeCompanionState` 将传输生命周期交给 `src/client/state-stream.ts`。EOF、fetch/read 异常和非成功 HTTP 响应都会重连，退避为 500/1000/2000/4000ms，之后封顶 5000ms；收到有效 Host 快照后重置退避。每次尝试必须在 10s 内收到首个有效快照，否则取消请求并重试。每次连接使用新的 decoder/buffer，不将旧连接的半个事件拼到新连接；LF 与 CRLF 分隔符均可解析。
+
+界面本地维护 `connecting / connected / reconnecting`，独立于 Host 的 `connection`、browser recovery、session reconciliation。收到有效快照前不解锁发送、Stop、开关、附件和会话操作；断流保留最后消息及本地输入并显示重连提示，重连仅订阅当前快照，不重发聊天。unsubscribe 取消 reader、请求、首快照超时与重试 timer；dispose 后迟到的 fetch body 关闭，不再通知或连接。
+
+自动测试覆盖 EOF、网络/HTTP/read 异常、退避上限和重置、首快照超时、分块事件、无效事件、Host 实例变化与 dispose。真实 DSH Web 中受控结束首条 SSE、失败首条请求、关闭重连中的 Dock 均通过，重连后与新窗口状态一致；详见 [web-regression.md](web-regression.md)。本轮不添加心跳；已连接但长期没有 EOF/error 的静默链路不由此机制主动探测。
+
 ### 数据流
 
 ```

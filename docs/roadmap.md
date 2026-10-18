@@ -33,7 +33,7 @@
 - Phase 22 — Handoff to current DSH Composer
 - Phase 23 — Task Brief
 - Phase 24 — UI Polish
-- Phase 25 — Regression / Release
+- Phase 25 — Regression / Release（Web 最小版矩阵和 SSE 断流恢复复验已完成；候选待 Review 与发布准备，完整范围仍待后续功能完成）
 
 ## v0.1 明确不做
 
@@ -55,8 +55,8 @@
 
 当前：**Phase 20 Browser Recovery 已完成（20A + 20B1 + 20B2）**。20B1 的 IDB reader、三层 identity、原地 patch、30 s 共享 deadline 与单次前端刷新已完成，真机确认 commit→kill / mid-stream kill 的原地补全。20B2 的删除证据、标题刷新和恢复提示已完成；对不能确认的重定向保留 Host 消息并阻止发送。**Phase 18A 已完成；18B 历史图片恢复已实现并完成 reader 与 Client 界面复验（含图片加载失败后的文件名降级）**。后续依次为 21 Proxy、22 Handoff、23 Task Brief、24 UI Polish、25 Regression / Release。`parent_message_id=null` 的极快连续发送与树形/分支 IDB entry 保持 safe-fail，分别作为 anchor identity 与 history branch resolution 的独立后续任务；不回填 20B。
 
-P0 Release Hardening（Web 最小版本）：2026-10-17 已完成 tarball 内容检查、干净 profile 的安装与 Cordis patch 激活、已登录 profile 副本的文本发送 / 历史图片 / 文件名降级 / Chromium 故障恢复烟测，并加入 Prettier / Biome 工程检查门禁。安装步骤、验收边界和检查命令见 [release-hardening.md](release-hardening.md)。这项验证不改变 Phase 21–25 的功能范围；Phase 25 完整 Web 回归仍待执行。
+P0 Release Hardening（Web 最小版本）：2026-10-17 已完成 tarball 内容检查、干净 profile 的安装与 Cordis patch 激活、已登录 profile 副本的文本发送 / 历史图片 / 文件名降级 / Chromium 故障恢复烟测，并加入 Prettier / Biome 工程检查门禁。安装步骤、验收边界和检查命令见 [release-hardening.md](release-hardening.md)。此验证不改变 Phase 21–24 的功能范围；Web 最小版回归进展见下文，完整 Phase 25 在后续功能完成后继续验收。
 
-2026-10-19 Web 回归补充：发现“新发图片立即切换历史”时 DeepSeek SPA 仍保留页面临时 `blob:` 地址；已加入仅在此证据出现时的一次有预算前端刷新、签名图片复核与失败保留 Host 的路径。真实 DSH Web 测试轮次已复验 Host 附件和 Client 图片恢复。详情见 [release-hardening.md](release-hardening.md)。Phase 25 全量回归与正式发布批准仍待完成。
+2026-10-19 Web 回归补充：图片临时 `blob:` 历史恢复修复已提交为 `52cc69f`。Web 最小版验收覆盖干净安装、流式 Markdown、Deep Think、跨窗口 Stop、图片历史、Chromium 恢复与 dispose；浮窗窄屏 2px 溢出已修复。随后完成 **SSE P0 断流恢复**：EOF/error 自动退避重连，首个有效快照前禁用操作，消息与输入保留，dispose 清理；自动测试及两轮真实 DSH Web（含冷启动）复验通过，跨窗口旧快照分叉已闭环。**下一步：Review/提交候选，清理构建弃用配置，再进行预览版本与分发准备**。矩阵、边界和剩余项见 [web-regression.md](web-regression.md)。完整 Phase 25 与正式发布批准仍待完成。
 
 每次只完成一个 Phase，禁止顺手实现下一阶段。
