@@ -57,6 +57,6 @@
 
 P0 Release Hardening（Web 最小版本）：2026-10-17 已完成 tarball 内容检查、干净 profile 的安装与 Cordis patch 激活、已登录 profile 副本的文本发送 / 历史图片 / 文件名降级 / Chromium 故障恢复烟测，并加入 Prettier / Biome 工程检查门禁。安装步骤、验收边界和检查命令见 [release-hardening.md](release-hardening.md)。此验证不改变 Phase 21–24 的功能范围；Web 最小版回归进展见下文，完整 Phase 25 在后续功能完成后继续验收。
 
-2026-10-19 Web 回归补充：图片临时 `blob:` 历史恢复修复已提交为 `52cc69f`。Web 最小版验收覆盖干净安装、流式 Markdown、Deep Think、跨窗口 Stop、图片历史、Chromium 恢复与 dispose；浮窗窄屏 2px 溢出已修复。随后完成 **SSE P0 断流恢复**：EOF/error 自动退避重连，首个有效快照前禁用操作，消息与输入保留，dispose 清理；自动测试及两轮真实 DSH Web（含冷启动）复验通过，跨窗口旧快照分叉已闭环。**下一步：Review/提交候选，清理构建弃用配置，再进行预览版本与分发准备**。矩阵、边界和剩余项见 [web-regression.md](web-regression.md)。完整 Phase 25 与正式发布批准仍待完成。
+2026-10-19 Web 回归补充：图片临时 `blob:` 历史恢复修复已提交为 `52cc69f`。Web 最小版验收覆盖干净安装、流式 Markdown、Deep Think、跨窗口 Stop、图片历史、Chromium 恢复与 dispose；浮窗窄屏 2px 溢出已修复。随后完成 **SSE P0 断流恢复**：EOF/error 自动退避重连，首个有效快照前禁用操作，消息与输入保留，dispose 清理；自动测试及两轮真实 DSH Web（含冷启动）复验通过，跨窗口旧快照分叉已闭环。上述修复与验收文档已审核并提交为 `a178b8c`。后续 Host 构建配置已迁移为 `deps.neverBundle`，弃用警告消失，四个产物 SHA-256 不变，tarball 8 文件与 Playwright 外部依赖验证通过；此迁移待 Review。**下一步：审核并提交配置迁移，再进行预览版本与分发准备**。矩阵、边界和剩余项见 [web-regression.md](web-regression.md)，构建验证见 [release-hardening.md](release-hardening.md)。完整 Phase 25 与正式发布批准仍待完成。
 
 每次只完成一个 Phase，禁止顺手实现下一阶段。

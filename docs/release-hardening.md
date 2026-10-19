@@ -41,7 +41,15 @@
 
 ## 当前发布状态
 
-Web 最小版验收矩阵已执行，包含干净安装、流式 Markdown、reasoning、跨窗口 Stop、浮窗窄屏、图片历史、失败降级、Chromium 恢复和 dispose。浮窗 2px 溢出已修复。随后已完成 **SSE 断流恢复 P0**：重连前保留消息与输入并禁用操作，新快照恢复后 Dock 与独立窗口重新一致；EOF、请求失败与 dispose 的两轮真实 Web 复验通过，无聊天自动重发。候选仍待 Review、提交与发布准备。实测结果和剩余项见 [web-regression.md](web-regression.md)。
+Web 最小版验收矩阵已执行，包含干净安装、流式 Markdown、reasoning、跨窗口 Stop、浮窗窄屏、图片历史、失败降级、Chromium 恢复和 dispose。浮窗 2px 溢出已修复。随后已完成 **SSE 断流恢复 P0**：重连前保留消息与输入并禁用操作，新快照恢复后 Dock 与独立窗口重新一致；EOF、请求失败与 dispose 的两轮真实 Web 复验通过，无聊天自动重发。上述代码与验收文档已审核并提交为 `a178b8c`。后续构建配置迁移待 Review，预览版本与分发准备尚未完成。实测结果和剩余项见 [web-regression.md](web-regression.md)。
+
+## 2026-10-19 构建配置迁移
+
+Host 的 `tsdown.config.ts` 将已弃用的 `external: ['playwright']` 替换为 `deps.neverBundle: ['playwright']`。依据当前安装的 tsdown `0.23.0` 实现，旧字段原本就被转换为 `neverBundle`；本轮不升级依赖或修改客户端构建方式。
+
+迁移前后四个产物（Host/Client JS 与类型声明）的 SHA-256 完全一致，构建不再出现 `external` 弃用警告。`pnpm pack --dry-run --json` 与实际 tarball 检查通过：仍只有预期的 8 个文件；包内产物与本地构建一致，Host 保留 `playwright` 外部导入，运行依赖仍锁定为 `1.62.0`，Client 保持 Web ModuleLoader 包装。Host 可导入且导出 `apply/name/inject`，两个 JS 文件均通过语法检查；未在 Node 中执行仅供浏览器使用的 Client。完整格式、lint、类型检查、构建与 654 项测试通过。
+
+本轮以产物字节一致和包边界检查验证配置迁移，没有重跑真实 Web 矩阵；运行时证据仍以此前验收为准。临时检查最初误断言 Host 应有默认导出，核对源码后改为校验实际命名导出，未因此修改产品代码。
 
 ## 范围边界
 

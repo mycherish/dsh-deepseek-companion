@@ -11,5 +11,7 @@ export default defineConfig({
   fixedExtension: false,
   // Playwright is a large native dependency; keep it external so the Host
   // bundle stays small and resolves it from the profile's node_modules.
-  external: ['playwright'],
+  deps: {
+    neverBundle: ['playwright'],
+  },
 })

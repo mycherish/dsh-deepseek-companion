@@ -1,6 +1,6 @@
 # Web 最小版回归（2026-10-19）
 
-结论：已实现能力的本轮 Web 回归已执行。初次发现的 SSE 断流不重连问题已修复，并完成自动测试及两轮真实 Web 复验；窄屏浮窗的 2px 溢出也已完成 RED → GREEN。当前候选等待 Review 和发布准备，**本记录不是正式发布批准**。
+结论：已实现能力的本轮 Web 回归已执行。初次发现的 SSE 断流不重连问题已修复，并完成自动测试及两轮真实 Web 复验；窄屏浮窗的 2px 溢出也已完成 RED → GREEN。代码与验收记录已审核并提交为 `a178b8c`；后续构建配置迁移待 Review，预览版本与分发准备尚未完成。**本记录不是正式发布批准**。
 
 ## 环境与范围
 
@@ -67,8 +67,7 @@
 
 ## 发布前剩余项
 
-- 审核并提交既有浮窗修复、本轮 SSE 修复和验收文档；当前尚未打正式发布节点。
-- 清理现有 `tsdown` 的 `external` 弃用配置警告，并复核 tarball 仍将 Playwright 保持为外部依赖。
+- 审核并提交后续构建配置迁移：`external` 已替换为 `deps.neverBundle`，四个产物 SHA-256 不变、tarball 8 文件和 Playwright 外部依赖检查通过；完整记录见 [release-hardening.md](release-hardening.md)。当前尚未打正式发布节点。
 - 选择预览版本号、补充 changelog、固定目标 DSH 版本和分发方式；tag、push、发布须另行明确批准。
 - 搜索引用的实时成功分支、外部草稿安全路径、active-stream crash、session-deleted 等本轮未全部重跑；既有证据见 architecture，不能将其算成本轮真机结果。
 
