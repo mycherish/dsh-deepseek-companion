@@ -1,11 +1,12 @@
 {
   "name": "dsh-deepseek-companion",
-  "version": "0.0.1",
+  "version": "0.1.0-preview.1",
   "description": "DeepSeek Web Companion plugin for DeepSeek Harness (DSH)",
   "type": "module",
   "license": "MIT",
   "engines": {
-    "node": ">=22"
+    "node": ">=22",
+    "dsh": "0.1.5-rc.2"
   },
   "packageManager": "pnpm@10.26.0",
   "main": "lib/index.js",
@@ -27,7 +28,8 @@
     "lib/index.d.ts",
     "lib/client.js",
     "lib/client.d.ts",
-    "cordis.patch.yml"
+    "cordis.patch.yml",
+    "CHANGELOG.md"
   ],
   "dsh": {
     "bundle": {
@@ -41,8 +43,8 @@
     }
   },
   "scripts": {
-    "format": "prettier --write \"src/**/*.{ts,tsx}\" \"tests/**/*.ts\" \"*.{ts,json}\" \"docs/**/*.md\" README.md AGENTS.md",
-    "format:check": "prettier --check \"src/**/*.{ts,tsx}\" \"tests/**/*.ts\" \"*.{ts,json}\" \"docs/**/*.md\" README.md AGENTS.md",
+    "format": "prettier --write \"src/**/*.{ts,tsx}\" \"tests/**/*.ts\" \"*.{ts,json}\" \"docs/**/*.md\" README.md CHANGELOG.md AGENTS.md",
+    "format:check": "prettier --check \"src/**/*.{ts,tsx}\" \"tests/**/*.ts\" \"*.{ts,json}\" \"docs/**/*.md\" README.md CHANGELOG.md AGENTS.md",
     "lint": "biome lint src tests --error-on-warnings",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "build": "tsdown && tsdown --config tsdown.client.config.ts",

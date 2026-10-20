@@ -52,6 +52,7 @@ React Client 只负责渲染，**不得**成为聊天状态的唯一 Owner。
 ### 兼容性策略
 
 - 当前首要兼容目标：DSH 0.1.5-rc.2。
+- `0.1.0-preview.1` 候选将 `engines.dsh` 精确限定为该版本。2026-10-19 已核对官方新版 Session 列表结构及 Desktop 窗口策略：当前构建不能直接宣称兼容新版 Web 或官方 Desktop，差异与独立适配任务见 [release-preview.md](release-preview.md)。
 - 后续兼容其他版本时优先做 capability detection。
 - 版本敏感 API 优先 `ctx.inject` / capability detection / type guard / runtime feature detection。
 - 不假定所有 DSH 版本 API 一致。

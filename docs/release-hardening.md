@@ -4,7 +4,7 @@
 
 ## 安装路径
 
-1. `pnpm build` 后用 `pnpm pack` 生成 `dsh-deepseek-companion-0.0.1.tgz`。
+1. 初始验收在 `pnpm build` 后用 `pnpm pack` 生成 `dsh-deepseek-companion-0.0.1.tgz`；当前预览候选安装说明见 [README](../README.md#web-插件安装预览)。
 2. 在从 DSH 官方 Web 模板新建的临时 profile 中，使用 `pnpm add <tarball>` 安装。仅安装包时插件不会进入 Cordis 树。
 3. 应用包内 `cordis.patch.yml` 后启动 DSH Web，插件加载成功。将其中的 `insert` 项合并进临时 profile 的 `cordis.patch.yml` 后，不传命令行 `--patch` 再次启动也加载成功。安装命令见 [README](../README.md#web-插件安装预览)。
 
@@ -41,7 +41,7 @@
 
 ## 当前发布状态
 
-Web 最小版验收矩阵已执行，包含干净安装、流式 Markdown、reasoning、跨窗口 Stop、浮窗窄屏、图片历史、失败降级、Chromium 恢复和 dispose。浮窗 2px 溢出已修复。随后已完成 **SSE 断流恢复 P0**：重连前保留消息与输入并禁用操作，新快照恢复后 Dock 与独立窗口重新一致；EOF、请求失败与 dispose 的两轮真实 Web 复验通过，无聊天自动重发。上述代码与验收文档已审核并提交为 `a178b8c`。后续构建配置迁移待 Review，预览版本与分发准备尚未完成。实测结果和剩余项见 [web-regression.md](web-regression.md)。
+Web 最小版验收矩阵已执行，包含干净安装、流式 Markdown、reasoning、跨窗口 Stop、浮窗窄屏、图片历史、失败降级、Chromium 恢复和 dispose。浮窗 2px 溢出已修复。随后已完成 **SSE 断流恢复 P0**：重连前保留消息与输入并禁用操作，新快照恢复后 Dock 与独立窗口重新一致；EOF、请求失败与 dispose 的两轮真实 Web 复验通过，无聊天自动重发。上述代码与验收文档已审核并提交为 `a178b8c`；构建配置迁移已提交为 `702fe16`。当前 `0.1.0-preview.1` 元数据、Changelog 与预览说明待 Review，尚未发布。实测结果和剩余项见 [web-regression.md](web-regression.md) 与 [release-preview.md](release-preview.md)。
 
 ## 2026-10-19 构建配置迁移
 
@@ -49,7 +49,13 @@ Host 的 `tsdown.config.ts` 将已弃用的 `external: ['playwright']` 替换为
 
 迁移前后四个产物（Host/Client JS 与类型声明）的 SHA-256 完全一致，构建不再出现 `external` 弃用警告。`pnpm pack --dry-run --json` 与实际 tarball 检查通过：仍只有预期的 8 个文件；包内产物与本地构建一致，Host 保留 `playwright` 外部导入，运行依赖仍锁定为 `1.62.0`，Client 保持 Web ModuleLoader 包装。Host 可导入且导出 `apply/name/inject`，两个 JS 文件均通过语法检查；未在 Node 中执行仅供浏览器使用的 Client。完整格式、lint、类型检查、构建与 654 项测试通过。
 
-本轮以产物字节一致和包边界检查验证配置迁移，没有重跑真实 Web 矩阵；运行时证据仍以此前验收为准。临时检查最初误断言 Host 应有默认导出，核对源码后改为校验实际命名导出，未因此修改产品代码。
+本轮以产物字节一致和包边界检查验证配置迁移，没有重跑真实 Web 矩阵；运行时证据仍以此前验收为准。临时检查最初误断言 Host 应有默认导出，核对源码后改为校验实际命名导出，未因此修改产品代码。迁移与记录已审核并提交为 `702fe16`。
+
+## 2026-10-19 预览版本准备
+
+已准备 `0.1.0-preview.1` 元数据与 Changelog，支持基线明确限定为 DSH Web `0.1.5-rc.2`，分发方式为人工安装本地 tarball。新增 Changelog 后预期包内容为 9 个文件；此前配置迁移的 8 文件检查是旧候选的历史结果。安装、回退、功能矩阵、官方最新版核查和完整剩余工作统一见 [release-preview.md](release-preview.md)。本轮不升级运行依赖、不改变聊天实现，不执行发布操作。
+
+预览候选已在全新临时 DSH_HOME 中完成安装、正常首次引导（Continue → Configure later，无需填写模型密钥）、打开 Companion 未登录界面、卸载及基础 Web 重启复验；Host 为 `login_required / logged_out`，消息 0、页面错误 0，退出后隔离 Chromium 主进程 0。完整检查与 654 项测试通过；最终文案和元数据归档检查通过。本轮不包含已登录聊天矩阵的重跑，仍待 Review 与发布批准。
 
 ## 范围边界
 

@@ -2,7 +2,7 @@
 
 DeepSeek Web Companion plugin for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (DSH)。
 
-> 当前状态：Developer Preview / Early Development
+> 当前候选：`0.1.0-preview.1`（待 Review，未发布）。支持基线为 macOS 上的 DSH Web `0.1.5-rc.2`；尚不支持最新版 DSH Web 或官方 Desktop。版本核查、功能矩阵和完整剩余工作见 [预览版本说明](docs/release-preview.md)。
 
 ## 目标
 
@@ -25,6 +25,8 @@ DeepSeek Web Companion plugin for [DeepSeek Harness](https://github.com/deepseek
 
 > 尚未实现：文件（文档）附件、代理、Task Brief 等；18B Client 已完成 Web 界面复验 —— 详见路线图。
 
+已完成 **Web P0 Release Hardening** 的工程门禁、安装烟测与最小版回归，以及浮窗窄屏修复、SSE 断流退避重连和 dispose 清理。断流期间保留消息与输入，收到有效新快照后恢复操作；不自动重发聊天。已完成部分的证据见 [验收记录](docs/release-hardening.md)，预览发布准备与剩余验收见 [预览版本说明](docs/release-preview.md)。
+
 ## 开发
 
 ```sh
@@ -38,18 +40,22 @@ pnpm test
 
 ## Web 插件安装预览
 
-当前只支持 DSH Web。先在本仓库构建并打包，再把 tarball 安装到要运行的 DSH profile：
+当前仅支持上文指定的 Web 基线，`engines.dsh` 声明为精确版本 `0.1.5-rc.2`。新版 DSH 的兼容性检查会拒绝超出该声明的运行时；不要通过版本豁免绕过本预览的支持边界。先确认 `dsh --version` 为 `0.1.5-rc.2`，在本仓库安装依赖和匹配 Chromium，再构建并打包：
 
 ```sh
+pnpm install --frozen-lockfile
+pnpm exec playwright install chromium
 pnpm build
-pnpm pack
-PACKAGE_TGZ="$(pwd)/dsh-deepseek-companion-0.0.1.tgz"
+pnpm pack --pack-destination dist/release
+PACKAGE_TGZ="$(pwd)/dist/release/dsh-deepseek-companion-0.1.0-preview.1.tgz"
 cd "${DSH_HOME:-$HOME/.dsh}/profiles/web"
 pnpm add "$PACKAGE_TGZ"
 dsh --profile web --patch "${DSH_HOME:-$HOME/.dsh}/profiles/web/node_modules/dsh-deepseek-companion/cordis.patch.yml" --no-open
 ```
 
 `pnpm add` 只安装包；`--patch` 才把 Companion 插入 Cordis 插件树。若要每次启动都加载，可将包内 `cordis.patch.yml` 的 `insert` 项合并到该 profile 现有的 `cordis.patch.yml` 列表中，保留原有条目。首次使用新 profile 时，Companion 会显示 DeepSeek 登录入口。
+
+以上安装目录应已由 DSH 初始化。首次启动先点击官方测试提示的 **Continue**；模型配置可选择 **Configure later**，无需为使用 Companion 填写 DSH API Key。完成宿主向导后再打开 Companion 并登录 DeepSeek 网页。优先用隔离测试 profile 验收，并在停机后备份该 profile 的 manifest、lockfile 和 patch。跨机器安装时，需要在目标机器另行安装 Playwright `1.62.0` 对应的 Chromium。回退步骤和已知限制见 [预览版本说明](docs/release-preview.md)。
 
 打包安装与真实 Web 烟测记录见 [docs/release-hardening.md](docs/release-hardening.md)。
 
