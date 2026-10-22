@@ -51,7 +51,7 @@ React Client 只负责渲染，**不得**成为聊天状态的唯一 Owner。
 
 ### 兼容性策略
 
-- 当前 Web 候选 `0.1.0-preview.2` 的运行时范围为 `0.1.5-rc.2 || 0.2.1-rc.2`；六个 DSH 开发类型包固定至 `0.2.1-rc.2`，运行 Cordis peer 兼容旧版。安装、界面与 SSE 已在两个固定版本复验；新版已登录核心聊天、图片、SSE 与 Chromium 恢复矩阵已复验，会话删除等边界和升级/回退仍待验收，官方 Desktop 尚不支持。证据与边界见 [web-compatibility.md](web-compatibility.md)。
+- 当前 Web 候选 `0.1.0-preview.2` 的运行时范围为 `0.1.5-rc.2 || 0.2.1-rc.2`；六个 DSH 开发类型包固定至 `0.2.1-rc.2`，运行 Cordis peer 兼容旧版。安装、界面与 SSE 已在两个固定版本复验；新版已登录核心聊天、图片、SSE 与 Chromium 恢复矩阵已复验，插件升级/回退在共同宿主 `0.1.5-rc.2` 上已验收（不覆盖宿主迁移），会话删除等边界仍待验收，官方 Desktop 尚不支持。证据与边界见 [web-compatibility.md](web-compatibility.md)。
 - 后续兼容其他版本时优先做 capability detection。
 - 版本敏感 API 优先 `ctx.inject` / capability detection / type guard / runtime feature detection。
 - 不假定所有 DSH 版本 API 一致。

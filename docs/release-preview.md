@@ -1,6 +1,6 @@
 # Web 预览版本准备与兼容性核查
 
-> **2026-10-20 更新**：下面的 `preview.1` 调查与验收作为历史记录保留，已提交为 `a4b589c`。当前候选为 `0.1.0-preview.2`，适配 Web `0.2.1-rc.2` 并保留 `0.1.5-rc.2`；今天 npm latest 也已更新为 `0.2.1-rc.2`。用户随后授权测试 profile 副本，新版已登录核心矩阵也已通过；新旧 Web 验证与剩余矩阵缺口见 [web-compatibility.md](web-compatibility.md)。官方 Desktop 未纳入本轮。2026-10-22 兼容阶段审核收口，下一阶段优先验证升级/回退。尚未发布。
+> **2026-10-20 更新**：下面的 `preview.1` 调查与验收作为历史记录保留，已提交为 `a4b589c`。当前候选为 `0.1.0-preview.2`，适配 Web `0.2.1-rc.2` 并保留 `0.1.5-rc.2`；今天 npm latest 也已更新为 `0.2.1-rc.2`。用户随后授权测试 profile 副本，新版已登录核心矩阵也已通过；新旧 Web 验证与剩余矩阵缺口见 [web-compatibility.md](web-compatibility.md)。官方 Desktop 未纳入本轮。2026-10-22 兼容阶段已提交为 `8c24a4c`，随后在共同宿主 `0.1.5-rc.2` 上完成插件升级/回退验收，见 [upgrade-rollback.md](upgrade-rollback.md)。尚未发布。
 
 核查日期：2026-10-19。候选：`0.1.0-preview.1`。本轮范围为发布元数据、Changelog、安装/回退说明、功能与兼容性盘点；不实现新版 DSH 或 Desktop 适配。当前是待 Review 的本地候选，不是发布批准。
 
@@ -24,6 +24,8 @@
 跨机器接收 tarball 时，在目标机器运行 `npx playwright@1.62.0 install chromium` 安装匹配浏览器；仓库内可使用已锁定依赖的 `pnpm exec playwright install chromium`。安装到目标 profile 后应用包内 patch，启动并验证插件注入、登录入口、文本发送、Stop、历史、图片失败降级和退出清理。
 
 ### 回退
+
+preview.1 仅声明支持 Web `0.1.5-rc.2`；回退旧插件前必须满足该宿主约束。已验收的是同一旧宿主中的插件包替换，未验收 DSH 宿主降级或跨版本数据迁移。
 
 1. 停止测试 DSH，保留原 profile、浏览器目录和安装前备份。
 2. 若回到旧插件，重新安装保存的旧 tarball，再用原来的 patch 启动；本轮没有修改 Host API 或浏览器数据格式。
@@ -90,13 +92,15 @@
 - [x] 准备预览版本号、精确支持基线、Changelog、本地分发与回退说明。
 - [x] Review 并提交 preview.1 预览准备：`a4b589c`；候选元数据变更不等于已发布。
 - [x] 同版本预览候选在全新目标 profile 上完成安装、正常首次引导、未登录界面与卸载重启复验；最终归档完成内容检查。
-- [ ] Review 后冻结候选；针对已有用户 profile 的旧版本升级/回退仍需选定发布承诺并验证。
+- [x] 官方 Web 模板加 Companion 的既有安装场景完成 preview.1 → preview.2 → preview.1 升级/回退（共同宿主 `0.1.5-rc.2`）；不外推复杂自定义 profile 或宿主迁移。
+- [x] Review 升级/回退验收文档并以一个原子文档提交保存。
+- [ ] 补齐承诺场景后冻结候选。
 - [ ] 确定发布承诺：Search 可点击来源、外部图片草稿安全路径、active-stream crash、session-deleted 等本轮未全部重跑；对承诺覆盖的场景补做目标版本真机验证，并更新矩阵。
 - [ ] 用户批准后创建版本节点、push、上传 tarball/正式发布；这些动作未在本轮执行。
 
 ### P1：当前优先的兼容性工作
 
-1. 新版 Web 适配已完成候选实现：公开主视图识别、旧版能力检测、新旧安装/UI/Fetch/SSE 与新版真实 rightbar 已验证；范围固定 `0.1.5-rc.2` / `0.2.1-rc.2`，不声明支持 `0.2.0-rc.2`。用户授权后新版已登录核心聊天/图片/恢复矩阵已通过；Review 后优先验证升级/回退及会话删除等未覆盖边界，见 [web-compatibility.md](web-compatibility.md)。
+1. 新版 Web 适配已完成候选实现：公开主视图识别、旧版能力检测、新旧安装/UI/Fetch/SSE 与新版真实 rightbar 已验证；范围固定 `0.1.5-rc.2` / `0.2.1-rc.2`，不声明支持 `0.2.0-rc.2`。用户授权后新版已登录核心聊天/图片/恢复矩阵已通过；共同宿主中的插件升级/回退也已通过；下一步补会话删除等未覆盖边界，见 [web-compatibility.md](web-compatibility.md)。
 2. 官方 Desktop 最小验证：先确定 Pop-out 的公开降级方案，再在隔离 Desktop profile 中测试 Dock/Float、登录、聊天、SSE、图片、Chromium 与应用退出清理；不读取或复用 DSH token，不先承诺原生独立窗口。
 3. 每次 DSH/DeepSeek 网页更新后的兼容回归与支持矩阵维护；Windows/Linux 需要各自验收后才纳入支持范围。
 

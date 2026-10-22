@@ -2,7 +2,7 @@
 
 DeepSeek Web Companion plugin for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (DSH)。
 
-> 当前候选：`0.1.0-preview.2`（兼容改动已审核，未发布）。macOS 上已验证 DSH Web `0.1.5-rc.2` 与 `0.2.1-rc.2` 的安装、界面与 SSE；新版已登录文本、Deep Think/Search、跨窗口 Stop、图片历史、SSE 和 Chromium 恢复核心矩阵已通过；会话删除等边界及升级/回退仍待验收，官方 Desktop 未支持。范围与证据见 [新版 Web 兼容记录](docs/web-compatibility.md)，功能和剩余工作见 [预览版本说明](docs/release-preview.md)。
+> 当前候选：`0.1.0-preview.2`（兼容改动已审核，未发布）。macOS 上已验证 DSH Web `0.1.5-rc.2` 与 `0.2.1-rc.2` 的安装、界面与 SSE；新版已登录文本、Deep Think/Search、跨窗口 Stop、图片历史、SSE 和 Chromium 恢复核心矩阵已通过；插件升级/回退已在共同宿主 `0.1.5-rc.2` 验收，会话删除等边界仍待验收，官方 Desktop 未支持。范围与证据见 [新版 Web 兼容记录](docs/web-compatibility.md)，功能和剩余工作见 [预览版本说明](docs/release-preview.md)。
 
 ## 目标
 
@@ -55,7 +55,7 @@ dsh --profile web --patch "${DSH_HOME:-$HOME/.dsh}/profiles/web/node_modules/dsh
 
 `pnpm add` 只安装包；`--patch` 才把 Companion 插入 Cordis 插件树。若要每次启动都加载，可将包内 `cordis.patch.yml` 的 `insert` 项合并到该 profile 现有的 `cordis.patch.yml` 列表中，保留原有条目。首次使用新 profile 时，Companion 会显示 DeepSeek 登录入口。
 
-以上安装目录应已由 DSH 初始化。`0.1.5-rc.2` 首次启动先点击官方测试提示的 **Continue**；模型配置可选择 **Configure later**。`0.2.1-rc.2` 的 **Get started** 弹窗可用右上角关闭按钮或 Escape 关闭。无需为使用 Companion 填写 DSH API Key。完成宿主向导后再打开 Companion 并登录 DeepSeek 网页。优先用隔离测试 profile 验收，并在停机后备份该 profile 的 manifest、lockfile 和 patch。跨机器安装时，需要在目标机器另行安装 Playwright `1.62.0` 对应的 Chromium。回退步骤和已知限制见 [预览版本说明](docs/release-preview.md)。
+以上安装目录应已由 DSH 初始化。`0.1.5-rc.2` 首次启动先点击官方测试提示的 **Continue**；模型配置可选择 **Configure later**。`0.2.1-rc.2` 的 **Get started** 弹窗可用右上角关闭按钮或 Escape 关闭。无需为使用 Companion 填写 DSH API Key。完成宿主向导后再打开 Companion 并登录 DeepSeek 网页。优先用隔离测试 profile 验收，并在停机后备份该 profile 的 manifest、lockfile 和 patch。跨机器安装时，需要在目标机器另行安装 Playwright `1.62.0` 对应的 Chromium。回退到 preview.1 时宿主须为 `0.1.5-rc.2`；本轮不覆盖 DSH 宿主本身的升级/降级。步骤和已知限制见 [升级/回退验收](docs/upgrade-rollback.md) 与 [预览版本说明](docs/release-preview.md)。
 
 打包安装与真实 Web 烟测记录见 [docs/release-hardening.md](docs/release-hardening.md)。
 

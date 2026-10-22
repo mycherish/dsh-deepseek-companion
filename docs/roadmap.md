@@ -67,4 +67,6 @@ P0 Release Hardening（Web 最小版本）：2026-10-17 已完成 tarball 内容
 
 2026-10-22 审核收口：preview.2 的公开 Session 兼容实现、13 项 Client/Controller 回归及验收文档通过审核，完整工程门禁与 667 项自动测试重新通过，本阶段以一个原子提交保存。未重跑已登录真机矩阵、不扩大版本承诺，未执行 tag/push/发布。**下一阶段优先做 preview.1 → preview.2 升级/回退验收**；其余边界和候选冻结要求继续见 [web-compatibility.md](web-compatibility.md)。
 
+2026-10-22 升级/回退验收：固定共同宿主 Web `0.1.5-rc.2`，同一隔离 profile 完成 preview.1 → preview.2 → preview.1。三阶段保持登录，新旧标记历史按服务端 ID 和内容摘要恢复，聊天、Dock/Float/Pop-out、SSE 保留消息与草稿、退出清理全部通过；pageerror/console error 均为 0。无产品代码修改，验收文档已审核，完整工程门禁与 667 项测试重新通过，本阶段以一个原子文档提交保存。该结果不覆盖 DSH 宿主升级/降级，也不允许在新版宿主强跑 preview.1。**下一步：确定最小版发布承诺并补会话删除、图片/外部草稿等剩余边界，随后冻结候选。** 详见 [upgrade-rollback.md](upgrade-rollback.md)。
+
 每次只完成一个 Phase，禁止顺手实现下一阶段。
