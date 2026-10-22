@@ -1,5 +1,7 @@
 # 新版 DSH Web 兼容候选
 
+> **2026-10-22 执行入口**：后续按 [首版执行计划](first-release.md) 推进。本文是兼容事实与真机证据记录；历史“下一步”以首版 FR 阶段顺序为准。
+
 日期：2026-10-20。候选：`0.1.0-preview.2`，兼容改动已审核、未发布。上轮 preview.1 准备已提交为 `a4b589c`。本轮仅适配公开 Session 结构和验证 Web，不实现 Desktop、Proxy 或其它后续 Phase。
 
 ## 固定版本与实现
@@ -105,23 +107,24 @@ Stop 原计划的 2000 行长回复被自动审批认为成本过高而拒绝；
 
 兼容阶段已提交为 `8c24a4c`。随后固定共同宿主 Web `0.1.5-rc.2`，在同一隔离 profile 中完成 preview.1 → preview.2 → preview.1；登录、旧历史身份/内容、新聊天、窗口、SSE 和退出清理均通过，没有产品代码变更。详细结果与边界见 [upgrade-rollback.md](upgrade-rollback.md)。本补充不覆盖宿主版本迁移；上文历史验收中的“未覆盖升级/回退”以本节更新为准。
 
-## 接下来全部工作
+## 首版剩余验收的归属
 
-### 发布前优先
+兼容候选已提交为 `8c24a4c`，升级 / 回退记录已提交为 `cc3c01f`，不把提交当作发布批准。以下缺口交给 [first-release.md](first-release.md) 的相应阶段，不另起一套执行顺序：
 
-1. 兼容候选审核提交已完成（`8c24a4c`）；插件升级/回退及其文档审核也已完成，本阶段以原子文档提交保存，不把它当作发布批准。
-2. 新版已登录核心矩阵已完成；根据发布承诺补 session-deleted、纯图片/外部草稿与未覆盖的页面级故障分类，继续标明 Search 结构化引用的验证边界。
-3. 插件升级/回退已覆盖官方模板加 Companion 的共同宿主 `0.1.5-rc.2`；复杂自定义 profile 与 DSH 宿主迁移未验收，需要承诺时独立验证。
-4. 根据真实矩阵冻结支持承诺与候选；Search 可点击来源、外部图片草稿安全路径未补齐的场景继续标明降级或未验证。
-5. 获得明确批准后再创建版本节点、push、上传或发布；当前没有执行。
+- FR-1：本地 tarball / 手工 patch 验收衔接官方 bundle 安装与 Chromium 前置；准备真实市场元数据及索引草案。
+- FR-2：补新版 session-deleted、纯图片 / 外部草稿与页面级故障分类，处理恢复后旧错误提示，继续标明 Search 来源的验证边界。
+- FR-3：三窗口主题 / 字体、键盘、状态与轻动效的真实 UI 验收。
+- FR-4 / FR-5：最终产物、固定版本承诺、代码审核、发布批准和真实市场安装闭环。
 
-### 单独安排
+插件升级 / 回退只覆盖官方模板加 Companion 的共同宿主 `0.1.5-rc.2`；复杂自定义 profile 与 DSH 宿主迁移未验收，后续若承诺须独立验证。已有证据按变更影响复用，不能用旧包的结果替代最终包受影响的场景。
+
+### 首版之外
 
 - 官方 Desktop：先决定 Pop-out 公开能力降级，再验证独立 Desktop profile 安装、Dock/Float、协议/Fetch/SSE、登录、聊天、图片和退出清理；不能因 Web 通过便推断 Desktop 兼容。
 - Windows/Linux 和后续 DSH/DeepSeek 网页更新：逐个维护真实支持矩阵。
-- Phase 21 Proxy → Phase 22 Handoff（公开 Composer 接口、保留草稿）→ Phase 23 Task Brief → Phase 24 UI Polish → Phase 25 新增功能完整回归/Release，各自独立实施。
+- Phase 21 Proxy、22 Handoff（公开 Composer 接口、保留草稿）、23 Task Brief 独立评估；首版必要 UI 与发布回归已纳入 FR-3 / FR-4。
 - Anchor identity（极快连续发送时 parent=null）与树形 history branch resolution：分别设计，当前保持 safe-fail。
 - 静默半开 SSE 探测、Host 消息持久化、文档附件：按需求另立任务。
 - 网页 Provider、Gateway、伪 Function Calling、Agent webchat tools、多账号、浏览器池和自动重发仍不在当前计划。
 
-升级/回退验收文档审核提交后，本阶段结束；剩余发布边界另行验收，不继续实现下一项。
+本记录不修改历史测试结果，也不代表 Desktop 或公开市场已验收；各 FR 阶段完成后在对应章节补充新证据。

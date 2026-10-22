@@ -1,5 +1,7 @@
 # Web 预览版本准备与兼容性核查
 
+> **2026-10-22 计划更新**：首版剩余工作统一按 [first-release.md](first-release.md) 执行：市场与安装 → 功能缺口 / 缺陷 → DSH 风格 UI / 轻动效 → RC 验收 → 发布与市场实装。本文保留预览候选事实与历史核查，不再以 Phase 21–25 的旧顺序要求首版补齐新功能。
+
 > **2026-10-20 更新**：下面的 `preview.1` 调查与验收作为历史记录保留，已提交为 `a4b589c`。当前候选为 `0.1.0-preview.2`，适配 Web `0.2.1-rc.2` 并保留 `0.1.5-rc.2`；今天 npm latest 也已更新为 `0.2.1-rc.2`。用户随后授权测试 profile 副本，新版已登录核心矩阵也已通过；新旧 Web 验证与剩余矩阵缺口见 [web-compatibility.md](web-compatibility.md)。官方 Desktop 未纳入本轮。2026-10-22 兼容阶段已提交为 `8c24a4c`，随后在共同宿主 `0.1.5-rc.2` 上完成插件升级/回退验收，见 [upgrade-rollback.md](upgrade-rollback.md)。尚未发布。
 
 核查日期：2026-10-19。候选：`0.1.0-preview.1`。本轮范围为发布元数据、Changelog、安装/回退说明、功能与兼容性盘点；不实现新版 DSH 或 Desktop 适配。当前是待 Review 的本地候选，不是发布批准。
@@ -83,9 +85,9 @@ preview.1 仅声明支持 Web `0.1.5-rc.2`；回退旧插件前必须满足该�
 - Browser plugin 不可用，使用项目已有 Playwright；已目视核对最终 Companion 未登录界面。早期脚本的启动判定、CLI 参数顺序和页面内异步轮询断言曾失败；最终以正常 UI 操作和浏览器会话的直接 HTTP 检查复验，不将脚本失败作为产品缺陷修复。本轮没有重跑已登录聊天/恢复的完整矩阵，也没有实测新版 DSH 或 Desktop。
 - 候选及 `.sha256` 校验文件位于 `dist/release/`，被 Git 忽略。最终归档只同步了本轮确认的首次引导文案，运行代码与安装 manifest 未改变。
 
-## 全部已知后续工作
+## 预览准备完成项与首版衔接
 
-### P0：关闭本次 Web 预览准备
+### 已完成的预览准备
 
 - [x] SSE/浮窗修复及验收记录审核提交：`a178b8c`。
 - [x] 构建弃用配置迁移审核提交：`702fe16`。
@@ -94,29 +96,25 @@ preview.1 仅声明支持 Web `0.1.5-rc.2`；回退旧插件前必须满足该�
 - [x] 同版本预览候选在全新目标 profile 上完成安装、正常首次引导、未登录界面与卸载重启复验；最终归档完成内容检查。
 - [x] 官方 Web 模板加 Companion 的既有安装场景完成 preview.1 → preview.2 → preview.1 升级/回退（共同宿主 `0.1.5-rc.2`）；不外推复杂自定义 profile 或宿主迁移。
 - [x] Review 升级/回退验收文档并以一个原子文档提交保存。
-- [ ] 补齐承诺场景后冻结候选。
-- [ ] 确定发布承诺：Search 可点击来源、外部图片草稿安全路径、active-stream crash、session-deleted 等本轮未全部重跑；对承诺覆盖的场景补做目标版本真机验证，并更新矩阵。
-- [ ] 用户批准后创建版本节点、push、上传 tarball/正式发布；这些动作未在本轮执行。
 
-### P1：当前优先的兼容性工作
+### 首版尚未完成
 
-1. 新版 Web 适配已完成候选实现：公开主视图识别、旧版能力检测、新旧安装/UI/Fetch/SSE 与新版真实 rightbar 已验证；范围固定 `0.1.5-rc.2` / `0.2.1-rc.2`，不声明支持 `0.2.0-rc.2`。用户授权后新版已登录核心聊天/图片/恢复矩阵已通过；共同宿主中的插件升级/回退也已通过；下一步补会话删除等未覆盖边界，见 [web-compatibility.md](web-compatibility.md)。
-2. 官方 Desktop 最小验证：先确定 Pop-out 的公开降级方案，再在隔离 Desktop profile 中测试 Dock/Float、登录、聊天、SSE、图片、Chromium 与应用退出清理；不读取或复用 DSH token，不先承诺原生独立窗口。
-3. 每次 DSH/DeepSeek 网页更新后的兼容回归与支持矩阵维护；Windows/Linux 需要各自验收后才纳入支持范围。
+1. FR-1：准备公开 npm 包与 HTTPS 市场索引，验证官方 bundle 安装、匹配 Chromium 前置和卸载；本地 tarball 验收不等于已上架。
+2. FR-2：补齐新版 session-deleted、纯图片 / 外部草稿 / 页面故障等边界，修复恢复成功后残留的旧请求错误；Search 只展示真实取得的来源。
+3. FR-3：完成三窗口的 DSH 风格 UI、主题 / 字体、键盘与轻动效收口。
+4. FR-4：冻结最终包、说明与支持矩阵，完成最终产物回归和审核。
+5. FR-5：取得明确发布批准后实际发布，完成 Discover 发现 / 安装与安装后烟测。
 
-### 后续功能路线图（独立 Phase）
+详细范围、完成条件和勾选进度只维护在 [首版执行计划](first-release.md)，本节不重复维护第二份任务状态。
 
-- Phase 21：Proxy 配置与浏览器启动/恢复链路的统一应用、测试及资源清理。
-- Phase 22：将内容 Handoff 到当前 DSH Composer，遵循公开接口并保留用户草稿。
-- Phase 23：Task Brief。
-- Phase 24：UI Polish。
-- Phase 25：上述新增功能完成后的完整 Regression / Release；当前最小版回归不提前代表这些功能已验收。
+### 发布后独立评估
 
-### 已知边界与独立候选事项
-
+- Phase 21 Proxy、22 Handoff、23 Task Brief；首版基础 UI / Regression 已提前纳入 FR-3 / FR-4，不等待这些新功能。
+- 官方 Desktop：先调查 Pop-out 的公开降级方案，再独立验证 profile 安装、登录、聊天、图片、SSE 与退出清理。
+- Windows/Linux、其它浏览器、DSH / DeepSeek 网页后续版本：逐项验收后扩大支持矩阵。
 - `parent_message_id=null` 的极快连续发送：anchor identity 独立设计与验证。
 - 树形/分支历史：history branch resolution 独立设计；当前继续 safe-fail。
 - 静默半开 SSE 的主动探测、Host 消息持久化、文档附件：按需求另立范围，不作为本轮已交付能力。
 - 当前计划明确不做：网页 LLM Provider、API Gateway、伪 Function Calling、Agent webchat tools、多账号、浏览器池和自动重发；这些不是发布前待补功能。
 
-各轮完成后按 `AGENTS.md` 停止等待 Review；后续兼容层的实现与验收以对应记录为准，不顺手实现 Phase 21。
+各轮按首版计划完成一个阶段，测试、审核并同步证据后等待 Review。

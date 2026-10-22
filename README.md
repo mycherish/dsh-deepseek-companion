@@ -4,6 +4,12 @@ DeepSeek Web Companion plugin for [DeepSeek Harness](https://github.com/deepseek
 
 > 当前候选：`0.1.0-preview.2`（兼容改动已审核，未发布）。macOS 上已验证 DSH Web `0.1.5-rc.2` 与 `0.2.1-rc.2` 的安装、界面与 SSE；新版已登录文本、Deep Think/Search、跨窗口 Stop、图片历史、SSE 和 Chromium 恢复核心矩阵已通过；插件升级/回退已在共同宿主 `0.1.5-rc.2` 验收，会话删除等边界仍待验收，官方 Desktop 未支持。范围与证据见 [新版 Web 兼容记录](docs/web-compatibility.md)，功能和剩余工作见 [预览版本说明](docs/release-preview.md)。
 
+## 首版发布路线
+
+当前目标是完成首个市场版本：**市场与安装准备 → 功能缺口与缺陷收口 → DSH 风格 UI 与轻动效 → RC 冻结验收 → 发布与市场实装**。Proxy、Handoff、Task Brief 和 Desktop 独立安排。后续工作统一按 [首版执行计划](docs/first-release.md) 推进，每次一个阶段，完成后测试、审核并更新证据。
+
+官方 DSH 的 Discover 需要启用 Custom plugin markets 并添加索引源；本插件尚未公开发布或完成市场安装验收。首版按公开 npm 包与可添加的 HTTPS 索引准备，具体发布路径与完成条件见计划。
+
 ## 目标
 
 在 DSH 中提供一个可停靠、可独立窗口打开的 DeepSeek 网页聊天工具（Companion），
