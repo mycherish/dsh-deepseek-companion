@@ -8,6 +8,7 @@ import { CompanionEntry } from './CompanionEntry.tsx'
 import { CompanionFloat } from './CompanionFloat.tsx'
 import { disposePopout, openPopout as openPopoutWindow } from './popout.ts'
 import { overlayStorage, readOverlayWidth, writeOverlayWidth } from './storage.ts'
+import { dockSurfaceForSessionList } from './session-surface.ts'
 
 /** Cordis services the browser plugin requires before `apply`. */
 export const inject = ['slots', 'layout', 'sessions']
@@ -45,18 +46,6 @@ export interface DockController {
   close(): void
 }
 
-/** Read the current session's blank flag through the official `ISessions.list` read face. */
-function currentSessionBlank(ctx: Context): boolean | null {
-  try {
-    const list = ctx.sessions.list.getSnapshot()
-    const current = list.current
-    if (current === undefined) return null
-    return list.byId[current]?.blank ?? null
-  } catch {
-    return null
-  }
-}
-
 function createDockController(ctx: Context): DockController {
   let open = false
   let surface: CompanionSurface | null = null
@@ -70,7 +59,13 @@ function createDockController(ctx: Context): DockController {
   }
 
   /** Docked surface for the current session: non-blank → rightbar, else overlay. */
-  const decideDockSurface = (): CompanionSurface => (currentSessionBlank(ctx) === false ? 'rightbar' : 'overlay')
+  const decideDockSurface = (): CompanionSurface => {
+    try {
+      return dockSurfaceForSessionList(ctx.sessions.list.getSnapshot())
+    } catch {
+      return 'overlay'
+    }
+  }
 
   const unmount = (): void => {
     if (disposer) {

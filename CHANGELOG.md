@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.0-preview.2 — 未发布候选（2026-10-20）
+
+- 适配 DSH Web `0.2.1-rc.2` 的公开 Session 列表结构，保留 `0.1.5-rc.2` 的 `current` 选择；新版通过唯一的 `retainedBy.mainView` 判断主视图，无有效证据时使用 overlay。
+- Dock 仍只在打开时选择一次 Surface；关闭后重新打开才重新判断，不读取 DSH 私有 UI 状态。
+- 六个 DSH 开发类型包升级并固定至 `0.2.1-rc.2`，开发 Cordis 更新至 `^4.0.5`，运行 peer 保留 `^4.0.2`；精确声明两个 Web 运行时版本。
+- 增加 13 个真实 Client 构建/Controller 回归场景，自动测试总计 667；完成新旧 Web 干净安装、Dock/Float/Pop-out、SSE EOF 重连，新版用官方本地 mock 验证非空 Session 的 rightbar。
+- 新版首次引导改为可关闭的 Get started 弹窗；用户授权测试 profile 副本后，新版已登录核心矩阵通过（文本/Markdown、Deep Think/Search、跨窗口 Stop、图片历史/失败降级、SSE、空闲及流式中 Chromium 恢复）。会话删除等边界和升级/回退仍待验收，官方 Desktop 未支持。验收边界见 `docs/web-compatibility.md`。
+
 ## 0.1.0-preview.1 — 未发布候选（2026-10-19）
 
 首个 Web 最小版预览候选，支持范围固定为 macOS、DSH Web `0.1.5-rc.2`、Node 22 与 Playwright `1.62.0` 的匹配 Chromium。该版本号不代表已发布或已通过最新版 DSH/官方 Desktop 验收。

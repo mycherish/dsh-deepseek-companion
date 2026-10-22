@@ -1,5 +1,7 @@
 # Web 预览版本准备与兼容性核查
 
+> **2026-10-20 更新**：下面的 `preview.1` 调查与验收作为历史记录保留，已提交为 `a4b589c`。当前候选为 `0.1.0-preview.2`，适配 Web `0.2.1-rc.2` 并保留 `0.1.5-rc.2`；今天 npm latest 也已更新为 `0.2.1-rc.2`。用户随后授权测试 profile 副本，新版已登录核心矩阵也已通过；新旧 Web 验证与剩余矩阵缺口见 [web-compatibility.md](web-compatibility.md)。官方 Desktop 未纳入本轮。2026-10-22 兼容阶段审核收口，下一阶段优先验证升级/回退。尚未发布。
+
 核查日期：2026-10-19。候选：`0.1.0-preview.1`。本轮范围为发布元数据、Changelog、安装/回退说明、功能与兼容性盘点；不实现新版 DSH 或 Desktop 适配。当前是待 Review 的本地候选，不是发布批准。
 
 ## 支持基线与分发
@@ -86,7 +88,7 @@
 - [x] SSE/浮窗修复及验收记录审核提交：`a178b8c`。
 - [x] 构建弃用配置迁移审核提交：`702fe16`。
 - [x] 准备预览版本号、精确支持基线、Changelog、本地分发与回退说明。
-- [ ] Review 并提交本轮预览准备；候选元数据变更不等于已发布。
+- [x] Review 并提交 preview.1 预览准备：`a4b589c`；候选元数据变更不等于已发布。
 - [x] 同版本预览候选在全新目标 profile 上完成安装、正常首次引导、未登录界面与卸载重启复验；最终归档完成内容检查。
 - [ ] Review 后冻结候选；针对已有用户 profile 的旧版本升级/回退仍需选定发布承诺并验证。
 - [ ] 确定发布承诺：Search 可点击来源、外部图片草稿安全路径、active-stream crash、session-deleted 等本轮未全部重跑；对承诺覆盖的场景补做目标版本真机验证，并更新矩阵。
@@ -94,7 +96,7 @@
 
 ### P1：当前优先的兼容性工作
 
-1. 新版 Web 适配：调查公开当前 Session 接口、保留旧版能力检测；用固定的 `0.2.0-rc.2` / `0.2.1-rc.2` 隔离环境验证注入、rightbar/overlay、Fetch/SSE、图片、恢复和 dispose，再扩大 `engines.dsh`。
+1. 新版 Web 适配已完成候选实现：公开主视图识别、旧版能力检测、新旧安装/UI/Fetch/SSE 与新版真实 rightbar 已验证；范围固定 `0.1.5-rc.2` / `0.2.1-rc.2`，不声明支持 `0.2.0-rc.2`。用户授权后新版已登录核心聊天/图片/恢复矩阵已通过；Review 后优先验证升级/回退及会话删除等未覆盖边界，见 [web-compatibility.md](web-compatibility.md)。
 2. 官方 Desktop 最小验证：先确定 Pop-out 的公开降级方案，再在隔离 Desktop profile 中测试 Dock/Float、登录、聊天、SSE、图片、Chromium 与应用退出清理；不读取或复用 DSH token，不先承诺原生独立窗口。
 3. 每次 DSH/DeepSeek 网页更新后的兼容回归与支持矩阵维护；Windows/Linux 需要各自验收后才纳入支持范围。
 
@@ -113,4 +115,4 @@
 - 静默半开 SSE 的主动探测、Host 消息持久化、文档附件：按需求另立范围，不作为本轮已交付能力。
 - 当前计划明确不做：网页 LLM Provider、API Gateway、伪 Function Calling、Agent webchat tools、多账号、浏览器池和自动重发；这些不是发布前待补功能。
 
-本轮完成后按 `AGENTS.md` 停止等待 Review，不继续实现 Phase 21 或上述兼容层。
+各轮完成后按 `AGENTS.md` 停止等待 Review；后续兼容层的实现与验收以对应记录为准，不顺手实现 Phase 21。

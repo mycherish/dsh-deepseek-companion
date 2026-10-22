@@ -33,7 +33,7 @@
 - Phase 22 — Handoff to current DSH Composer
 - Phase 23 — Task Brief
 - Phase 24 — UI Polish
-- Phase 25 — Regression / Release（Web 最小版矩阵和 SSE 断流恢复复验已完成；预览候选 0.1.0-preview.1 准备中，完整范围仍待后续功能完成）
+- Phase 25 — Regression / Release（Web 最小版矩阵和 SSE 断流恢复复验已完成；预览候选 0.1.0-preview.2 兼容改动已审核，发布门禁待验收，完整范围仍待后续功能完成）
 
 ## v0.1 明确不做
 
@@ -60,5 +60,11 @@ P0 Release Hardening（Web 最小版本）：2026-10-17 已完成 tarball 内容
 2026-10-19 Web 回归补充：图片临时 `blob:` 历史恢复修复已提交为 `52cc69f`。Web 最小版验收覆盖干净安装、流式 Markdown、Deep Think、跨窗口 Stop、图片历史、Chromium 恢复与 dispose；浮窗窄屏 2px 溢出已修复。随后完成 **SSE P0 断流恢复**：EOF/error 自动退避重连，首个有效快照前禁用操作，消息与输入保留，dispose 清理；自动测试及两轮真实 DSH Web（含冷启动）复验通过，跨窗口旧快照分叉已闭环。上述修复与验收文档已审核并提交为 `a178b8c`。后续 Host 构建配置已迁移为 `deps.neverBundle`，弃用警告消失，四个产物 SHA-256 不变，tarball 8 文件与 Playwright 外部依赖验证通过；迁移已审核并提交为 `702fe16`。本轮已准备 `0.1.0-preview.1`、Changelog、精确 `engines.dsh` 和本地 tarball 分发/回退说明，待 Review。**下一步：冻结 Web 预览候选，并优先处理新版 Web 兼容，再决定官方 Desktop 适配**。矩阵、边界和剩余项见 [web-regression.md](web-regression.md)，构建验证见 [release-hardening.md](release-hardening.md)。完整 Phase 25 与正式发布批准仍待完成。
 
 2026-10-19 官方版本核查：GitHub 与官方 Desktop 生产 Nightly feed 为 `0.2.1-rc.2`，npm latest 为 `0.2.0-rc.2`；本插件仍只支持已验证的 Web `0.1.5-rc.2`。新版 Session 列表移除 `current`，Desktop 拒绝页面新窗口，需独立适配与实测。全部剩余工作（发布门禁、兼容性、Phase 21–25 和 safe-fail 独立事项）见 [release-preview.md](release-preview.md)。
+
+2026-10-20：preview.1 准备已审核并提交为 `a4b589c`。已完成 **新版 Web 兼容候选（preview.2）**：旧版 `current` / 新版唯一 `retainedBy.mainView` 能力检测、固定新版开发类型、13 项 Client/Controller 回归测试。新旧 Web 干净安装、Dock/Float/Pop-out、Fetch/SSE EOF 重连通过；新版非空 Session 使用官方本地 LLM mock 验证真实 rightbar。总计 667 项自动测试。此次未获准复制既有认证目录，未重跑新版已登录聊天、图片、恢复完整矩阵，不宣称 Desktop 已兼容。**下一步先 Review 本轮，再补新版已登录发布矩阵及升级/回退，之后决定 Desktop 独立验证；Proxy 仍是独立 Phase 21。** 详细范围与剩余工作见 [web-compatibility.md](web-compatibility.md)。
+
+授权后补充验收：在 `companion-test` 浏览器目录的隔离副本中，新版 Web 已通过文本流式 Markdown、Deep Think 折叠、Search、跨窗口 Stop、图片发送/公开会话切换/失败文件名降级、SSE 断流时草稿与消息保留、空闲和流式中 Chromium 恢复。空闲恢复约 4.2 s，首轮流式恢复约 22.5 s，消息 ID 保持，未发生自动重发；原测试 profile 未修改。此次没有新增产品代码。**下一步：Review 当前兼容候选，再验证 preview.1 → preview.2 升级/回退及会话删除等未覆盖边界，随后冻结发布范围；Desktop 和 Proxy 仍单独安排。** 详细证据见 [web-compatibility.md](web-compatibility.md)。
+
+2026-10-22 审核收口：preview.2 的公开 Session 兼容实现、13 项 Client/Controller 回归及验收文档通过审核，完整工程门禁与 667 项自动测试重新通过，本阶段以一个原子提交保存。未重跑已登录真机矩阵、不扩大版本承诺，未执行 tag/push/发布。**下一阶段优先做 preview.1 → preview.2 升级/回退验收**；其余边界和候选冻结要求继续见 [web-compatibility.md](web-compatibility.md)。
 
 每次只完成一个 Phase，禁止顺手实现下一阶段。

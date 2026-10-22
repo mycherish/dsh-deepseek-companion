@@ -51,8 +51,7 @@ React Client 只负责渲染，**不得**成为聊天状态的唯一 Owner。
 
 ### 兼容性策略
 
-- 当前首要兼容目标：DSH 0.1.5-rc.2。
-- `0.1.0-preview.1` 候选将 `engines.dsh` 精确限定为该版本。2026-10-19 已核对官方新版 Session 列表结构及 Desktop 窗口策略：当前构建不能直接宣称兼容新版 Web 或官方 Desktop，差异与独立适配任务见 [release-preview.md](release-preview.md)。
+- 当前 Web 候选 `0.1.0-preview.2` 的运行时范围为 `0.1.5-rc.2 || 0.2.1-rc.2`；六个 DSH 开发类型包固定至 `0.2.1-rc.2`，运行 Cordis peer 兼容旧版。安装、界面与 SSE 已在两个固定版本复验；新版已登录核心聊天、图片、SSE 与 Chromium 恢复矩阵已复验，会话删除等边界和升级/回退仍待验收，官方 Desktop 尚不支持。证据与边界见 [web-compatibility.md](web-compatibility.md)。
 - 后续兼容其他版本时优先做 capability detection。
 - 版本敏感 API 优先 `ctx.inject` / capability detection / type guard / runtime feature detection。
 - 不假定所有 DSH 版本 API 一致。
@@ -66,6 +65,10 @@ Companion Dock 在用户点击 sidebar 入口时打开。打开时根据当前 S
 | ----------------------------------------- | --------------- | -------------------- | ----------------------------------------------------------------------------------------- |
 | 非 blank（`blank === false`）             | `rightbar`      | 单槽、`root` scope   | conversation 真实缩窄，dock 在官方右侧列内（`openRightbar(true, false)` 保留 grid track） |
 | blank（`blank === true`）或无当前 Session | `shell.overlay` | 列表槽、`root` scope | frame-right 浮层（fixed right 420px），conversation 不缩窄                                |
+
+### 公开 Session 选择（2026-10-20）
+
+`src/client/session-surface.ts` 只读取公开的 `sessions.list`：旧版存在 `current` 字段时，以该字段为准，显式无当前项不再尝试推断；新版从 `byId` 中选择唯一具有正数且有限的 `retainedBy.mainView` 的条目，再要求 `blank === false` 才使用 rightbar。无主视图、歧义、未知 blank、读取异常均使用 overlay。此选择依据与新版官方 ui-session 发布主视图的公开保留语义一致；不读取其私有 `current` 或修改 DSH 源码。
 
 ### 规则
 

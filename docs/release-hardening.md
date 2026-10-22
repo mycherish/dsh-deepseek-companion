@@ -57,6 +57,18 @@ Host 的 `tsdown.config.ts` 将已弃用的 `external: ['playwright']` 替换为
 
 预览候选已在全新临时 DSH_HOME 中完成安装、正常首次引导（Continue → Configure later，无需填写模型密钥）、打开 Companion 未登录界面、卸载及基础 Web 重启复验；Host 为 `login_required / logged_out`，消息 0、页面错误 0，退出后隔离 Chromium 主进程 0。完整检查与 654 项测试通过；最终文案和元数据归档检查通过。本轮不包含已登录聊天矩阵的重跑，仍待 Review 与发布批准。
 
+## 2026-10-20 新版 Web 兼容候选
+
+preview.1 准备已提交为 `a4b589c`。本轮 preview.2 完成新旧公开 Session 结构适配，六个 DSH 类型依赖更新至固定 `0.2.1-rc.2`，增加 13 项 Client/Controller 回归测试，总计 667。两个 Web 版本的干净安装、未登录 Dock/Float/Pop-out、Fetch 与 SSE EOF 重连已通过，新版非空 Session 的 rightbar 已通过官方本地 mock 验证。全新 profile 未使用已有认证目录，尚未重跑新版已登录聊天/图片/恢复完整矩阵。安装向导差异、全部验收边界和后续发布门禁见 [web-compatibility.md](web-compatibility.md)。
+
+### 用户授权后的已登录复验
+
+用户明确允许复制 `companion-test` 浏览器 profile 后，使用临时副本完成新版已登录核心矩阵：Markdown/流式、Deep Think、Search、跨窗口 Stop、图片上传发送/历史显示/文件名降级、SSE 重连保留消息与草稿，以及空闲/流式中终止 Chromium 后恢复。原 profile 不变，不读取或打印认证信息；本轮无需进一步修改产品代码。详细计数、故障注入边界、测试会话与剩余项见 [web-compatibility.md](web-compatibility.md#用户授权后的已登录补充验收)。
+
+### 2026-10-22 审核收口
+
+兼容实现、测试与上述证据完成审核，本阶段以一个原子提交保存。完整格式/lint/类型/构建/667 项测试、diff 与最终包边界检查重新通过；本次不重跑已登录真机矩阵、不创建版本节点或发布。下一阶段优先做 preview.1 → preview.2 的升级与回退验收，未覆盖场景仍按兼容记录保留。
+
 ## 范围边界
 
 - 本轮只验证 Web；Windows、Linux、DSH Desktop 和多账号不在验收范围内。
