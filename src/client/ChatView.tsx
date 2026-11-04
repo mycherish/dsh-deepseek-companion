@@ -25,6 +25,7 @@ import {
 import { remarkCitations } from './remark-citations.ts'
 import { STOP_PHASE_LABEL, initialStopUiState, reduceStopUi, stopPhase } from './stop-state.ts'
 import { connectionFrom } from '../shared/state.ts'
+import { browserSetupHint } from './browser-setup.ts'
 import type {
   ChatAttachment,
   ChatFormat,
@@ -1046,10 +1047,16 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
   }
 
   if (status === 'error' && !recovering) {
+    const setupHint = browserSetupHint(connection)
     return (
       <div style={rootStyle}>
         {streamNotice}
         <div style={hintStyle}>检测失败</div>
+        {setupHint !== null ? (
+          <div role="status" style={hintStyle}>
+            {setupHint}
+          </div>
+        ) : null}
       </div>
     )
   }

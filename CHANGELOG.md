@@ -1,5 +1,12 @@
 # Changelog
 
+## 未发布：FR-1 市场与安装准备
+
+- 使用官方 bundle 命令安装 / 激活插件，匹配 Chromium 从已安装 profile 准备；补充免费 npm / GitHub Pages 发布准备步骤。
+- 首次浏览器启动失败时显示 Chromium 安装与重启提示，不把已存在浏览器的站点故障误报为安装问题。
+- 增加随包 SVG 图标、明确标记未发布的市场索引草案及固定版本的官方索引校验；不新增运行依赖。
+- 已补充用户提供的公开源码、主页、反馈地址和 npm 用户名 `caelum-maple`；发布认证待发布前核对，项目 Pages 索引尚未部署，未发布到 npm 或市场，版本仍为 `0.1.0-preview.2`。
+
 ## 0.1.0-preview.2 — 未发布候选（2026-10-20）
 
 - 适配 DSH Web `0.2.1-rc.2` 的公开 Session 列表结构，保留 `0.1.5-rc.2` 的 `current` 选择；新版通过唯一的 `retainedBy.mainView` 判断主视图，无有效证据时使用 overlay。

@@ -75,6 +75,12 @@ preview.1 准备已提交为 `a4b589c`。本轮 preview.2 完成新旧公开 Ses
 
 ## 范围边界
 
+### 2026-10-22 FR-1 安装路径补充
+
+首版计划已提交为 `899607f`。新旧固定 Web 均已通过官方 bundle 的干净安装 / 自动激活、已有匹配 Chromium 的登录入口与三窗口、卸载 / 重启和退出清理；旧版宿主补做官方命令的 preview.1 → preview.2 切换。新增缺浏览器提示、随包图标和官方索引校验，包内容更新为 10 文件，运行依赖不变。源码仓库及个人 Pages 已确认；2026-10-23 用户确认 npm 登录用户名为 `caelum-maple`，包与草案作者字段已同步。同日用户协助取得官方 Chromium ZIP，经摘要 / CRC / 版本校验后，官方 CLI 在新空缓存安装完整 Chromium 和 FFmpeg；新版 Web 的启动、登录网页唤起、三窗口与退出清理通过，页面 / 控制台错误及 Chromium 残留均为 0。CDN 大文件自动下载的网络限制单独保留，项目索引未部署。FR-1 已审核，准备提交。步骤、免费资源创建与精确边界见 [market-installation.md](market-installation.md)，进度以 [first-release.md](first-release.md) 为准。
+
+### 既有验收范围
+
 - 本轮只验证 Web；Windows、Linux、DSH Desktop 和多账号不在验收范围内。
 - 干净 profile 只验证安装、注入和未登录态；发送及恢复使用已登录的隔离副本。
 - 此记录不等同于 Phase 25 的完整回归或正式发布批准。

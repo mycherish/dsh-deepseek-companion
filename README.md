@@ -46,22 +46,27 @@ pnpm test
 
 ## Web 插件安装预览
 
-当前 Web 候选的 `engines.dsh` 精确限定为 `0.1.5-rc.2 || 0.2.1-rc.2`，不是对所有中间版本或 Desktop 的支持声明。新版 DSH 的兼容性检查会拒绝超出声明的运行时；不要通过版本豁免绕过。先确认 `dsh --version` 为其中一个版本，在本仓库安装依赖和匹配 Chromium，再构建并打包：
+当前 Web 候选的 `engines.dsh` 精确限定为 `0.1.5-rc.2 || 0.2.1-rc.2`，不是对所有中间版本或 Desktop 的支持声明。先确认 `dsh --version` 为其中一个版本，不通过版本豁免绕过。在开发仓库构建并打包：
 
 ```sh
 pnpm install --frozen-lockfile
-pnpm exec playwright install chromium
 pnpm build
 pnpm pack --pack-destination dist/release
 PACKAGE_TGZ="$(pwd)/dist/release/dsh-deepseek-companion-0.1.0-preview.2.tgz"
-cd "${DSH_HOME:-$HOME/.dsh}/profiles/web"
-pnpm add "$PACKAGE_TGZ"
-dsh --profile web --patch "${DSH_HOME:-$HOME/.dsh}/profiles/web/node_modules/dsh-deepseek-companion/cordis.patch.yml" --no-open
+dsh --profile web --dump-config > /dev/null
+dsh plugin --profile web add "$PACKAGE_TGZ"
+dsh plugin --profile web exec playwright --version
+dsh plugin --profile web exec playwright install chromium --no-shell
+dsh --profile web --no-open
 ```
 
-`pnpm add` 只安装包；`--patch` 才把 Companion 插入 Cordis 插件树。若要每次启动都加载，可将包内 `cordis.patch.yml` 的 `insert` 项合并到该 profile 现有的 `cordis.patch.yml` 列表中，保留原有条目。首次使用新 profile 时，Companion 会显示 DeepSeek 登录入口。
+官方 `dsh plugin add` 会安装包并自动登记 `dsh.bundle`，启动时无需额外 `--patch` 或手工合并配置。`web` 替换为实际使用的 Web profile 名；`PACKAGE_TGZ` 须指向目标机器上的 tarball 绝对路径。Playwright 应显示 `1.62.0`，浏览器从安装后的 profile 准备，不依赖开发仓库或 `npx playwright@latest`。Companion 使用完整的可见 Chromium，`--no-shell` 省去额外的 Headless Shell。插件命令按顺序完成，不在同一 profile 上并行安装和更新。
 
-以上安装目录应已由 DSH 初始化。`0.1.5-rc.2` 首次启动先点击官方测试提示的 **Continue**；模型配置可选择 **Configure later**。`0.2.1-rc.2` 的 **Get started** 弹窗可用右上角关闭按钮或 Escape 关闭。无需为使用 Companion 填写 DSH API Key。完成宿主向导后再打开 Companion 并登录 DeepSeek 网页。优先用隔离测试 profile 验收，并在停机后备份该 profile 的 manifest、lockfile 和 patch。跨机器安装时，需要在目标机器另行安装 Playwright `1.62.0` 对应的 Chromium。回退到 preview.1 时宿主须为 `0.1.5-rc.2`；本轮不覆盖 DSH 宿主本身的升级/降级。步骤和已知限制见 [升级/回退验收](docs/upgrade-rollback.md) 与 [预览版本说明](docs/release-preview.md)。
+曾按旧说明手工添加 Companion patch 的用户，先停机并备份配置，移除那一条旧的 Companion `insert` / 启动 `--patch`，保留其它条目，再使用 bundle 安装；避免重复加载同一插件。卸载使用 `dsh plugin --profile web remove dsh-deepseek-companion`，之后重启 DSH。普通卸载不负责删除 DeepSeek 登录目录。
+
+`0.1.5-rc.2` 首次启动先点击官方测试提示的 **Continue**；模型配置可选择 **Configure later**。`0.2.1-rc.2` 首次显示预览版说明时点击 **继续 / Continue**，后续 **Get started** 引导弹窗可用关闭按钮或 Escape 关闭。无需为 Companion 填写 DSH API Key；完成宿主向导后打开 Companion，单独登录 DeepSeek 网页。安装缺少 Chromium 时会显示安装与重启提示。安装和运行使用同一用户，若自定义 `PLAYWRIGHT_BROWSERS_PATH`，两者保持一致。回退 preview.1 的宿主须为 `0.1.5-rc.2`，不覆盖 DSH 宿主升级 / 降级。
+
+账号创建、免费托管、安装验证与当前待补发布信息见 [市场与安装准备](docs/market-installation.md)；既有升级 / 回退证据见 [升级/回退验收](docs/upgrade-rollback.md)。
 
 打包安装与真实 Web 烟测记录见 [docs/release-hardening.md](docs/release-hardening.md)。
 

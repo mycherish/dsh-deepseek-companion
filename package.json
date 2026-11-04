@@ -4,6 +4,16 @@
   "description": "DeepSeek Web Companion plugin for DeepSeek Harness (DSH)",
   "type": "module",
   "license": "MIT",
+  "author": "caelum-maple",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mycherish/dsh-deepseek-companion.git"
+  },
+  "homepage": "https://github.com/mycherish/dsh-deepseek-companion#readme",
+  "bugs": {
+    "url": "https://github.com/mycherish/dsh-deepseek-companion/issues"
+  },
+  "icon": "market/icons/companion.svg",
   "engines": {
     "node": ">=22",
     "dsh": "0.1.5-rc.2 || 0.2.1-rc.2"
@@ -29,7 +39,8 @@
     "lib/client.js",
     "lib/client.d.ts",
     "cordis.patch.yml",
-    "CHANGELOG.md"
+    "CHANGELOG.md",
+    "market/icons/companion.svg"
   ],
   "dsh": {
     "bundle": {
@@ -43,8 +54,8 @@
     }
   },
   "scripts": {
-    "format": "prettier --write \"src/**/*.{ts,tsx}\" \"tests/**/*.ts\" \"*.{ts,json}\" \"docs/**/*.md\" README.md CHANGELOG.md AGENTS.md",
-    "format:check": "prettier --check \"src/**/*.{ts,tsx}\" \"tests/**/*.ts\" \"*.{ts,json}\" \"docs/**/*.md\" README.md CHANGELOG.md AGENTS.md",
+    "format": "prettier --write \"src/**/*.{ts,tsx}\" \"tests/**/*.ts\" \"*.{ts,json}\" \"docs/**/*.md\" \"market/**/*.{json,md}\" README.md CHANGELOG.md AGENTS.md",
+    "format:check": "prettier --check \"src/**/*.{ts,tsx}\" \"tests/**/*.ts\" \"*.{ts,json}\" \"docs/**/*.md\" \"market/**/*.{json,md}\" README.md CHANGELOG.md AGENTS.md",
     "lint": "biome lint src tests --error-on-warnings",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "build": "tsdown && tsdown --config tsdown.client.config.ts",
@@ -72,6 +83,7 @@
     "@deepseek-ai/dsh-client-ui-renderer": "0.2.1-rc.2",
     "@deepseek-ai/dsh-client-ui-sidebar": "0.2.1-rc.2",
     "@deepseek-ai/dsh-client-ui-slots": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-plugin-market-index": "0.2.1-rc.2",
     "@types/node": "^22.10.1",
     "@types/react": "~18.3.31",
     "@types/react-dom": "~18.3.7",
