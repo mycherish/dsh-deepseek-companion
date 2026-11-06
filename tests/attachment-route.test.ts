@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, rm, stat } from 'node:fs/promises'
+import { mkdtemp, readdir, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -77,6 +77,31 @@ async function withHarness(
 }
 
 // --- add ----------------------------------------------------------------------
+
+test('20B2: unverified recovery refuses attachment upload until the session is verified', async () => {
+  await withHarness({}, async (h, dir) => {
+    const deps = { store: h.store, resources: h.resources, browser: h.browser, guard: h.guard }
+    h.store.setCurrentSession({ id: 'uncertain' })
+    h.store.appendChatMessage('user', 'preserved')
+    h.store.markSessionUnverified('uncertain')
+    const before = h.store.getState()
+
+    const refused = await handleAttachmentRequest(deps, addBody())
+
+    assert.equal(refused.status, 409)
+    assert.equal(h.calls.attach, 0)
+    assert.equal(h.store.getState(), before, 'refusal must preserve shared state')
+    assert.deepEqual(h.resources.list(), [])
+    assert.deepEqual(await readdir(dir), [])
+    assert.equal(h.guard.inProgress(), false)
+
+    h.store.clearSessionUnverified('uncertain')
+    const retried = await handleAttachmentRequest(deps, addBody())
+    assert.equal(retried.status, 200)
+    assert.equal(retried.body.attachment?.status, 'ready')
+    assert.equal(h.calls.attach, 1)
+  })
+})
 
 test('18A add: 合法图片 → 200 ready，记录里带上页面 identity 与 file id，临时文件真实存在', async () => {
   await withHarness({}, async (h) => {
@@ -205,6 +230,24 @@ test('18A add: 卡片都没出现时失败 → 记录里没有 identity', async 
 })
 
 // --- remove -------------------------------------------------------------------
+
+test('20B2: unverified recovery still permits explicit draft removal', async () => {
+  await withHarness({}, async (h, dir) => {
+    const deps = { store: h.store, resources: h.resources, browser: h.browser, guard: h.guard }
+    const added = await handleAttachmentRequest(deps, addBody())
+    h.store.setCurrentSession({ id: 'uncertain' })
+    h.store.markSessionUnverified('uncertain')
+
+    const result = await handleAttachmentRequest(deps, { action: 'remove', id: added.body.attachment!.id })
+
+    assert.equal(result.status, 200)
+    assert.deepEqual(h.store.getState().composer.attachments, [])
+    assert.deepEqual(h.resources.list(), [])
+    assert.deepEqual(await readdir(dir), [])
+    assert.deepEqual(h.calls.removedIdentities, [IDENTITY_A])
+    assert.equal(h.store.getState().recoveryNotice, 'session_unverified')
+  })
+})
 
 test('18A remove: 页面确认删掉卡片后才清 Host（state + 记录 + 临时文件）', async () => {
   await withHarness({}, async (h) => {

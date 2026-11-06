@@ -6,6 +6,7 @@
  * is `about:blank`, so it must not rely on its own relative URL).
  */
 import { connectionFrom } from '../shared/state.ts'
+import { ChatRequestError } from './error-lifecycle.ts'
 import { subscribeStateStream, type StateStreamStatus } from './state-stream.ts'
 import type {
   ChatAttachment,
@@ -188,12 +189,19 @@ export async function sendChatMessage(origin: string, message: string): Promise<
     body: JSON.stringify({ message }),
   })
   if (!response.ok) {
-    let detail = `HTTP ${response.status}`
-    try {
-      const body = (await response.json()) as { error?: unknown }
-      if (typeof body.error === 'string') detail = body.error
-    } catch {
-      // keep the HTTP detail
+    const body = (await response.json().catch(() => null)) as {
+      error?: unknown
+      assistantMessageId?: unknown
+      instanceId?: unknown
+    } | null
+    const detail = typeof body?.error === 'string' ? body.error : `HTTP ${response.status}`
+    if (
+      typeof body?.assistantMessageId === 'string' &&
+      body.assistantMessageId !== '' &&
+      typeof body.instanceId === 'string' &&
+      body.instanceId !== ''
+    ) {
+      throw new ChatRequestError(detail, body.instanceId, body.assistantMessageId)
     }
     throw new Error(detail)
   }

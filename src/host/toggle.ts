@@ -166,6 +166,10 @@ export async function handleToggleRequest(
   if (control === null) {
     return { status: 503, body: { ...UNAVAILABLE, error: 'browser not ready' } }
   }
+  // Readiness can await recovery; do not apply an earlier click to an uncertain page.
+  if (store.getState().recoveryNotice === 'session_unverified') {
+    return { status: 409, body: { ...control.mirrored(), error: 'recovered session is unverified' } }
+  }
   // Never change the composer mode while a reply is streaming.
   if (store.getState().chat.sending) {
     return { status: 409, body: { ...control.mirrored(), error: 'chat is busy' } }

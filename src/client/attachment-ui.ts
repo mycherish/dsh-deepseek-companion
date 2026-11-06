@@ -44,9 +44,10 @@ export function canSendRound(input: {
   busy: boolean
   /** A picker → Host round trip is in flight. */
   attaching: boolean
+  sessionUnverified: boolean
   connection: ConnectionStatus
 }): boolean {
-  if (input.busy || input.attaching) return false
+  if (input.busy || input.attaching || input.sessionUnverified) return false
   if (input.connection !== 'online') return false
   // Uploading / failed drafts block the round for everyone.
   if (input.attachments.some((attachment) => attachment.status !== 'ready')) return false
@@ -56,11 +57,12 @@ export function canSendRound(input: {
 
 /** Whether the image picker may be opened right now. */
 export function canPickAttachment(input: {
+  sessionUnverified: boolean
   pageBusy: boolean
   attaching: boolean
   attachments: readonly ComposerAttachment[]
 }): boolean {
-  if (input.pageBusy || input.attaching) return false
+  if (input.pageBusy || input.attaching || input.sessionUnverified) return false
   // One upload at a time: a second pick while a card is still uploading would
   // race the page's own draft diff.
   return !input.attachments.some((attachment) => attachment.status === 'uploading')

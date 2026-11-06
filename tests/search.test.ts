@@ -275,6 +275,29 @@ test('E: 生成过程中 → 409，不切换（且返回镜像的当前状态）
   assert.deepEqual(result.body, { available: true, enabled: false, error: 'chat is busy' })
 })
 
+test('20B2: unverified recovery refuses Search changes until the session is verified', async () => {
+  const store = createCompanionStateStore()
+  store.setCurrentSession({ id: 'uncertain' })
+  store.setSearchState({ available: true, enabled: false })
+  store.markSessionUnverified('uncertain')
+  const before = store.getState()
+  const { controller, calls } = makeController({ available: true, enabled: false })
+
+  const refused = await handleSearchRequest(store, controller, { enabled: true })
+
+  assert.equal(refused.status, 409)
+  assert.equal(refused.body.available, true)
+  assert.equal(refused.body.enabled, false)
+  assert.deepEqual(calls, [])
+  assert.equal(store.getState(), before, 'refusal must preserve shared state')
+
+  store.clearSessionUnverified('uncertain')
+  const retried = await handleSearchRequest(store, controller, { enabled: true })
+  assert.equal(retried.status, 200)
+  assert.deepEqual(store.getState().deepseek.search, { available: true, enabled: true })
+  assert.deepEqual(calls, ['set:true'])
+})
+
 test('E: 切换成功 → 200 且返回页面真实状态', async () => {
   const store = createCompanionStateStore()
   const { controller, calls } = makeController({ available: true, enabled: false })

@@ -110,6 +110,14 @@ import {
 } from './toggle.ts'
 
 const DEEPSEEK_URL = 'https://chat.deepseek.com'
+
+function isDeepSeekOrigin(url: string): boolean {
+  try {
+    return new URL(url).origin === DEEPSEEK_URL
+  } catch {
+    return false
+  }
+}
 /** DeepSeek's authoritative "current user" endpoint. */
 const CURRENT_USER_PATH = '/api/v0/users/current'
 /** Completion endpoint the SPA posts to when sending a message. */
@@ -597,14 +605,18 @@ export async function createDeepSeekBrowser(
   const runDetect = async (): Promise<DeepSeekStatus> => {
     if (detecting) return 'checking'
     detecting = true
+    const probePage = page
+    const probeEpoch = pageEpoch
     try {
-      const status = await detectStatus(page)
+      const status = await detectStatus(probePage)
+      // The old page's pending probe may settle after its replacement recovered.
+      if (disposed || probeEpoch !== pageEpoch || probePage !== page) return status
       // A successful login probe on DeepSeek's home page is the cheapest healthy
       // confirmation: the page loaded a usable conversation surface.
       if (status === 'logged_in') {
         try {
           const url = page.url()
-          if (url.startsWith(DEEPSEEK_URL) && !url.includes('/sign_in')) knownHealthy = true
+          if (isDeepSeekOrigin(url) && !url.includes('/sign_in')) knownHealthy = true
         } catch {
           // a page that cannot report its URL is not healthy
         }
@@ -727,6 +739,13 @@ export async function createDeepSeekBrowser(
       if (frame !== target.mainFrame()) return
       // Recovery's own goto must never look like a user switch (§10.1).
       if (recoveryNavigationActive) return
+      // A failed login probe would hide every operation that calls ensureReady.
+      // Recover an invalid main document before that UI dead end can occur.
+      if (!isDeepSeekOrigin(frame.url())) {
+        knownHealthy = false
+        void triggerRecovery('page-invalid')
+        return
+      }
       handleLocationNavigation(sessionLocationFromPath(frame.url()))
     })
     target.on('close', () => {
@@ -883,7 +902,7 @@ export async function createDeepSeekBrowser(
 
   // --- Phase 20A recovery engine (§4–§12) --------------------------------------
 
-  type RecoveryReason = 'page-closed' | 'page-crashed' | 'context-closed' | 'browser-disconnected'
+  type RecoveryReason = 'page-closed' | 'page-crashed' | 'page-invalid' | 'context-closed' | 'browser-disconnected'
 
   /** Whether a thrown Playwright error means the context/browser died (→ Level 3). */
   const isTargetClosedError = (error: unknown): boolean => {
@@ -923,7 +942,7 @@ export async function createDeepSeekBrowser(
     let signIn = false
     try {
       const url = page.url()
-      originOk = url.startsWith(DEEPSEEK_URL)
+      originOk = isDeepSeekOrigin(url)
       signIn = url.includes('/sign_in')
     } catch {
       // a page that cannot report its URL is handled by `pageClosed`/`crashed`
@@ -1156,7 +1175,7 @@ export async function createDeepSeekBrowser(
     if (health === 'healthy_chat') return 'logged_in'
     if (health === 'login_required') return 'logged_out'
     return recover(
-      health === 'browser_dead' ? 'browser-disconnected' : health === 'page_dead' ? 'page-closed' : 'page-crashed',
+      health === 'browser_dead' ? 'browser-disconnected' : health === 'page_dead' ? 'page-closed' : 'page-invalid',
     )
   }
 

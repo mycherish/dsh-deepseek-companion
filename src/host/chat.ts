@@ -12,7 +12,7 @@ import type { CompanionStateStore } from './state.ts'
 
 export interface ChatSendResult {
   status: 200 | 409 | 500
-  body: { reply?: string; error?: string }
+  body: { reply?: string; error?: string; assistantMessageId?: string; instanceId?: string }
 }
 
 export async function handleChatMessage(
@@ -106,7 +106,10 @@ export async function handleChatMessage(
     // completion.
     store.setChatMessageStatus(assistant.id, 'error')
     const detail = error instanceof Error ? error.message : String(error)
-    return { status: 500, body: { error: detail } }
+    return {
+      status: 500,
+      body: { error: detail, assistantMessageId: assistant.id, instanceId: store.getState().instanceId },
+    }
   } finally {
     store.setChatSending(false)
   }

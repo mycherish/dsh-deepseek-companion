@@ -214,6 +214,8 @@ test('sendMessage 抛错：保留 user 与部分 assistant 文本，sending 恢�
 
   assert.equal(result.status, 500)
   assert.equal(result.body.error, 'boom')
+  assert.equal(result.body.assistantMessageId, store.getState().chat.messages[1]!.id)
+  assert.equal(result.body.instanceId, store.getState().instanceId)
 
   // user message 保留，assistant 保留已收到的部分文本，不伪造完成
   const messages = store.getState().chat.messages

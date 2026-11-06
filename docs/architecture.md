@@ -51,7 +51,7 @@ React Client 只负责渲染，**不得**成为聊天状态的唯一 Owner。
 
 ### 兼容性策略
 
-- 当前 Web 候选 `0.1.0-preview.2` 的运行时范围为 `0.1.5-rc.2 || 0.2.1-rc.2`；六个 DSH 开发类型包固定至 `0.2.1-rc.2`，运行 Cordis peer 兼容旧版。安装、界面与 SSE 已在两个固定版本复验；新版已登录核心聊天、图片、SSE 与 Chromium 恢复矩阵已复验，插件升级/回退在共同宿主 `0.1.5-rc.2` 上已验收（不覆盖宿主迁移），会话删除等边界仍待验收，官方 Desktop 尚不支持。证据与边界见 [web-compatibility.md](web-compatibility.md)。
+- 当前 Web 候选 `0.1.0-preview.2` 的运行时范围为 `0.1.5-rc.2 || 0.2.1-rc.2`；六个 DSH 开发类型包固定至 `0.2.1-rc.2`，运行 Cordis peer 兼容旧版。安装、界面与 SSE 已在两个固定版本复验；新版已登录核心聊天、图片、SSE 与 Chromium 恢复矩阵已复验，插件升级/回退在共同宿主 `0.1.5-rc.2` 上已验收（不覆盖宿主迁移），会话正常 / 删除 / 不确定三路径已补验，主要 Web 的图片安全已补验，页面故障恢复已在新旧固定 Web 补验，Search 真实来源及未映射降级已补验，结构化引用继续尽力恢复，官方 Desktop 尚不支持。证据与边界见 [web-compatibility.md](web-compatibility.md)。
 - 后续兼容其他版本时优先做 capability detection。
 - 版本敏感 API 优先 `ctx.inject` / capability detection / type guard / runtime feature detection。
 - 不假定所有 DSH 版本 API 一致。
@@ -918,7 +918,7 @@ expectedFileIds = consumedAttachmentIds → AttachmentRecord[] → deepSeekFileI
 | New chat → 草稿清空                                                                    | ✅ 真机 |
 | Session 切换 → 草稿清空                                                                | ✅ 真机 |
 
-**以下安全路径没有完整真机驱动，由单测覆盖**（不要读成「全部实机通过」）：
+**以下为 Phase 18A 当时未完整真机驱动的安全路径**；外部新增 / 删图与失败卡 remove 已在 2026-11-06 FR-2 主要 Web 补验，详见 [图片安全验收](release-hardening.md#2026-11-06-fr-2-图片安全验收)。`ref_file_ids` malformed 分支仍只有单测证据：
 
 - DeepSeek 页面**手动加入** Companion 未知图片 → 发送被 409：判定逻辑由 `evaluateDraftGate` 的「集合不相等」分支单测覆盖；真机需要人工在 DeepSeek 窗口操作。
 - DeepSeek 页面**手动删掉** Host 管理的 preview → 发送被 409：同样只由单测覆盖。
@@ -940,6 +940,8 @@ expectedFileIds = consumedAttachmentIds → AttachmentRecord[] → deepSeekFileI
 > 本节记录 2026-09-24 的**调查 + 真实故障注入**结论、**定稿设计**，以及 Phase 20A 的**实现与验收**。
 >
 > **本节为 20A 验收时的历史记录**：当时 Phase **20A 已实现并验证**，20B 尚未开始；当前 20B1 / 20B2 均已完成，见下方 Phase 20B 章节。实现与设计对应关系、真实故障注入结果、与定稿设计的偏差、已知限制见下方 **§0 实现状态**。证据来源：Playwright **1.62.0** + 其自带 Chromium **151.0.7922.34**，用 `companion-test` profile 的**临时副本**（`/tmp`，独立进程）做真实故障注入；**未使用 web profile**，未记录 token / cookie，结束后清理全部进程与副本。
+
+**FR-2 修复补充（2026-11-06，2026-11-07 真机复验完成）**：主页面跨 origin 后 load 探测可能发布 error，Client 会隐藏继续触发 readiness 的入口。当前改为主 frame 离开精确 DeepSeek origin 时主动进入既有 single-flight recovery；iframe 与恢复自身导航继续跳过。登录探测绑定 page / epoch，旧页面或 dispose 后的结果不发布状态；当前页面真实错误仍保留。7 项接线测试已通过；解锁后同一新归档已在两个固定 Web 宿主完成 close / crash / about:blank 真实故障复验，证据见发布验收记录；不扩大到其它故障类型或 Desktop。
 
 ### 0. 实现状态（20A 已实现并验证，2026-09-24）
 
@@ -1381,6 +1383,8 @@ N9. **单步 timeout > 剩余预算**：实际等待取 `min(stepTimeout, remain
 **真实前端证据**：隔离的 `companion-test` profile 副本访问正常会话时，前端自己的 `GET /api/v0/chat/history_messages?chat_session_id=<id>` 返回 HTTP 200、`code=0`、`data.biz_code=0`，`biz_data` 为历史对象，URL 留在目标会话。访问确定不存在的 UUID 时，同一路径返回 HTTP 200、`code=0`、`data.biz_code=1`、`biz_data=null`，SPA 把 URL 重定向到 `/`；`users/current` 仍表明已登录。探测只输出状态与字段形状，没有记录认证值或历史内容。随后用仓库的 `createDeepSeekBrowser` 真实执行 page close → Level 1 恢复：正常会话得到 `location=session / history=found / verdict=reconcile`，侧栏有 active exact-id 的非空标题；不存在会话得到 `location=empty / history=not_found / verdict=deleted`。
 
 **删除判定**：`src/host/browser.ts` 只观察恢复期、当前 page epoch、**目标 `chat_session_id` 精确相等**的前端响应；Host 不直接请求 history API。`src/host/recovery-settlement.ts` 仅认可上面的精确 not-found envelope。`logged_in + 目标会话 + 实际 URL=/ + not_found` 全部成立时，`src/host/state.ts` 在一次 notify 中将 `currentSession` 置空、清空消息并发布 `session_deleted` 提示，清除 committed anchor。网络异常、认证失败、未知响应、响应与目标不匹配、未知重定向或跳到其他会话都不能触发删除；不确定时保留 transcript，发布 `session_unverified` 警告并拦截发送，用户可新建聊天或切换历史会话继续。后续 URL 导航不会提前解除警告，只有成功读取目标 transcript / 成功切换会话或用户确认新建聊天后才解除。
+
+**FR-2 门控补充（2026-11-04）**：`session_unverified` 同时纳入 Client 的发送 / 选图共享判定，Enter 复用发送闸门；选择器返回和 FileReader 完成后仍会检查不确定状态。Host 在附件 add 与共享 toggle handler 中重查恢复提示，避免等待 readiness 的旧请求落到不确定页面；拒绝早于页面写入与资源创建。显式 remove 仍保留清理能力。真实删除后的消息 / ready 草稿清理与三界面提示，以及已安装主宿主中不确定恢复完整链路的范围见 [release-hardening.md](release-hardening.md#2026-11-04-fr-2-会话恢复与不确定状态门控)。
 
 **标题与文案**：恢复到目标会话才进行 20B1 reconcile，随后至多等待 2 s 读取侧栏；只有 `active && id===recoverTarget.id` 的非空标题更新 `currentSession.title`，读取失败不改变消息。Dock、Float、Pop-out 共用 Host 状态：`connection=recovering` 显示「正在恢复 DeepSeek…」并保留 transcript；确认删除显示清理提示；无法确认显示保留与操作提示。`recovering` 仍是 connection 状态，reconcile 与 session verdict 仍各自独立。恢复导航的 `networkidle` 也消耗 20A 的 60 s 剩余预算。
 

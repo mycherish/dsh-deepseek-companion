@@ -65,6 +65,10 @@ async function handleAdd(
 ): Promise<AttachmentRequestResult> {
   // 1. the browser must be able to reach DeepSeek at all.
   if (deps.browser === null) return { status: 503, body: { error: 'browser not ready' } }
+  // A request queued before recovery may resume on an unverified page.
+  if (deps.store.getState().recoveryNotice === 'session_unverified') {
+    return { status: 409, body: { error: 'recovered session is unverified' } }
+  }
   // 2. a reply is streaming: the page belongs to that send (drafts are frozen).
   if (deps.store.getState().chat.sending) return { status: 409, body: { error: 'chat is busy' } }
   // 3. claim the page: a second attach / remove / newChat / switch is refused.

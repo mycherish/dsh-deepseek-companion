@@ -30,7 +30,13 @@ const attachment = (
   ...(extra.error !== undefined ? { error: extra.error } : {}),
 })
 
-const base = { attachments: [] as ComposerAttachment[], busy: false, attaching: false, connection: 'online' as const }
+const base = {
+  sessionUnverified: false,
+  attachments: [] as ComposerAttachment[],
+  busy: false,
+  attaching: false,
+  connection: 'online' as const,
+}
 
 // --- 卡片文案 -----------------------------------------------------------------
 
@@ -87,17 +93,51 @@ test('18A send: 生成中 / 本地提交中 / 上传中 / 未登录 一律不可
 })
 
 test('18A picker: 页面繁忙 / 上传中时不能再选图', () => {
-  assert.equal(canPickAttachment({ pageBusy: false, attaching: false, attachments: [] }), true)
-  assert.equal(canPickAttachment({ pageBusy: true, attaching: false, attachments: [] }), false)
-  assert.equal(canPickAttachment({ pageBusy: false, attaching: true, attachments: [] }), false)
   assert.equal(
-    canPickAttachment({ pageBusy: false, attaching: false, attachments: [attachment('uploading')] }),
+    canPickAttachment({ sessionUnverified: false, pageBusy: false, attaching: false, attachments: [] }),
+    true,
+  )
+  assert.equal(
+    canPickAttachment({ sessionUnverified: false, pageBusy: true, attaching: false, attachments: [] }),
+    false,
+  )
+  assert.equal(
+    canPickAttachment({ sessionUnverified: false, pageBusy: false, attaching: true, attachments: [] }),
+    false,
+  )
+  assert.equal(
+    canPickAttachment({
+      sessionUnverified: false,
+      pageBusy: false,
+      attaching: false,
+      attachments: [attachment('uploading')],
+    }),
     false,
     '一次只上传一张',
   )
   assert.equal(
-    canPickAttachment({ pageBusy: false, attaching: false, attachments: [attachment('ready'), attachment('error')] }),
+    canPickAttachment({
+      sessionUnverified: false,
+      pageBusy: false,
+      attaching: false,
+      attachments: [attachment('ready'), attachment('error')],
+    }),
     true,
     '失败卡片不阻塞继续选图',
+  )
+})
+
+test('FR-2: 证据不足同时阻止文本 / 纯图片发送和选图，确认后才恢复', () => {
+  for (const text of ['draft', '']) {
+    assert.equal(canSendRound({ ...base, text, attachments: [attachment('ready')], sessionUnverified: true }), false)
+    assert.equal(canSendRound({ ...base, text, attachments: [attachment('ready')], sessionUnverified: false }), true)
+  }
+  assert.equal(
+    canPickAttachment({ sessionUnverified: true, pageBusy: false, attaching: false, attachments: [] }),
+    false,
+  )
+  assert.equal(
+    canPickAttachment({ sessionUnverified: false, pageBusy: false, attaching: false, attachments: [] }),
+    true,
   )
 })

@@ -26,6 +26,7 @@ import { remarkCitations } from './remark-citations.ts'
 import { STOP_PHASE_LABEL, initialStopUiState, reduceStopUi, stopPhase } from './stop-state.ts'
 import { connectionFrom } from '../shared/state.ts'
 import { browserSetupHint } from './browser-setup.ts'
+import { chatRequestErrorText } from './error-lifecycle.ts'
 import type {
   ChatAttachment,
   ChatFormat,
@@ -33,6 +34,7 @@ import type {
   ChatReasoning,
   ChatSessionSummary,
   Citation,
+  CompanionState,
   ComposerAttachment,
   ComposerToggleState,
   ConnectionState,
@@ -682,6 +684,8 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
   const [input, setInput] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [chatError, setChatError] = useState<unknown>(null)
+  const latestHostStateRef = useRef<CompanionState | null>(null)
   // Composer-switch mirrors: the Host owns the truth; these copies only reflect
   // pushes (Search joined Deep Think in Phase 07H).
   const [deepThink, setDeepThinkState] = useState<DeepThinkState>({ available: false, enabled: false })
@@ -717,6 +721,8 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
       subscribeCompanionState(
         origin,
         (state) => {
+          latestHostStateRef.current = state
+          setChatError((previous: unknown) => (chatRequestErrorText(previous, state) === null ? null : previous))
           setStatus(state.deepseek.status)
           setConnection(state.connection)
           setCurrentSession(state.currentSession)
@@ -757,6 +763,7 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
   const streamConnected = streamStatus === 'connected'
   const sessionUnverified = recoveryNotice === 'session_unverified'
   const pageBusy = busy || startingNew || switching || recovering || !streamConnected
+
   // Which history entry is「当前」(Phase 08.2): the Host's `currentSession` is
   // the authority (it follows the real page, manual navigation included); the
   // list's own `active` flag is only used while the Host has no id yet.
@@ -812,9 +819,15 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
     busy: busy || !streamConnected,
     attaching,
     connection: connection.status,
+    sessionUnverified,
   })
   /** The picker is closed while the page is busy or a draft is still uploading. */
-  const pickerDisabled = sessionUnverified || !canPickAttachment({ pageBusy, attaching, attachments })
+  const pickerDisabled = !canPickAttachment({ pageBusy, attaching, attachments, sessionUnverified })
+
+  const clearErrors = (): void => {
+    setError(null)
+    setChatError(null)
+  }
 
   /**
    * Read one picked file as base64. The string lives ONLY inside this call: it is
@@ -839,9 +852,9 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
    * bytes, drives the DeepSeek upload and pushes the card state back.
    */
   const pickAttachments = async (files: FileList | null): Promise<void> => {
-    if (files === null || files.length === 0 || busy || attaching || pageBusy) return
+    if (files === null || files.length === 0 || pickerDisabled) return
     setAttaching(true)
-    setError(null)
+    clearErrors()
     try {
       for (const file of Array.from(files)) {
         if (!IMAGE_MIME_TYPES.includes(file.type)) {
@@ -849,6 +862,7 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
           continue
         }
         const dataBase64 = await readFileAsBase64(file)
+        if (latestHostStateRef.current?.recoveryNotice === 'session_unverified') return
         await addChatAttachment(origin, { name: file.name, mimeType: file.type, dataBase64 })
       }
     } catch (e) {
@@ -864,7 +878,7 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
   const dropAttachment = async (id: string): Promise<void> => {
     if (pageBusy || removingId !== null) return
     setRemovingId(id)
-    setError(null)
+    clearErrors()
     try {
       await removeChatAttachment(origin, id)
     } catch (e) {
@@ -882,12 +896,13 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
     const text = input.trim()
     setInput('')
     setSubmitting(true)
-    setError(null)
+    clearErrors()
     try {
       // The Host appends the user + assistant messages; this view only waits.
       await sendChatMessage(origin, text)
     } catch (e) {
-      setError(e instanceof Error ? e.message : '发送失败')
+      const state = latestHostStateRef.current
+      setChatError(state !== null && chatRequestErrorText(e, state) === null ? null : e)
     } finally {
       setSubmitting(false)
     }
@@ -901,7 +916,7 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
   const stop = async (): Promise<void> => {
     if (!streamConnected || stopping || !busy) return
     setStopUi((ui) => reduceStopUi(ui, { type: 'click' }))
-    setError(null)
+    clearErrors()
     try {
       const stopped = await stopChatMessage(origin)
       // A SUCCESS deliberately keeps 停止中… : the Host is still finishing the
@@ -930,7 +945,7 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
   const startNew = async (): Promise<void> => {
     if (pageBusy) return
     setStartingNew(true)
-    setError(null)
+    clearErrors()
     try {
       await startNewChat(origin)
     } catch (e) {
@@ -943,7 +958,7 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
   /** Load (or refresh) the DeepSeek history list. Read-only, never cached. */
   const loadSessions = async (): Promise<void> => {
     setLoadingSessions(true)
-    setError(null)
+    clearErrors()
     try {
       setSessions(await fetchChatSessions(origin))
     } catch (e) {
@@ -969,7 +984,7 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
   const switchTo = async (conversationId: string): Promise<void> => {
     if (pageBusy) return
     setSwitching(true)
-    setError(null)
+    clearErrors()
     try {
       await switchChatSession(origin, conversationId)
       await loadSessions()
@@ -1007,7 +1022,7 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
           }
     if (toggleDisabled(target.state, target.toggling)) return
     target.setToggling(true)
-    setError(null)
+    clearErrors()
     try {
       target.mirror(await target.apply(origin, next))
     } catch (e) {
@@ -1016,6 +1031,9 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
       target.setToggling(false)
     }
   }
+
+  const visibleError =
+    error ?? (chatError instanceof Error ? chatError.message : chatError === null ? null : '发送失败')
 
   const streamNotice = streamConnected ? null : (
     <div role="status" style={hintStyle}>
@@ -1113,7 +1131,7 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
         })}
         {busy ? <div style={messageRowStyle('assistant', 'text')}>正在回复…</div> : null}
       </div>
-      {error !== null ? <div style={errorStyle}>{error}</div> : null}
+      {visibleError !== null ? <div style={errorStyle}>{visibleError}</div> : null}
       <div style={composerAreaStyle}>
         {/* History list (Phase 08 UI fix): an OVERLAY floating ABOVE the
             controls row, so opening it costs the transcript no height AND the

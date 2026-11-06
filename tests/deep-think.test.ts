@@ -244,6 +244,29 @@ test('D: 生成过程中 → 409，不切换模式', async () => {
   assert.deepEqual(calls, [])
 })
 
+test('20B2: unverified recovery refuses Deep Think changes until the session is verified', async () => {
+  const store = createCompanionStateStore()
+  store.setCurrentSession({ id: 'uncertain' })
+  store.setDeepThinkState({ available: true, enabled: false })
+  store.markSessionUnverified('uncertain')
+  const before = store.getState()
+  const { controller, calls } = makeController({ available: true, enabled: false })
+
+  const refused = await handleDeepThinkRequest(store, controller, { enabled: true })
+
+  assert.equal(refused.status, 409)
+  assert.equal(refused.body.available, true)
+  assert.equal(refused.body.enabled, false)
+  assert.deepEqual(calls, [])
+  assert.equal(store.getState(), before, 'refusal must preserve shared state')
+
+  store.clearSessionUnverified('uncertain')
+  const retried = await handleDeepThinkRequest(store, controller, { enabled: true })
+  assert.equal(retried.status, 200)
+  assert.deepEqual(store.getState().deepseek.deepThink, { available: true, enabled: true })
+  assert.deepEqual(calls, ['set:true'])
+})
+
 test('E: 切换成功后 CompanionState.deepseek.deepThink 更新为真实状态', async () => {
   const store = createCompanionStateStore()
   const { controller } = makeController({ available: true, enabled: false })
