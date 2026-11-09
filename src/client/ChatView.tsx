@@ -25,6 +25,7 @@ import {
 import { remarkCitations } from './remark-citations.ts'
 import { STOP_PHASE_LABEL, initialStopUiState, reduceStopUi, stopPhase } from './stop-state.ts'
 import { connectionFrom } from '../shared/state.ts'
+import { shouldSubmitMessage, shouldFollowTranscript, uiErrorText } from './ui-interaction.ts'
 import { browserSetupHint } from './browser-setup.ts'
 import { chatRequestErrorText } from './error-lifecycle.ts'
 import type {
@@ -55,18 +56,19 @@ const rootStyle: CSSProperties = {
 
 const hintStyle: CSSProperties = {
   color: 'var(--dsw-alias-label-secondary)',
-  fontSize: 13,
+  fontSize: 'var(--dsh-content-font-size, 14px)',
   textAlign: 'center',
   padding: 8,
-  lineHeight: '20px',
+  lineHeight: 1.5,
 }
 
 const messagesStyle: CSSProperties = {
   flex: 1,
   display: 'flex',
   flexDirection: 'column',
-  gap: 8,
+  gap: 12,
   overflowY: 'auto',
+  overflowX: 'hidden',
   minHeight: 0,
   width: '100%',
   textAlign: 'left',
@@ -76,14 +78,15 @@ const messageRowStyle = (role: 'user' | 'assistant', format: ChatFormat): CSSPro
   alignSelf: role === 'user' ? 'flex-end' : 'flex-start',
   // Markdown replies can hold tables/code, so they get the full column width.
   maxWidth: format === 'markdown' ? '100%' : '85%',
-  padding: '6px 10px',
+  minWidth: 0,
+  padding: '8px 10px',
   borderRadius: 10,
   background: role === 'user' ? 'var(--dsw-alias-interactive-bg-hover)' : 'transparent',
   color: 'var(--dsw-alias-label-primary)',
   whiteSpace: format === 'markdown' ? 'normal' : 'pre-wrap',
   wordBreak: 'break-word',
-  fontSize: 13,
-  lineHeight: '20px',
+  fontSize: 'var(--dsh-content-font-size, 14px)',
+  lineHeight: 1.5,
 })
 
 const errorStyle: CSSProperties = {
@@ -95,6 +98,10 @@ const errorStyle: CSSProperties = {
 }
 
 const inputRowStyle: CSSProperties = {
+  minWidth: 0,
+  padding: 6,
+  border: '1px solid var(--dsc-input-border, var(--dsw-alias-border-l3))',
+  borderRadius: 12,
   display: 'flex',
   gap: 8,
   alignItems: 'flex-end',
@@ -103,25 +110,28 @@ const inputRowStyle: CSSProperties = {
 
 const inputStyle: CSSProperties = {
   flex: 1,
-  minHeight: 36,
-  padding: '8px 10px',
-  border: '1px solid var(--dsw-alias-border-l3)',
+  minWidth: 0,
+  minHeight: 44,
+  padding: '8px 4px',
+  border: 'none',
   borderRadius: 8,
   background: 'transparent',
   color: 'var(--dsw-alias-label-primary)',
-  fontSize: 13,
+  fontSize: 'var(--dsh-content-font-size, 14px)',
   resize: 'none',
   fontFamily: 'inherit',
 }
 
 const sendButtonStyle: CSSProperties = {
-  padding: '7px 14px',
+  minHeight: 32,
+  flexShrink: 0,
+  padding: '6px 10px',
   border: 'none',
   borderRadius: 8,
-  background: 'var(--dsw-alias-interactive-bg-hover)',
+  background: 'var(--dsc-control-bg, var(--dsw-alias-interactive-bg-hover))',
   color: 'var(--dsw-alias-label-primary)',
   cursor: 'pointer',
-  fontSize: 13,
+  fontSize: 'var(--dsh-content-font-size, 14px)',
   fontWeight: 500,
 }
 
@@ -212,7 +222,7 @@ const attachmentMetaStyle: CSSProperties = {
 
 const attachmentRemoveStyle = (disabled: boolean): CSSProperties => ({
   border: 'none',
-  background: 'transparent',
+  background: 'var(--dsc-control-bg, transparent)',
   color: 'var(--dsw-alias-label-secondary)',
   cursor: disabled ? 'not-allowed' : 'pointer',
   fontSize: 14,
@@ -223,9 +233,9 @@ const attachmentRemoveStyle = (disabled: boolean): CSSProperties => ({
 
 const attachButtonStyle = (disabled: boolean): CSSProperties => ({
   padding: '7px 10px',
-  border: '1px solid var(--dsw-alias-border-l3)',
+  border: '1px solid transparent',
   borderRadius: 8,
-  background: 'transparent',
+  background: 'var(--dsc-control-bg, transparent)',
   color: 'var(--dsw-alias-label-primary)',
   cursor: disabled ? 'not-allowed' : 'pointer',
   opacity: disabled ? 0.5 : 1,
@@ -233,7 +243,7 @@ const attachButtonStyle = (disabled: boolean): CSSProperties => ({
   display: 'inline-flex',
   alignItems: 'center',
   gap: 4,
-  fontSize: 13,
+  fontSize: 'var(--dsh-content-font-size, 14px)',
 })
 
 /**
@@ -242,13 +252,15 @@ const attachButtonStyle = (disabled: boolean): CSSProperties => ({
  * with the composer.
  */
 const stopButtonStyle: CSSProperties = {
-  padding: '7px 14px',
+  minHeight: 32,
+  flexShrink: 0,
+  padding: '6px 10px',
   border: '1px solid var(--dsw-alias-label-primary)',
   borderRadius: 8,
-  background: 'transparent',
+  background: 'var(--dsc-control-bg, transparent)',
   color: 'var(--dsw-alias-label-primary)',
   cursor: 'pointer',
-  fontSize: 13,
+  fontSize: 'var(--dsh-content-font-size, 14px)',
   fontWeight: 500,
 }
 
@@ -265,10 +277,13 @@ const controlsRowStyle: CSSProperties = {
 }
 
 const togglePillStyle = (enabled: boolean, disabled: boolean): CSSProperties => ({
-  padding: '3px 10px',
+  minHeight: 32,
+  padding: '4px 8px',
   borderRadius: 999,
-  border: `1px solid ${enabled ? 'var(--dsw-alias-label-primary)' : 'var(--dsw-alias-border-l3)'}`,
-  background: enabled ? 'var(--dsw-alias-interactive-bg-hover)' : 'transparent',
+  border: `1px solid ${enabled ? 'var(--dsw-alias-border-l3)' : 'transparent'}`,
+  background: enabled
+    ? 'var(--dsc-control-bg, var(--dsw-alias-interactive-bg-hover))'
+    : 'var(--dsc-control-bg, transparent)',
   color: enabled ? 'var(--dsw-alias-label-primary)' : 'var(--dsw-alias-label-secondary)',
   cursor: disabled ? 'not-allowed' : 'pointer',
   opacity: disabled ? 0.5 : 1,
@@ -290,10 +305,11 @@ const toggleHintStyle: CSSProperties = {
  */
 const newChatButtonStyle = (disabled: boolean): CSSProperties => ({
   marginLeft: 'auto',
-  padding: '3px 10px',
+  minHeight: 32,
+  padding: '4px 8px',
   borderRadius: 999,
-  border: '1px solid var(--dsw-alias-border-l3)',
-  background: 'transparent',
+  border: '1px solid transparent',
+  background: 'var(--dsc-control-bg, transparent)',
   color: disabled ? 'var(--dsw-alias-label-secondary)' : 'var(--dsw-alias-label-primary)',
   cursor: disabled ? 'not-allowed' : 'pointer',
   opacity: disabled ? 0.5 : 1,
@@ -308,10 +324,11 @@ const newChatButtonStyle = (disabled: boolean): CSSProperties => ({
 // conversation's messages.
 
 const historyButtonStyle = (disabled: boolean): CSSProperties => ({
-  padding: '3px 10px',
+  minHeight: 32,
+  padding: '4px 8px',
   borderRadius: 999,
-  border: '1px solid var(--dsw-alias-border-l3)',
-  background: 'transparent',
+  border: '1px solid transparent',
+  background: 'var(--dsc-control-bg, transparent)',
   color: disabled ? 'var(--dsw-alias-label-secondary)' : 'var(--dsw-alias-label-primary)',
   cursor: disabled ? 'not-allowed' : 'pointer',
   opacity: disabled ? 0.5 : 1,
@@ -345,7 +362,8 @@ const historyOverlayStyle: CSSProperties = {
   // DSH's overlay token is opaque in both themes; the fallbacks keep the panel
   // opaque even if a token is ever missing (a see-through list over the
   // transcript would be worse than a plain background).
-  background: 'var(--dsw-alias-bg-overlay, var(--dsw-alias-bg-layer-1, Canvas))',
+  background: 'var(--dsw-specific-menu, var(--dsw-alias-bg-overlay, Canvas))',
+  backdropFilter: 'var(--dsw-menu-backdrop-filter, none)',
   boxShadow: '0 6px 20px rgba(0, 0, 0, 0.22)',
 }
 
@@ -374,7 +392,9 @@ const historyItemStyle = (active: boolean, disabled: boolean): CSSProperties => 
   padding: '4px 8px',
   border: 'none',
   borderRadius: 6,
-  background: active ? 'var(--dsw-alias-interactive-bg-hover)' : 'transparent',
+  background: active
+    ? 'var(--dsc-control-bg, var(--dsw-alias-interactive-bg-hover))'
+    : 'var(--dsc-control-bg, transparent)',
   color: 'var(--dsw-alias-label-primary)',
   cursor: disabled ? 'not-allowed' : 'pointer',
   opacity: disabled && !active ? 0.6 : 1,
@@ -440,19 +460,19 @@ function ComposerTogglePill({
 // --- Markdown rendering (Phase 07E) -----------------------------------------
 // Only DSH tokens are used; DeepSeek's private classes/CSS are never copied.
 
-const MONO_FONT = 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace'
+const MONO_FONT = 'var(--ds-font-family-code, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace)'
 
 const markdownRootStyle: CSSProperties = {
-  fontSize: 13,
-  lineHeight: '21px',
+  fontSize: 'var(--dsh-content-font-size, 14px)',
+  lineHeight: 1.6,
   color: 'var(--dsw-alias-label-primary)',
   overflowWrap: 'anywhere',
 }
 
 const headingStyle = (fontSize: number): CSSProperties => ({
-  fontSize,
+  fontSize: `calc(var(--dsh-content-font-size, 14px) + ${fontSize - 14}px)`,
   fontWeight: 600,
-  lineHeight: '24px',
+  lineHeight: 1.35,
   margin: '12px 0 6px',
   color: 'var(--dsw-alias-label-primary)',
 })
@@ -461,7 +481,7 @@ const listStyle: CSSProperties = { margin: '6px 0', paddingLeft: 20 }
 
 const codeBlockStyle: CSSProperties = {
   fontFamily: MONO_FONT,
-  fontSize: 12,
+  fontSize: 'var(--dsh-code-font-size, 12px)',
   lineHeight: '18px',
 }
 
@@ -567,7 +587,7 @@ const markdownComponents: Components = {
   },
   table: ({ children }) => (
     <div style={{ overflowX: 'auto', margin: '6px 0' }}>
-      <table style={{ borderCollapse: 'collapse', fontSize: 12 }}>{children}</table>
+      <table style={{ borderCollapse: 'collapse', fontSize: 'inherit' }}>{children}</table>
     </div>
   ),
   th: ({ children }) => (
@@ -711,7 +731,9 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
   const [removingId, setRemovingId] = useState<string | null>(null)
   const listRef = useRef<HTMLDivElement>(null)
   /** Floating history list and its trigger: a click inside either must NOT close it. */
-  const historyPanelRef = useRef<HTMLDivElement>(null)
+  const composingRef = useRef(false)
+  const followTranscriptRef = useRef(true)
+  const historyPanelRef = useRef<HTMLElement>(null)
   const historyButtonRef = useRef<HTMLButtonElement>(null)
   /** The hidden image input: `value` is reset after each pick, so the same file can be re-picked. */
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -778,10 +800,15 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
     setSessions(null)
   }, [recoveryNotice])
 
-  // Keep the newest message in view.
+  // A deliberate conversation switch resumes following the new transcript.
+  useEffect(() => {
+    followTranscriptRef.current = true
+  }, [currentSession.id])
+
+  // Follow incoming content only while the reader is near the bottom.
   useEffect(() => {
     const list = listRef.current
-    if (list !== null) list.scrollTop = list.scrollHeight
+    if (list !== null && followTranscriptRef.current) list.scrollTop = list.scrollHeight
   }, [messages, busy])
 
   // The history list floats ABOVE the transcript (Phase 08 UI fix), so closing
@@ -790,21 +817,42 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
   // exist while the list is open; the 「历史会话」 button keeps toggling as before.
   useEffect(() => {
     if (!historyOpen) return undefined
+    const ownerDocument = historyButtonRef.current?.ownerDocument
+    if (ownerDocument === undefined) return undefined
     const onMouseDown = (event: MouseEvent): void => {
       const target = event.target
-      if (!(target instanceof Node)) return
-      if (historyPanelRef.current?.contains(target) === true) return
-      if (historyButtonRef.current?.contains(target) === true) return
+      if (target === null || !('nodeType' in target)) return
+      if (historyPanelRef.current?.contains(target as Node) === true) return
+      if (historyButtonRef.current?.contains(target as Node) === true) return
       setHistoryOpen(false)
     }
     const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') setHistoryOpen(false)
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        setHistoryOpen(false)
+        historyButtonRef.current?.focus()
+      }
+      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        const target = event.target
+        if (target === null || !('nodeType' in target)) return
+        if (!historyPanelRef.current?.contains(target as Node) && !historyButtonRef.current?.contains(target as Node))
+          return
+        const entries = Array.from(
+          historyPanelRef.current?.querySelectorAll<HTMLButtonElement>('button:not(:disabled)') ?? [],
+        )
+        if (entries.length === 0) return
+        event.preventDefault()
+        const index = entries.indexOf(ownerDocument.activeElement as HTMLButtonElement)
+        const next =
+          event.key === 'ArrowDown' ? (index + 1) % entries.length : (index <= 0 ? entries.length : index) - 1
+        entries[next]?.focus()
+      }
     }
-    document.addEventListener('mousedown', onMouseDown)
-    document.addEventListener('keydown', onKeyDown)
+    ownerDocument.addEventListener('mousedown', onMouseDown)
+    ownerDocument.addEventListener('keydown', onKeyDown)
     return () => {
-      document.removeEventListener('mousedown', onMouseDown)
-      document.removeEventListener('keydown', onKeyDown)
+      ownerDocument.removeEventListener('mousedown', onMouseDown)
+      ownerDocument.removeEventListener('keydown', onKeyDown)
     }
   }, [historyOpen])
 
@@ -969,10 +1017,10 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
   }
 
   const toggleHistory = (): void => {
-    if (pageBusy || loadingSessions) return
+    if (pageBusy) return
     const next = !historyOpen
     setHistoryOpen(next)
-    if (next) void loadSessions()
+    if (next && !loadingSessions) void loadSessions()
   }
 
   /**
@@ -1097,7 +1145,14 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
           无法确认原会话状态；已保留聊天记录。请新建聊天或切换历史会话后继续。
         </div>
       ) : null}
-      <div ref={listRef} style={messagesStyle}>
+      <div
+        ref={listRef}
+        data-companion-transcript=""
+        style={messagesStyle}
+        onScroll={(event) => {
+          followTranscriptRef.current = shouldFollowTranscript(event.currentTarget)
+        }}
+      >
         {messages.length === 0 ? <div style={hintStyle}>输入消息开始对话</div> : null}
         {messages.map((message) => {
           const reasoning = message.role === 'assistant' ? message.reasoning : undefined
@@ -1131,7 +1186,11 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
         })}
         {busy ? <div style={messageRowStyle('assistant', 'text')}>正在回复…</div> : null}
       </div>
-      {visibleError !== null ? <div style={errorStyle}>{visibleError}</div> : null}
+      {visibleError !== null ? (
+        <div role="alert" style={errorStyle}>
+          {uiErrorText(visibleError)}
+        </div>
+      ) : null}
       <div style={composerAreaStyle}>
         {/* History list (Phase 08 UI fix): an OVERLAY floating ABOVE the
             controls row, so opening it costs the transcript no height AND the
@@ -1139,7 +1198,12 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
             disabled while a page operation is in flight; the transcript itself
             is always the Host's push, never a local copy. */}
         {historyOpen ? (
-          <div ref={historyPanelRef} style={historyOverlayStyle}>
+          <section
+            ref={historyPanelRef}
+            data-companion-history=""
+            aria-label="DeepSeek 历史会话"
+            style={historyOverlayStyle}
+          >
             {sessions === null ? <div style={historyHintStyle}>{loadingSessions ? '读取中…' : '暂无数据'}</div> : null}
             {sessions !== null && sessions.length === 0 ? <div style={historyHintStyle}>没有可用的历史会话</div> : null}
             {(sessions ?? []).map((session) => {
@@ -1162,7 +1226,7 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
                 </button>
               )
             })}
-          </div>
+          </section>
         ) : null}
         <div style={controlsRowStyle}>
           <ComposerTogglePill
@@ -1185,9 +1249,10 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
           <button
             ref={historyButtonRef}
             type="button"
-            style={historyButtonStyle(pageBusy || loadingSessions)}
-            disabled={pageBusy || loadingSessions}
+            style={historyButtonStyle(pageBusy)}
+            disabled={pageBusy}
             title="查看并切换 DeepSeek 历史会话"
+            aria-expanded={historyOpen}
             onClick={toggleHistory}
           >
             {historyOpen ? '收起历史' : '历史会话'}
@@ -1236,7 +1301,7 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
             ))}
           </div>
         ) : null}
-        <div style={inputRowStyle}>
+        <div data-companion-input="" style={inputRowStyle}>
           {/* The picker (Phase 18A). Disabled while the page is busy or a draft
               image is still uploading; the Host validates everything again. */}
           <input
@@ -1259,10 +1324,23 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
           <textarea
             style={inputStyle}
             value={input}
+            aria-label="输入消息"
             placeholder="输入消息…"
             onChange={(event) => setInput(event.target.value)}
+            onCompositionStart={() => {
+              composingRef.current = true
+            }}
+            onCompositionEnd={() => {
+              composingRef.current = false
+            }}
             onKeyDown={(event) => {
-              if (event.key === 'Enter' && !event.shiftKey) {
+              if (
+                shouldSubmitMessage({
+                  key: event.key,
+                  shiftKey: event.shiftKey,
+                  isComposing: event.nativeEvent.isComposing || composingRef.current,
+                })
+              ) {
                 event.preventDefault()
                 void send()
               }

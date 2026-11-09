@@ -59,7 +59,8 @@
     "lint": "biome lint src tests --error-on-warnings",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "build": "tsdown && tsdown --config tsdown.client.config.ts",
-    "test": "node --test tests/*.test.ts"
+    "test": "node --test tests/*.test.ts",
+    "test:ui": "node --test tests/browser/*.test.ts"
   },
   "keywords": [
     "dsh",

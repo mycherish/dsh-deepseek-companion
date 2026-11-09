@@ -1,15 +1,7 @@
-/**
- * Pop-out window shell (Phase 06A).
- *
- * DSH 0.1.5-rc.2 exposes no pop-out / detached-window API, so we use the
- * browser-native `window.open`. The pop-out is a local UI shell only: it renders
- * the same "Coming soon" placeholder through the host-provided React runtime
- * (`react-dom/client` from the module loader) and shares no state with the dock.
- * Its lifecycle belongs to the Client plugin: closing the dock never closes the
- * pop-out, but disposing the plugin or unloading the parent does.
- */
+/** Browser-native single Pop-out, sharing Host state through ChatView. */
 import { createElement } from 'react'
 import { createRoot } from 'react-dom/client'
+import { syncPopoutTheme } from './popout-theme.ts'
 import { CompanionPopout } from './CompanionPopout.tsx'
 
 /** Fixed window name keeps a single pop-out instance. */
@@ -19,15 +11,7 @@ const POPOUT_WINDOW_NAME = 'dsh-deepseek-companion-popout'
 const POPOUT_WIDTH = 480
 const POPOUT_HEIGHT = 720
 
-/** DSH tokens copied from the parent so the pop-out matches the current theme. */
-const POPOUT_TOKENS = [
-  '--dsw-alias-bg-base',
-  '--dsw-alias-border-l3',
-  '--dsw-alias-label-primary',
-  '--dsw-alias-label-secondary',
-  '--dsw-alias-interactive-bg-hover',
-  '--dsw-alias-interactive-bg-active',
-] as const
+let disposePresentation: (() => void) | null = null
 
 let popupWindow: Window | null = null
 let popupRoot: ReturnType<typeof createRoot> | null = null
@@ -38,6 +22,8 @@ export function isPopupAlive(): boolean {
 }
 
 function closePopout(): void {
+  disposePresentation?.()
+  disposePresentation = null
   if (popupRoot !== null) {
     try {
       popupRoot.unmount()
@@ -52,16 +38,7 @@ function closePopout(): void {
   popupWindow = null
 }
 
-/** Copy the parent's DSH theme tokens into the pop-out document (no hard-coded colors). */
-function applyTokens(doc: Document): void {
-  const parentStyle = getComputedStyle(document.documentElement)
-  for (const token of POPOUT_TOKENS) {
-    const value = parentStyle.getPropertyValue(token).trim()
-    if (value !== '') doc.documentElement.style.setProperty(token, value)
-  }
-}
-
-/** Build the minimal pop-out document shell and mount the React placeholder. */
+/** Build the detached document and mount the shared state view. */
 function renderPopout(win: Window): void {
   const doc = win.document
   doc.title = 'DeepSeek Companion'
@@ -69,7 +46,13 @@ function renderPopout(win: Window): void {
   doc.documentElement.style.cssText = 'height:100%;margin:0'
   doc.body.style.cssText = 'height:100%;margin:0;overflow:hidden;background:var(--dsw-alias-bg-base)'
 
-  applyTokens(doc)
+  const stopSync = syncPopoutTheme(window, win)
+  const onPageHide = () => closePopout()
+  win.addEventListener('pagehide', onPageHide)
+  disposePresentation = () => {
+    stopSync()
+    win.removeEventListener('pagehide', onPageHide)
+  }
 
   const container = doc.createElement('div')
   container.style.cssText = 'height:100%'
@@ -90,8 +73,7 @@ export function openPopout(): void {
     return
   }
   // Drop stale references left by a manually closed window.
-  popupWindow = null
-  popupRoot = null
+  closePopout()
 
   const win = window.open(
     'about:blank',

@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react'
 import type { DockController } from './index.ts'
+import { CompanionStyles } from './CompanionStyles.tsx'
+import { HeaderIconButton } from './HeaderIconButton.tsx'
 import { ChatView } from './ChatView.tsx'
 import {
   clampFloatPosition,
@@ -25,7 +27,7 @@ const rootStyle: CSSProperties = {
   borderRadius: 12,
   boxShadow: '0 12px 32px rgba(0, 0, 0, 0.28)',
   zIndex: 1000,
-  fontSize: 14,
+  fontSize: 'var(--dsh-content-font-size, 14px)',
 }
 
 const headerStyle: CSSProperties = {
@@ -43,7 +45,7 @@ const headerStyle: CSSProperties = {
 }
 
 const titleStyle: CSSProperties = {
-  fontSize: 14,
+  fontSize: 'var(--dsh-content-font-size, 14px)',
   fontWeight: 600,
   color: 'var(--dsw-alias-label-primary)',
   pointerEvents: 'none',
@@ -53,55 +55,6 @@ const headerActionsStyle: CSSProperties = {
   display: 'flex',
   alignItems: 'center',
   gap: 2,
-}
-
-/** Small header icon button with DSH hover / active feedback. */
-function HeaderIconButton({
-  label,
-  onClick,
-  fontSize = 18,
-  children,
-}: {
-  label: string
-  onClick: () => void
-  fontSize?: number
-  children: string
-}): JSX.Element {
-  const [hovered, setHovered] = useState(false)
-  const [pressed, setPressed] = useState(false)
-  const background = pressed
-    ? 'var(--dsw-alias-interactive-bg-active)'
-    : hovered
-      ? 'var(--dsw-alias-interactive-bg-hover)'
-      : 'transparent'
-  return (
-    <button
-      type="button"
-      aria-label={label}
-      onClick={onClick}
-      onPointerEnter={() => setHovered(true)}
-      onPointerLeave={() => {
-        setHovered(false)
-        setPressed(false)
-      }}
-      onPointerDown={() => setPressed(true)}
-      onPointerUp={() => setPressed(false)}
-      onPointerCancel={() => setPressed(false)}
-      style={{
-        border: 'none',
-        background,
-        color: 'var(--dsw-alias-label-secondary)',
-        cursor: 'pointer',
-        fontSize,
-        lineHeight: 1,
-        padding: '4px 6px',
-        borderRadius: 6,
-        transition: 'background 120ms ease',
-      }}
-    >
-      {children}
-    </button>
-  )
 }
 
 const bodyStyle: CSSProperties = {
@@ -242,9 +195,11 @@ export function CompanionFloat({ dock }: { dock: DockController }): JSX.Element 
 
   return (
     <section
+      data-companion-root=""
       aria-label="DeepSeek Companion"
       style={{ ...rootStyle, left: position.x, top: position.y, width: size.width, height: size.height }}
     >
+      <CompanionStyles />
       <header
         style={headerStyle}
         onPointerDown={onHeaderPointerDown}
@@ -254,10 +209,10 @@ export function CompanionFloat({ dock }: { dock: DockController }): JSX.Element 
       >
         <span style={titleStyle}>DeepSeek Companion</span>
         <div style={headerActionsStyle}>
-          <HeaderIconButton label="Dock DeepSeek Companion" onClick={dock.dockBack} fontSize={16}>
+          <HeaderIconButton label="Dock DeepSeek Companion" onClick={dock.dockBack}>
             ◧
           </HeaderIconButton>
-          <HeaderIconButton label="Open DeepSeek Companion in new window" onClick={dock.openPopout} fontSize={16}>
+          <HeaderIconButton label="Open DeepSeek Companion in new window" onClick={dock.openPopout}>
             ↗
           </HeaderIconButton>
           <HeaderIconButton label="Close DeepSeek Companion" onClick={dock.close}>

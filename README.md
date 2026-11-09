@@ -6,7 +6,7 @@ DeepSeek Web Companion plugin for [DeepSeek Harness](https://github.com/deepseek
 
 ## 首版发布路线
 
-FR-2 功能缺口与缺陷收口已完成阶段审核，本提交保存本阶段结果，尚未发布；下一阶段先审核 DSH 风格 UI 与轻动效方案。最终冻结包的完整发布矩阵仍在 FR-4 执行。
+FR-2 已提交；FR-3 的 DSH 风格界面与轻动效已实现并通过阶段 Review，本次提交保存 FR-3，尚未发布。三窗口主题 / 字体跟随、输入法保护与界面验收见 [FR-3 记录](docs/fr3-ui-design.md)。下一阶段为 FR-4 最终冻结包的完整发布矩阵。
 
 当前目标是完成首个市场版本：**市场与安装准备 → 功能缺口与缺陷收口 → DSH 风格 UI 与轻动效 → RC 冻结验收 → 发布与市场实装**。Proxy、Handoff、Task Brief 和 Desktop 独立安排。后续工作统一按 [首版执行计划](docs/first-release.md) 推进，每次一个阶段，完成后测试、审核并更新证据。
 
@@ -44,6 +44,8 @@ pnpm lint
 pnpm typecheck
 pnpm build
 pnpm test
+# 已准备匹配 Chromium 后，运行实际组件的本地浏览器交互回归
+pnpm test:ui
 ```
 
 ## Web 插件安装预览

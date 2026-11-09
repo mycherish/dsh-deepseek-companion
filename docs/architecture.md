@@ -49,6 +49,12 @@ React Client 只负责渲染，**不得**成为聊天状态的唯一 Owner。
 - 不 monkey patch DSH。
 - 不使用 DSH 私有 API。
 
+### Client 样式与分离窗口（FR-3）
+
+Dock / Float / Pop-out 共享局部 `CompanionStyles` 和标题栏控件，字体、字号与颜色使用宿主公开 CSS token。分离窗口通过 `syncPopoutTheme` 读取主页面 body 的解析样式并同步公开 token；标准 MutationObserver 仅观察 html / body 的主题呈现属性，另订阅系统色彩偏好。关闭、重开与插件 dispose 均解除观察和监听，不依赖宿主私有服务或写设置。轻动效为局部 CSS，减少动态效果时关闭。
+
+历史菜单使用控件自身 ownerDocument 处理外部点击、Esc 与局部方向键，避免跨窗口事件失效或抢占宿主编辑器；组合输入使用现代 composition 状态阻止误发。流式内容只在读者接近底部时跟随，显式切换会话后重置。Host 仍拥有消息与恢复门控；样式、焦点和滚动调整不改变发送、附件归属与 reconcile 协议。验收见 [FR-3 记录](fr3-ui-design.md)。
+
 ### 兼容性策略
 
 - 当前 Web 候选 `0.1.0-preview.2` 的运行时范围为 `0.1.5-rc.2 || 0.2.1-rc.2`；六个 DSH 开发类型包固定至 `0.2.1-rc.2`，运行 Cordis peer 兼容旧版。安装、界面与 SSE 已在两个固定版本复验；新版已登录核心聊天、图片、SSE 与 Chromium 恢复矩阵已复验，插件升级/回退在共同宿主 `0.1.5-rc.2` 上已验收（不覆盖宿主迁移），会话正常 / 删除 / 不确定三路径已补验，主要 Web 的图片安全已补验，页面故障恢复已在新旧固定 Web 补验，Search 真实来源及未映射降级已补验，结构化引用继续尽力恢复，官方 Desktop 尚不支持。证据与边界见 [web-compatibility.md](web-compatibility.md)。

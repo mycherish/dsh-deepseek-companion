@@ -1,4 +1,6 @@
 import type { CSSProperties } from 'react'
+import { CompanionStyles } from './CompanionStyles.tsx'
+import { HeaderIconButton } from './HeaderIconButton.tsx'
 import { ChatView } from './ChatView.tsx'
 
 const rootStyle: CSSProperties = {
@@ -7,7 +9,7 @@ const rootStyle: CSSProperties = {
   height: '100%',
   background: 'var(--dsw-alias-bg-base)',
   color: 'var(--dsw-alias-label-primary)',
-  fontSize: 14,
+  fontSize: 'var(--dsh-content-font-size, 14px)',
 }
 
 const headerStyle: CSSProperties = {
@@ -22,20 +24,9 @@ const headerStyle: CSSProperties = {
 }
 
 const titleStyle: CSSProperties = {
-  fontSize: 14,
+  fontSize: 'var(--dsh-content-font-size, 14px)',
   fontWeight: 600,
   color: 'var(--dsw-alias-label-primary)',
-}
-
-const closeStyle: CSSProperties = {
-  border: 'none',
-  background: 'transparent',
-  color: 'var(--dsw-alias-label-secondary)',
-  cursor: 'pointer',
-  fontSize: 18,
-  lineHeight: 1,
-  padding: '4px 6px',
-  borderRadius: 6,
 }
 
 const bodyStyle: CSSProperties = {
@@ -50,12 +41,13 @@ const bodyStyle: CSSProperties = {
 /** Minimal pop-out shell: header + shared Host-state view. */
 export function CompanionPopout({ onClose, origin }: { onClose: () => void; origin: string }): JSX.Element {
   return (
-    <div style={rootStyle}>
+    <div data-companion-root="" style={rootStyle}>
+      <CompanionStyles />
       <header style={headerStyle}>
         <span style={titleStyle}>DeepSeek Companion</span>
-        <button type="button" aria-label="Close DeepSeek Companion" onClick={onClose} style={closeStyle}>
+        <HeaderIconButton label="Close DeepSeek Companion" onClick={onClose}>
           ×
-        </button>
+        </HeaderIconButton>
       </header>
       <div style={bodyStyle}>
         <ChatView origin={origin} />

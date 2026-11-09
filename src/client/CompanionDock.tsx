@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react'
 import type { CompanionSurface, DockController } from './index.ts'
+import { CompanionStyles } from './CompanionStyles.tsx'
+import { HeaderIconButton } from './HeaderIconButton.tsx'
 import { ChatView } from './ChatView.tsx'
 import { clampDockWidth, widthFromPointer } from './resize.ts'
 
@@ -16,7 +18,7 @@ const headerStyle: CSSProperties = {
 }
 
 const titleStyle: CSSProperties = {
-  fontSize: 14,
+  fontSize: 'var(--dsh-content-font-size, 14px)',
   fontWeight: 600,
   color: 'var(--dsw-alias-label-primary)',
 }
@@ -27,62 +29,13 @@ const headerActionsStyle: CSSProperties = {
   gap: 2,
 }
 
-/** Small header icon button (↗ / ×) with DSH hover / active feedback. */
-function HeaderIconButton({
-  label,
-  onClick,
-  fontSize = 18,
-  children,
-}: {
-  label: string
-  onClick: () => void
-  fontSize?: number
-  children: string
-}): JSX.Element {
-  const [hovered, setHovered] = useState(false)
-  const [pressed, setPressed] = useState(false)
-  const background = pressed
-    ? 'var(--dsw-alias-interactive-bg-active)'
-    : hovered
-      ? 'var(--dsw-alias-interactive-bg-hover)'
-      : 'transparent'
-  return (
-    <button
-      type="button"
-      aria-label={label}
-      onClick={onClick}
-      onPointerEnter={() => setHovered(true)}
-      onPointerLeave={() => {
-        setHovered(false)
-        setPressed(false)
-      }}
-      onPointerDown={() => setPressed(true)}
-      onPointerUp={() => setPressed(false)}
-      onPointerCancel={() => setPressed(false)}
-      style={{
-        border: 'none',
-        background,
-        color: 'var(--dsw-alias-label-secondary)',
-        cursor: 'pointer',
-        fontSize,
-        lineHeight: 1,
-        padding: '4px 6px',
-        borderRadius: 6,
-        transition: 'background 120ms ease',
-      }}
-    >
-      {children}
-    </button>
-  )
-}
-
 const bodyStyle: CSSProperties = {
   flex: 1,
   display: 'flex',
   flexDirection: 'column',
   minHeight: 0,
   padding: 12,
-  fontSize: 14,
+  fontSize: 'var(--dsh-content-font-size, 14px)',
   color: 'var(--dsw-alias-label-secondary)',
 }
 
@@ -199,7 +152,7 @@ function ResizeHandle({ dock }: { dock: DockController }): JSX.Element {
   )
 }
 
-/** Shared Companion dock body: header + Coming-soon placeholder (+ overlay resize handle). */
+/** Shared Companion dock body: header + shared Host-state view (+ overlay resize handle). */
 export function CompanionDock({ dock, variant }: { dock: DockController; variant: CompanionSurface }): JSX.Element {
   const dockWidth = useSyncExternalStore(dock.subscribe, dock.dockWidth)
 
@@ -211,15 +164,16 @@ export function CompanionDock({ dock, variant }: { dock: DockController; variant
   }, [variant, dock])
 
   return (
-    <aside aria-label="DeepSeek Companion" style={surfaceStyle(variant, dockWidth)}>
+    <aside data-companion-root="" aria-label="DeepSeek Companion" style={surfaceStyle(variant, dockWidth)}>
+      <CompanionStyles />
       {variant === 'overlay' ? <ResizeHandle dock={dock} /> : null}
       <header style={headerStyle}>
         <span style={titleStyle}>DeepSeek</span>
         <div style={headerActionsStyle}>
-          <HeaderIconButton label="在页面内浮动" onClick={dock.enterFloat} fontSize={16}>
+          <HeaderIconButton label="在页面内浮动" onClick={dock.enterFloat}>
             □
           </HeaderIconButton>
-          <HeaderIconButton label="Open DeepSeek Companion in new window" onClick={dock.openPopout} fontSize={16}>
+          <HeaderIconButton label="Open DeepSeek Companion in new window" onClick={dock.openPopout}>
             ↗
           </HeaderIconButton>
           <HeaderIconButton label="Close DeepSeek Companion" onClick={dock.close}>
