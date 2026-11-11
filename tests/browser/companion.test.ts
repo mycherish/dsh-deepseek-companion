@@ -277,11 +277,23 @@ test('FR-3 rendered interactions and detached window lifecycle', { timeout: 9000
       composer: {
         ...s.composer,
         attachments: [
-          { id: 'failed', name: 'failed.png', mimeType: 'image/png', bytes: 256, status: 'error', error: '上传失败' },
+          {
+            id: 'failed',
+            name: 'failed.png',
+            mimeType: 'image/png',
+            bytes: 256,
+            status: 'error',
+            // The Host stores the internal reason; the card must not show it.
+            error: 'page.waitForResponse: Timeout 10000ms exceeded while waiting for event "response"',
+          },
         ],
       },
     })
     await page.getByText('failed.png', { exact: true }).waitFor()
+    await page.getByText('失败，请重试', { exact: false }).first().waitFor()
+    assert.equal(await page.getByText(/waitForResponse/).count(), 0, 'internal error text leaked into the UI')
+    // ...but it must still reach the card tooltip, or diagnosis is silently lost.
+    assert.equal(await page.getByTitle(/waitForResponse/).count(), 1, 'diagnostic title lost')
     assert.equal(await page.getByRole('button', { name: '移除 failed.png', exact: true }).isEnabled(), true)
     assert.equal(await page.getByRole('button', { name: '发送', exact: true }).isDisabled(), true)
     publish({

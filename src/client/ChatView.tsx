@@ -17,6 +17,7 @@ import {
 } from './api.ts'
 import {
   IMAGE_MIME_TYPES,
+  attachmentCardTitle,
   attachmentStatusText,
   canPickAttachment,
   canSendRound,
@@ -1274,7 +1275,11 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
         {attachments.length > 0 ? (
           <div style={attachmentRowStyle}>
             {attachments.map((attachment) => (
-              <div key={attachment.id} style={attachmentCardStyle(attachment.status)} title={attachment.name}>
+              <div
+                key={attachment.id}
+                style={attachmentCardStyle(attachment.status)}
+                title={attachmentCardTitle(attachment)}
+              >
                 <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
                   <path
                     d="M3.5 2h9A1.5 1.5 0 0 1 14 3.5v9A1.5 1.5 0 0 1 12.5 14h-9A1.5 1.5 0 0 1 2 12.5v-9A1.5 1.5 0 0 1 3.5 2Zm0 1a.5.5 0 0 0-.5.5v9a.5.5 0 0 0 .5.5h9a.5.5 0 0 0 .5-.5v-9a.5.5 0 0 0-.5-.5h-9Z"

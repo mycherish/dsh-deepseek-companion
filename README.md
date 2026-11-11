@@ -1,77 +1,75 @@
-# dsh-deepseek-companion
+# DeepSeek Companion for DSH
 
-DeepSeek Web Companion plugin for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (DSH)。
+在 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 中使用自己的 DeepSeek 网页账号聊天，提供 Dock、页内 Float 与独立 Pop-out 三种窗口。
 
-> 当前候选：`0.1.0-preview.2`（兼容改动已审核，未发布）。macOS 上已验证 DSH Web `0.1.5-rc.2` 与 `0.2.1-rc.2` 的安装、界面与 SSE；新版已登录文本、Deep Think/Search、跨窗口 Stop、图片历史、SSE 和 Chromium 恢复核心矩阵已通过；插件升级/回退已在共同宿主 `0.1.5-rc.2` 验收，会话正常 / 删除 / 不确定三路径已补验，图片安全已在新版补验，页面 close / crash / 失效恢复已在新旧固定 Web 补验，Search 真实来源与未映射降级已补验，结构化引用继续尽力恢复，官方 Desktop 未支持。范围与证据见 [新版 Web 兼容记录](docs/web-compatibility.md)，功能和剩余工作见 [预览版本说明](docs/release-preview.md)。
+版本：`0.1.0`。支持范围限定为 **macOS、本地 DSH Web `0.1.5-rc.2` / `0.2.1-rc.2`、Playwright `1.62.0` 匹配的 Chromium**。官方 `0.2.2-rc.1`、Desktop、其它系统 / 浏览器和远程无界面部署不在兼容声明内。版本号不代表已发布；公开版本与验收状态以 [Releases](https://github.com/mycherish/dsh-deepseek-companion/releases) 和 [首版执行计划](https://github.com/mycherish/dsh-deepseek-companion/blob/main/docs/first-release.md) 为准。
 
-## 首版发布路线
+## 功能与边界
 
-FR-2 已提交；FR-3 的 DSH 风格界面与轻动效已实现并通过阶段 Review，本次提交保存 FR-3，尚未发布。三窗口主题 / 字体跟随、输入法保护与界面验收见 [FR-3 记录](docs/fr3-ui-design.md)。下一阶段为 FR-4 最终冻结包的完整发布矩阵。
+- 文本流式、Markdown / 代码、Deep Think、Search、跨窗口 Stop、新建及历史会话切换。
+- PNG / JPEG / WebP / GIF 图文与纯图片发送；历史图片失效时保留文件名。
+- 三窗口共享 Host 消息和状态；Float 可拖动、缩放，主题与可用字体设置跟随 DSH。
+- SSE 断流重连、页面 / Chromium 恢复及严格身份原地补全；不确定时保留消息并阻止发送，不自动重发。
+- 键盘焦点、组合输入保护、阅读历史时不抢滚动，以及支持减少动态效果的轻动效。
 
-当前目标是完成首个市场版本：**市场与安装准备 → 功能缺口与缺陷收口 → DSH 风格 UI 与轻动效 → RC 冻结验收 → 发布与市场实装**。Proxy、Handoff、Task Brief 和 Desktop 独立安排。后续工作统一按 [首版执行计划](docs/first-release.md) 推进，每次一个阶段，完成后测试、审核并更新证据。
+这是网页聊天工具，不是 DeepSeek API Provider 或 OpenAI-compatible Gateway。它不消耗 DeepSeek API 余额，但受网页账号限制和风控约束。**DSH 登录与 DeepSeek 网页登录是两套状态**；登录 DSH 不会自动登录 DeepSeek。
 
-官方 DSH 的 Discover 需要启用 Custom plugin markets 并添加索引源；本插件尚未公开发布或完成市场安装验收。首版按公开 npm 包与可添加的 HTTPS 索引准备，具体发布路径与完成条件见计划。
+Search 只把真实取得并准确映射的来源变为链接，未映射编号保留为普通文本。极快连续发送的空 parent anchor、树形历史保持安全拒绝；SSE 静默半开没有主动心跳探测。首版没有文档附件、Proxy、多账号、Handoff 或 Host 消息持久化；不要把 Host 重启等同于浏览器恢复。
 
-## 目标
+## 安装与首次登录
 
-在 DSH 中提供一个可停靠、可独立窗口打开的 DeepSeek 网页聊天工具（Companion），
-复用用户自己的 `chat.deepseek.com` 登录状态进行聊天。
-
-## 明确不是
-
-- **不是** DeepSeek API Provider。
-- **不是** OpenAI-compatible Gateway。
-- **不消耗** DeepSeek API 余额；但仍受 DeepSeek 网页端本身的使用限制与风控约束。
-
-## 当前进度
-
-已完成 **Phase 01–08.2**：插件骨架与注入 → Host State / HTTP+SSE → 常驻浏览器与登录 → 文本聊天（流式、Markdown、Deep Think、智能搜索、引用、Stop、新建会话）→ 历史会话列表 / 切换 / 外部导航同步 → 统一状态模型收口。
-
-已完成 **Phase 18A 图片发送**：在 Companion 里选择 PNG / JPEG / WebP / GIF → 经真实 DeepSeek 页面上传 → composer 显示 attachment card（**不显示像素缩略图**）→ 随文本或单独发送；发送时用 completion 请求的 `ref_file_ids` 精确校验，绝不谎报图片已发送。8 个核心场景已在真实环境验收；外部页面手动挂图 / 删图与失败卡片移除已于 2026-11-06 在主要 Web 宿主补验（精确范围见发布验收记录）。**Phase 18B 历史图片恢复已实现**：历史 user 消息中的图片按同一 `.ds-message` 结构归属回填；纯图片消息保留；签名 URL 失效时显示文件名。真实 Chromium 的 3 个图文历史会话通过 reader 复验；2026-10-16 在临时 DSH Web/Chromium 中完成 Client 界面复验，图文混合、纯图片以及图片加载失败后的文件名降级均通过。详见 [docs/architecture.md](docs/architecture.md) 与 [docs/roadmap.md](docs/roadmap.md)。
-
-已完成 **Phase 20A Browser Recovery**：DeepSeek 页面 / Chromium 异常关闭、崩溃、失联或失效后，Host 自动恢复（重建 page 或重启 persistent browser，复用同一 profile 保留登录态），不需要刷新 / 重启 DSH；恢复期间 `connection` 显示 `recovering` 并禁用发送，恢复完成后继续聊天，**绝不自动重发用户消息**。真实故障注入（page close / crash / about:blank / kill Chromium / 流式中 kill / 并发）已全部通过（详见 [docs/architecture.md](docs/architecture.md) 的 Phase 20 §0）。**Phase 20B1 会话回填已实现**：恢复后读取 DeepSeek 自身的 IndexedDB 会话快照，用三层 identity（已有 id / parent-anchor / strict bootstrap）绑定服务端 message id 并原地 patch —— 绝不 destructive replace、不丢附件、不重复消息、不自动重发。真机确认「不丢 / 不重 / 不重发 / 不 full replace」，并能在 commit 后崩溃与流式中崩溃两种情况下**原地补回服务端已完成的回复**：恢复后只让前端自己重新拉取一次 history（Host 仅做一次 bounded reload，不删 IndexedDB、不调 history API、不碰 token/cookie），idle 恢复不受影响（详见 [docs/architecture.md](docs/architecture.md) 的「实现与真机验收记录」与 §7.1）。**Phase 20B2 已实现**：仅在目标会话的前端 history 明确返回 not-found、页面重定向 `/` 且仍已登录时原子清理 Host 会话与消息；证据不足则保留消息、提示并禁用发送；成功恢复后从当前侧栏项刷新标题，三个界面显示恢复状态。正常/不存在会话恢复已用真实 Chromium 验证。
-
-> 尚未实现：文件（文档）附件、代理、Task Brief 等；18B Client 已完成 Web 界面复验 —— 详见路线图。
-
-已完成 **Web P0 Release Hardening** 的工程门禁、安装烟测与最小版回归，以及浮窗窄屏修复、SSE 断流退避重连和 dispose 清理。断流期间保留消息与输入，收到有效新快照后恢复操作；不自动重发聊天。已完成部分的证据见 [验收记录](docs/release-hardening.md)，预览发布准备与剩余验收见 [预览版本说明](docs/release-preview.md)。
-
-## 开发
+先运行 `dsh --version`，确认宿主属于上述两个固定版本。公开版本在 registry 可用后，通过官方 bundle 命令安装：
 
 ```sh
-pnpm install
-pnpm format:check
-pnpm lint
-pnpm typecheck
-pnpm build
-pnpm test
-# 已准备匹配 Chromium 后，运行实际组件的本地浏览器交互回归
-pnpm test:ui
-```
-
-## Web 插件安装预览
-
-当前 Web 候选的 `engines.dsh` 精确限定为 `0.1.5-rc.2 || 0.2.1-rc.2`，不是对所有中间版本或 Desktop 的支持声明。先确认 `dsh --version` 为其中一个版本，不通过版本豁免绕过。在开发仓库构建并打包：
-
-```sh
-pnpm install --frozen-lockfile
-pnpm build
-pnpm pack --pack-destination dist/release
-PACKAGE_TGZ="$(pwd)/dist/release/dsh-deepseek-companion-0.1.0-preview.2.tgz"
-dsh --profile web --dump-config > /dev/null
-dsh plugin --profile web add "$PACKAGE_TGZ"
+dsh plugin --profile web add dsh-deepseek-companion@0.1.0
 dsh plugin --profile web exec playwright --version
 dsh plugin --profile web exec playwright install chromium --no-shell
 dsh --profile web --no-open
 ```
 
-官方 `dsh plugin add` 会安装包并自动登记 `dsh.bundle`，启动时无需额外 `--patch` 或手工合并配置。`web` 替换为实际使用的 Web profile 名；`PACKAGE_TGZ` 须指向目标机器上的 tarball 绝对路径。Playwright 应显示 `1.62.0`，浏览器从安装后的 profile 准备，不依赖开发仓库或 `npx playwright@latest`。Companion 使用完整的可见 Chromium，`--no-shell` 省去额外的 Headless Shell。插件命令按顺序完成，不在同一 profile 上并行安装和更新。
+`web` 替换为实际 Web profile 名。Playwright 应显示 `1.62.0`；不要用 `playwright@latest` 代替安装后 profile 的匹配版本。Companion 使用完整可见 Chromium，`--no-shell` 省去额外的 Headless Shell。安装与运行使用同一用户；自定义 `PLAYWRIGHT_BROWSERS_PATH` 时，两者保持一致。
 
-曾按旧说明手工添加 Companion patch 的用户，先停机并备份配置，移除那一条旧的 Companion `insert` / 启动 `--patch`，保留其它条目，再使用 bundle 安装；避免重复加载同一插件。卸载使用 `dsh plugin --profile web remove dsh-deepseek-companion`，之后重启 DSH。普通卸载不负责删除 DeepSeek 登录目录。
+本地候选可把首条命令替换为 `dsh plugin --profile web add /path/to/dsh-deepseek-companion-0.1.0.tgz`。从源码构建候选的命令见下方开发说明，不把未发布草案当作公开包。
 
-`0.1.5-rc.2` 首次启动先点击官方测试提示的 **Continue**；模型配置可选择 **Configure later**。`0.2.1-rc.2` 首次显示预览版说明时点击 **继续 / Continue**，后续 **Get started** 引导弹窗可用关闭按钮或 Escape 关闭。无需为 Companion 填写 DSH API Key；完成宿主向导后打开 Companion，单独登录 DeepSeek 网页。安装缺少 Chromium 时会显示安装与重启提示。安装和运行使用同一用户，若自定义 `PLAYWRIGHT_BROWSERS_PATH`，两者保持一致。回退 preview.1 的宿主须为 `0.1.5-rc.2`，不覆盖 DSH 宿主升级 / 降级。
+官方 add 命令自动登记 bundle，无需手工 patch。曾手工加入旧 Companion patch 的用户，先停止 DSH 并备份配置，仅移除那条旧 Companion insert / 启动 patch，保留其它条目，避免重复加载。
 
-账号创建、免费托管、安装验证与当前待补发布信息见 [市场与安装准备](docs/market-installation.md)；既有升级 / 回退证据见 [升级/回退验收](docs/upgrade-rollback.md)。
+启动后正常完成宿主预览引导：旧版可选 Continue → Configure later，新版可点“继续”并关闭 Get started。无需为 Companion 配置 DSH API Key。打开侧栏 Companion 入口，在独立 DeepSeek 网页中登录；随后返回 Companion 聊天。首次缺 Chromium 时，按界面提示安装并重启 DSH。
 
-打包安装与真实 Web 烟测记录见 [docs/release-hardening.md](docs/release-hardening.md)。
+## 使用
 
-详见 [docs/roadmap.md](docs/roadmap.md) 与 [docs/architecture.md](docs/architecture.md)。
+- 在 Dock 标题栏切换 Float 或打开 Pop-out；三窗口共享消息和服务状态，输入框里的未发送文字属于各窗口本地草稿。
+- 用“图片”添加附件，等待就绪后发送；失败附件需移除或重试。页面与 Companion 草稿不一致时会拒绝发送，请先检查网页，不要假定图片已经发出。
+- 流式中使用“停止”；历史菜单支持上下方向键与 Esc，新建聊天或切换历史由 Host 确认后更新消息。
+- 发生连接或浏览器故障时保留消息和草稿。会话无法确认时发送被禁用，可按提示新建或切换历史；恢复不会自动重发原消息。
+
+官方 Discover 需要启用 Custom plugin markets 并添加索引，npm 发布不会自动进入所有用户的市场。拟用索引为 `https://mycherish.github.io/dsh-deepseek-companion/index.json`；是否可用及市场实装状态以仓库发布记录为准，不能直接添加 `index.draft.json`。
+
+## 升级、回退与卸载
+
+更新前停止对应 DSH 实例并保留上一份已验证归档，再用官方 add 命令安装目标确切版本。重启后确认实际版本、DeepSeek 登录和历史切换；未发送草稿和 Host 内存消息不承诺跨进程升级持久化。
+
+回退只使用同一宿主兼容的归档，不绕过 engines。`0.2.1-rc.2` 可选择兼容的 preview.2，不可安装仅支持旧宿主的 preview.1。首版没有上一公开版可供回退；预览归档测试与公开版本历史分别记录。
+
+```sh
+dsh plugin --profile web remove dsh-deepseek-companion
+```
+
+卸载后重启 DSH。普通卸载不删除 DeepSeek 登录目录，也不要手工删除整个 DSH_HOME。
+
+## 开发
+
+```sh
+pnpm install --frozen-lockfile
+pnpm format:check
+pnpm lint
+pnpm typecheck
+pnpm build
+pnpm test
+# 已准备匹配 Chromium 后运行本地协议的真实组件交互回归
+pnpm test:ui
+pnpm pack --pack-destination dist/release
+```
+
+设计、版本兼容和安装 / 恢复验收记录见 [docs](https://github.com/mycherish/dsh-deepseek-companion/tree/main/docs)。`test:ui` 不代替真实站点、操作系统输入法或最终包矩阵。
+
+问题反馈：[GitHub Issues](https://github.com/mycherish/dsh-deepseek-companion/issues)。请提供插件、宿主、操作系统和浏览器版本及复现步骤；不要附上 Cookie、token 或完整登录目录。

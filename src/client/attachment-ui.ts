@@ -19,13 +19,28 @@ export function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
-/** The status line of one draft card; a failure shows the Host's reason. */
+/**
+ * The status line of one draft card. A failure shows the user what to do next —
+ * never the Host's internal reason, which can be a Playwright message (found in
+ * FR-4 acceptance on a real failed upload). The raw reason stays in the card's
+ * tooltip (`attachmentCardTitle`) for diagnosis.
+ */
 export function attachmentStatusText(attachment: ComposerAttachment): string {
   if (attachment.status === 'uploading') return '上传中…'
-  if (attachment.status === 'error') {
-    return attachment.error !== undefined && attachment.error !== '' ? `失败 · ${attachment.error}` : '失败'
-  }
+  if (attachment.status === 'error') return '失败，请重试'
   return '已就绪'
+}
+
+/**
+ * The card's tooltip: the file name, plus the Host's diagnostic reason when the
+ * upload failed. Only a tooltip — user-facing copy comes from
+ * `attachmentStatusText`.
+ */
+export function attachmentCardTitle(attachment: ComposerAttachment): string {
+  if (attachment.status === 'error' && attachment.error !== undefined && attachment.error !== '') {
+    return `${attachment.name} — ${attachment.error}`
+  }
+  return attachment.name
 }
 
 /**

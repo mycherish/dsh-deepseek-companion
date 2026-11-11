@@ -57,7 +57,9 @@ Dock / Float / Pop-out 共享局部 `CompanionStyles` 和标题栏控件，字�
 
 ### 兼容性策略
 
-- 当前 Web 候选 `0.1.0-preview.2` 的运行时范围为 `0.1.5-rc.2 || 0.2.1-rc.2`；六个 DSH 开发类型包固定至 `0.2.1-rc.2`，运行 Cordis peer 兼容旧版。安装、界面与 SSE 已在两个固定版本复验；新版已登录核心聊天、图片、SSE 与 Chromium 恢复矩阵已复验，插件升级/回退在共同宿主 `0.1.5-rc.2` 上已验收（不覆盖宿主迁移），会话正常 / 删除 / 不确定三路径已补验，主要 Web 的图片安全已补验，页面故障恢复已在新旧固定 Web 补验，Search 真实来源及未映射降级已补验，结构化引用继续尽力恢复，官方 Desktop 尚不支持。证据与边界见 [web-compatibility.md](web-compatibility.md)。
+- 当前 `0.1.0` 本地发布候选继续精确限定 `0.1.5-rc.2 || 0.2.1-rc.2`，FR-4 进行中、未发布，完整最终矩阵以 [候选记录](fr4-release-candidate.md) 为准。官方 `0.2.2-rc.1` / Desktop 未验收，不扩大兼容声明。
+- 历史 preview.2 的两个固定 Web、FR-2 可靠性及 FR-3 UI 证据分别保留在 [web-compatibility.md](web-compatibility.md)、[release-hardening.md](release-hardening.md) 和 [fr3-ui-design.md](fr3-ui-design.md)，不能将旧归档证据直接标成新候选完整通过。
+
 - 后续兼容其他版本时优先做 capability detection。
 - 版本敏感 API 优先 `ctx.inject` / capability detection / type guard / runtime feature detection。
 - 不假定所有 DSH 版本 API 一致。
@@ -581,7 +583,7 @@ export interface ComposerAttachment {
 1.8 MB · 已就绪
 ```
 
-- 三界面（Dock / Float / Pop-out）的卡片**完全由 Host `composer.attachments` 渲染**：image 图标 + `name` + `bytes` + `status`（`上传中… / 已就绪 / 失败`）+ `error` 文案 + remove 按钮（remove 走 `remove` action，Host 与页面一起删）。
+- 三界面（Dock / Float / Pop-out）的卡片**完全由 Host `composer.attachments` 渲染**：image 图标 + `name` + `bytes` + 状态文案（`上传中… / 已就绪 / 失败，请重试`；失败时**绝不**把 Host 内部原因当作用户文案，见 FR-4 修复）+ 卡片 `title` 提示（文件名 + 诊断原文，仅 hover 可见）+ remove 按钮（remove 走 `remove` action，Host 与页面一起删）。
 - **绝不**把原图 `dataBase64` / 原始字节放进 `CompanionState`；**绝不**通过 SSE 推送完整图片。
 - **绝不**把 Host `tempPath` 暴露给 Client。
 - **绝不**把 DeepSeek 页面的 `blob:` URL 当作 Client 的图片 `src`（页面内部对象，跨 surface 无意义）。
@@ -867,7 +869,7 @@ expectedFileIds = consumedAttachmentIds → AttachmentRecord[] → deepSeekFileI
 ### UI 范围（最小）
 
 - composer 行新增「图片」按钮（`<input type="file" accept="image/*" multiple hidden>`，Client 侧仍按 MIME 白名单再过滤一次），沿用现有 DSH token 的 pill 样式。
-- 待发送草稿一律用 **attachment card**：image 图标 + `name` + `bytes` + 状态文案（`上传中… / 已就绪 / 失败`）+ `error` 文案 + remove 按钮；**不渲染图片像素**（无 thumbnail、无 base64、无页面 `blob:` src —— 见「Client UI 边界」）。
+- 待发送草稿一律用 **attachment card**：image 图标 + `name` + `bytes` + 状态文案（`上传中… / 已就绪 / 失败，请重试`）+ remove 按钮，Host `error` 原文只作为卡片 `title` 诊断提示；**不渲染图片像素**（无 thumbnail、无 base64、无页面 `blob:` src —— 见「Client UI 边界」）。
 - **删除走 `remove` action**（Host + 页面一起删），不是只删本地卡片；失败卡片同样按 `previewIdentity` 走 `remove`（见「失败草稿的 remove 规则」）。
 - 禁用规则：`sending`（与 Stop 抢主按钮）或 `pageBusy` 或 `uploading` 时禁用「图片」按钮；有 `uploading`/`error` 条目时禁用发送。
 - 不做 thumbnail proxy / gallery / lightbox / crop / 编辑器 / 非图片文件（真正的 Companion 缩略图留给 Phase 24 UI Polish 或独立阶段）。

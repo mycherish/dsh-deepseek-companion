@@ -3,6 +3,7 @@ import test from 'node:test'
 
 import {
   IMAGE_MIME_TYPES,
+  attachmentCardTitle,
   attachmentStatusText,
   canPickAttachment,
   canSendRound,
@@ -48,14 +49,33 @@ test('18A card: 字节数按 1.8 MB 这样的可读格式展示', () => {
   assert.equal(formatBytes(Number.NaN), '0 B')
 })
 
-test('18A card: 三种状态各有明确文案，失败带原因', () => {
+test('18A card: 三种状态各有明确文案；失败只给用户可理解的下一步', () => {
   assert.equal(attachmentStatusText(attachment('uploading')), '上传中…')
   assert.equal(attachmentStatusText(attachment('ready')), '已就绪')
-  assert.equal(
-    attachmentStatusText(attachment('error', { error: 'upload failed (HTTP 500)' })),
-    '失败 · upload failed (HTTP 500)',
-  )
-  assert.equal(attachmentStatusText(attachment('error')), '失败')
+  assert.equal(attachmentStatusText(attachment('error')), '失败，请重试')
+  assert.equal(attachmentStatusText(attachment('error', { error: 'upload failed (HTTP 500)' })), '失败，请重试')
+})
+
+test('18A card: 内部错误原文不进用户文案，只作为诊断提示', () => {
+  // FR-4 acceptance found a real failed upload surfacing Playwright's own
+  // message in the card. User copy must stay understandable; the raw reason is
+  // kept for diagnosis in the card's tooltip only.
+  const technical = attachment('error', {
+    error: 'page.waitForResponse: Timeout 10000ms exceeded while waiting for event "response"',
+  })
+  assert.equal(attachmentStatusText(technical), '失败，请重试')
+  assert.equal(attachmentStatusText(technical).includes('waitForResponse'), false)
+  assert.equal(attachmentCardTitle(technical).includes('page.waitForResponse'), true)
+  assert.equal(attachmentCardTitle(technical).includes('foo.png'), true)
+  assert.equal(attachmentCardTitle(attachment('ready')), 'foo.png')
+  // Empty / missing reason: the card keeps the plain file name in the tooltip
+  // instead of rendering a dangling "name — " separator.
+  assert.equal(attachmentStatusText(attachment('error', { error: '' })), '失败，请重试')
+  assert.equal(attachmentCardTitle(attachment('error', { error: '' })), 'foo.png')
+  assert.equal(attachmentCardTitle(attachment('error')), 'foo.png')
+  // A stale reason left on a non-error entry never becomes a tooltip.
+  assert.equal(attachmentCardTitle(attachment('uploading', { error: 'stale' })), 'foo.png')
+  assert.equal(attachmentCardTitle(attachment('ready', { error: 'stale' })), 'foo.png')
 })
 
 test('18A card: 选择器只接受四种图片类型', () => {

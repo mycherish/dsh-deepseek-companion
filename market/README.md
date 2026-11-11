@@ -1,6 +1,6 @@
 # 市场索引准备
 
-本目录是 FR-1 的本地分发材料，不是已上线的市场。
+本目录是首版的本地分发材料，不是已上线的市场。FR-4 将草案版本固定为 `0.1.0` 并与包内 engines / 图标一致；`publishTimestamp: 0` 仍是未发布哨兵。
 
 - `index.draft.json`：按官方 format 1 编写的草案，自动测试使用固定版本的官方 `parseMarketIndex` 校验。
 - `icons/companion.svg`：原生 SVG 图标，包内 `package.json.icon` 与市场草案共用同一资源。

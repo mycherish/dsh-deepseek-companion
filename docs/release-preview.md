@@ -1,5 +1,7 @@
 # Web 预览版本准备与兼容性核查
 
+> 本文保留 preview 候选的历史说明；当前 `0.1.0` 发布候选与未完成矩阵以 [FR-4 记录](fr4-release-candidate.md) 为准，旧归档验收不能代替最终包。
+
 > **2026-10-22 计划更新**：首版剩余工作统一按 [first-release.md](first-release.md) 执行：市场与安装 → 功能缺口 / 缺陷 → DSH 风格 UI / 轻动效 → RC 验收 → 发布与市场实装。本文保留预览候选事实与历史核查，不再以 Phase 21–25 的旧顺序要求首版补齐新功能。
 
 > **2026-10-20 更新**：下面的 `preview.1` 调查与验收作为历史记录保留，已提交为 `a4b589c`。当前候选为 `0.1.0-preview.2`，适配 Web `0.2.1-rc.2` 并保留 `0.1.5-rc.2`；今天 npm latest 也已更新为 `0.2.1-rc.2`。用户随后授权测试 profile 副本，新版已登录核心矩阵也已通过；新旧 Web 验证与剩余矩阵缺口见 [web-compatibility.md](web-compatibility.md)。官方 Desktop 未纳入本轮。2026-10-22 兼容阶段已提交为 `8c24a4c`，随后在共同宿主 `0.1.5-rc.2` 上完成插件升级/回退验收，见 [upgrade-rollback.md](upgrade-rollback.md)。尚未发布。
