@@ -1,0 +1,51 @@
+{
+  "format": 1,
+  "title": {
+    "en": "DeepSeek Companion",
+    "zh": "DeepSeek Companion"
+  },
+  "description": {
+    "en": "DeepSeek Companion for the supported DSH Web versions on macOS.",
+    "zh": "适用于已声明固定版本 DSH Web 的 macOS DeepSeek 网页伴侣。"
+  },
+  "plugins": [
+    {
+      "name": "dsh-deepseek-companion",
+      "title": {
+        "en": "DeepSeek Companion",
+        "zh": "DeepSeek 网页伴侣"
+      },
+      "description": {
+        "en": "DeepSeek web chat, images and history in DSH Web on macOS. Desktop is not supported.",
+        "zh": "在 macOS 的 DSH Web 中使用 DeepSeek 网页聊天、图片与历史会话；不支持 Desktop。"
+      },
+      "icon": "icons/companion.svg",
+      "author": "caelum-maple",
+      "homepage": "https://github.com/mycherish/dsh-deepseek-companion#readme",
+      "repository": {
+        "url": "https://github.com/mycherish/dsh-deepseek-companion"
+      },
+      "metadata": {
+        "keywords": [
+          "dsh",
+          "deepseek",
+          "web-companion",
+          "macos"
+        ]
+      },
+      "versions": [
+        {
+          "version": "0.1.0",
+          "publishTimestamp": 1794412636,
+          "source": {
+            "type": "npm",
+            "registry": "https://registry.npmjs.org/"
+          },
+          "engines": {
+            "dsh": "0.1.5-rc.2 || 0.2.1-rc.2"
+          }
+        }
+      ]
+    }
+  ]
+}
