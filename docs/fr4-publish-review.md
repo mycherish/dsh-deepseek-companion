@@ -1,5 +1,7 @@
 # 0.1.0 发布材料审阅单（FR-4）
 
+> FR-4 已于 2026-11-11 提交为 `329e4fd`。获准发布范围见 [FR-5 授权单](fr5-release-approval.md)，已完成结果见 [FR-5 发布记录](fr5-release.md)；本文保留冻结归档与索引生成规则。
+
 > 2026-11-11 提交记录：用户已明确授权，本次原子提交保存 FR-4 验收、修复、回归与文档。下文“待提交 / 未提交”描述的是提交前审阅状态；本提交不包含 push、tag、npm 发布或 Pages 部署。下一步为 FR-5，具体公开操作仍须对应授权。
 
 > 2026-11-11 状态补充：旧版 RC-C 真实删除 / 不确定恢复及四个写门控已补验通过；用户明确接受首次登录入口因站点直接进入聊天而无法观察的边界，不宣称实测通过。此前旧版“仍缺”描述为历史快照，最新证据见 [候选记录末节](fr4-release-candidate.md)。本轮未提交或发布。
@@ -42,7 +44,7 @@ npm view dsh-deepseek-companion@0.1.0 version dist --json --registry https://reg
 
 1. 实际版本、`engines.dsh`、bundle patch、图标、作者和仓库与获批包一致。
 2. 从公开 registry 下载 tarball，验证内容 / integrity 与获批归档一致。
-3. 复制 `market/index.draft.json` 的获批显示信息，把时间戳替换为实际 npm 发布时间的毫秒数；把顶层描述替换为正式市场简介，不保留“草案 / 请勿部署”。
+3. 复制 `market/index.draft.json` 的获批显示信息，把时间戳替换为实际 npm 发布时间的 Unix 秒数（`Math.floor(Date.parse(time) / 1000)`）；把顶层描述替换为正式市场简介，不保留“草案 / 请勿部署”。
 4. 用官方 `parseMarketIndex` 校验产出的 `index.json`，确认安装目标恰为 `dsh-deepseek-companion@0.1.0`。
 5. 仅向获批项目 Pages 部署 `index.json` 和 `icons/`。HTTPS 返回合法 JSON、相对图标可达后，再在干净固定宿主中执行 Discover 安装、登录、短聊天、三窗口和卸载烟测。
 

@@ -2,7 +2,7 @@
 
 在 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 中使用自己的 DeepSeek 网页账号聊天，提供 Dock、页内 Float 与独立 Pop-out 三种窗口。
 
-版本：`0.1.0`。支持范围限定为 **macOS、本地 DSH Web `0.1.5-rc.2` / `0.2.1-rc.2`、Playwright `1.62.0` 匹配的 Chromium**。官方 `0.2.2-rc.1`、Desktop、其它系统 / 浏览器和远程无界面部署不在兼容声明内。版本号不代表已发布；公开版本与验收状态以 [Releases](https://github.com/mycherish/dsh-deepseek-companion/releases) 和 [首版执行计划](https://github.com/mycherish/dsh-deepseek-companion/blob/main/docs/first-release.md) 为准。
+版本：`0.1.0`。支持范围限定为 **macOS、本地 DSH Web `0.1.5-rc.2` / `0.2.1-rc.2`、Playwright `1.62.0` 匹配的 Chromium**。官方 `0.2.2-rc.1`、Desktop、其它系统 / 浏览器和远程无界面部署不在兼容声明内。`0.1.0` 已公开发布到 [npm](https://www.npmjs.com/package/dsh-deepseek-companion)，源码节点为 [v0.1.0](https://github.com/mycherish/dsh-deepseek-companion/tree/v0.1.0)。发布与验收记录见 [FR-5 发布记录](docs/fr5-release.md)。
 
 ## 功能与边界
 
@@ -18,7 +18,7 @@ Search 只把真实取得并准确映射的来源变为链接，未映射编号�
 
 ## 安装与首次登录
 
-先运行 `dsh --version`，确认宿主属于上述两个固定版本。公开版本在 registry 可用后，通过官方 bundle 命令安装：
+先运行 `dsh --version`，确认宿主属于上述两个固定版本。通过官方 bundle 命令安装已发布的确切版本：
 
 ```sh
 dsh plugin --profile web add dsh-deepseek-companion@0.1.0
@@ -42,7 +42,7 @@ dsh --profile web --no-open
 - 流式中使用“停止”；历史菜单支持上下方向键与 Esc，新建聊天或切换历史由 Host 确认后更新消息。
 - 发生连接或浏览器故障时保留消息和草稿。会话无法确认时发送被禁用，可按提示新建或切换历史；恢复不会自动重发原消息。
 
-官方 Discover 需要启用 Custom plugin markets 并添加索引，npm 发布不会自动进入所有用户的市场。拟用索引为 `https://mycherish.github.io/dsh-deepseek-companion/index.json`；是否可用及市场实装状态以仓库发布记录为准，不能直接添加 `index.draft.json`。
+官方 Discover 需要启用 Custom plugin markets 并添加索引，npm 发布不会自动进入所有用户的市场。正式索引为 `https://mycherish.github.io/dsh-deepseek-companion/index.json`。`0.2.1-rc.2` 的发现、安装与实际聊天已验收；旧版保留上面的命令行安装路径。不能直接添加 `index.draft.json`。
 
 ## 升级、回退与卸载
 
