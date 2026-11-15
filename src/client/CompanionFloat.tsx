@@ -196,7 +196,7 @@ export function CompanionFloat({ dock }: { dock: DockController }): JSX.Element 
   return (
     <section
       data-companion-root=""
-      aria-label="DeepSeek Companion"
+      aria-label="DSH Chat Buddy"
       style={{ ...rootStyle, left: position.x, top: position.y, width: size.width, height: size.height }}
     >
       <CompanionStyles />
@@ -207,15 +207,15 @@ export function CompanionFloat({ dock }: { dock: DockController }): JSX.Element 
         onPointerUp={endDrag}
         onPointerCancel={endDrag}
       >
-        <span style={titleStyle}>DeepSeek Companion</span>
+        <span style={titleStyle}>DSH Chat Buddy</span>
         <div style={headerActionsStyle}>
-          <HeaderIconButton label="Dock DeepSeek Companion" onClick={dock.dockBack}>
+          <HeaderIconButton label="Dock DSH Chat Buddy" onClick={dock.dockBack}>
             ◧
           </HeaderIconButton>
-          <HeaderIconButton label="Open DeepSeek Companion in new window" onClick={dock.openPopout}>
+          <HeaderIconButton label="Open DSH Chat Buddy in new window" onClick={dock.openPopout}>
             ↗
           </HeaderIconButton>
-          <HeaderIconButton label="Close DeepSeek Companion" onClick={dock.close}>
+          <HeaderIconButton label="Close DSH Chat Buddy" onClick={dock.close}>
             ×
           </HeaderIconButton>
         </div>
@@ -227,7 +227,7 @@ export function CompanionFloat({ dock }: { dock: DockController }): JSX.Element 
         <div
           key={edge.direction}
           role="separator"
-          aria-label="Resize DeepSeek Companion"
+          aria-label="Resize DSH Chat Buddy"
           onPointerDown={(event) => onResizePointerDown(event, edge.direction)}
           onPointerMove={onResizePointerMove}
           onPointerUp={endResize}

@@ -64,8 +64,8 @@ export function CompanionEntry({ wide, dock }: { wide: boolean; dock: DockContro
   return (
     <button
       type="button"
-      title="DeepSeek Companion"
-      aria-label={open ? 'Close DeepSeek Companion' : 'Open DeepSeek Companion'}
+      title="DSH Chat Buddy"
+      aria-label={open ? 'Close DSH Chat Buddy' : 'Open DSH Chat Buddy'}
       aria-expanded={open}
       onClick={dock.toggle}
       onPointerEnter={() => setHovered(true)}

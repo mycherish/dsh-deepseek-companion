@@ -41,7 +41,7 @@ function closePopout(): void {
 /** Build the detached document and mount the shared state view. */
 function renderPopout(win: Window): void {
   const doc = win.document
-  doc.title = 'DeepSeek Companion'
+  doc.title = 'DSH Chat Buddy'
 
   doc.documentElement.style.cssText = 'height:100%;margin:0'
   doc.body.style.cssText = 'height:100%;margin:0;overflow:hidden;background:var(--dsw-alias-bg-base)'

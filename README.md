@@ -1,8 +1,10 @@
-# DeepSeek Companion for DSH
+# DSH Chat Buddy for DSH
+
+> 更名版本：`dsh-chat-buddy@0.1.1`。发布以 npm 实际可下载为准。旧公开包仍为 `dsh-deepseek-companion@0.1.0`，下面的公开安装命令继续有效。新旧包不可在同一 profile 同时启用。迁移须先保存草稿、停止 DSH，取得新包后用官方管理器移除旧包再安装新包；保留原登录目录。主基线登录与历史迁移／回退已验证；不支持新旧包并装，发布状态以版本记录为准。详见 [更名计划](docs/rename-migration.md)。
 
 在 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 中使用自己的 DeepSeek 网页账号聊天，提供 Dock、页内 Float 与独立 Pop-out 三种窗口。
 
-版本：`0.1.0`。支持范围限定为 **macOS、本地 DSH Web `0.1.5-rc.2` / `0.2.1-rc.2`、Playwright `1.62.0` 匹配的 Chromium**。官方 `0.2.2-rc.1`、Desktop、其它系统 / 浏览器和远程无界面部署不在兼容声明内。`0.1.0` 已公开发布到 [npm](https://www.npmjs.com/package/dsh-deepseek-companion)，源码节点为 [v0.1.0](https://github.com/mycherish/dsh-deepseek-companion/tree/v0.1.0)。发布与验收记录见 [FR-5 发布记录](docs/fr5-release.md)。
+更名版本：`0.1.1`，旧公开名称版本为 `0.1.0`。支持范围限定为 **macOS、本地 DSH Web `0.1.5-rc.2` / `0.2.1-rc.2`、Playwright `1.62.0` 匹配的 Chromium**。官方 `0.2.2-rc.1`、Desktop、其它系统 / 浏览器和远程无界面部署不在兼容声明内。`0.1.0` 已公开发布到 [npm](https://www.npmjs.com/package/dsh-deepseek-companion)，源码节点为 [v0.1.0](https://github.com/mycherish/dsh-deepseek-companion/tree/v0.1.0)。发布与验收记录见 [FR-5 发布记录](docs/fr5-release.md)。
 
 ## 功能与边界
 
@@ -16,7 +18,7 @@
 
 Search 只把真实取得并准确映射的来源变为链接，未映射编号保留为普通文本。极快连续发送的空 parent anchor、树形历史保持安全拒绝；SSE 静默半开没有主动心跳探测。首版没有文档附件、Proxy、多账号、Handoff 或 Host 消息持久化；不要把 Host 重启等同于浏览器恢复。
 
-## 安装与首次登录
+## 当前公开旧名版本的安装与首次登录
 
 先运行 `dsh --version`，确认宿主属于上述两个固定版本。通过官方 bundle 命令安装已发布的确切版本：
 
@@ -73,3 +75,19 @@ pnpm pack --pack-destination dist/release
 设计、版本兼容和安装 / 恢复验收记录见 [docs](https://github.com/mycherish/dsh-deepseek-companion/tree/main/docs)。`test:ui` 不代替真实站点、操作系统输入法或最终包矩阵。
 
 问题反馈：[GitHub Issues](https://github.com/mycherish/dsh-deepseek-companion/issues)。请提供插件、宿主、操作系统和浏览器版本及复现步骤；不要附上 Cookie、token 或完整登录目录。
+
+## 本地更名候选的迁移与回退（未发布）
+
+先取得已核验的新 tarball 和旧 `0.1.0` 回退包，并保存未发送内容。停止对应 DSH、关闭旧 Pop-out 后，用官方管理器仅移除旧 bundle，再安装新候选，重启并刷新所有界面；检查登录与服务端历史。不能把新旧包同时加入同一 profile，也不能将两个 Host 指向同一 Chromium 目录。更名不保证 Host 内存消息或未发送草稿跨进程保留。
+
+回退时先停止 DSH、关闭弹窗，移除新 bundle 后安装同一宿主兼容的旧 `dsh-deepseek-companion@0.1.0`，重启核对登录与历史。不要删除登录目录或整个 DSH_HOME。混装保护和真实迁移尚未验收，当前候选不推荐用于日常 profile。
+
+## Chat Buddy 安装与旧名迁移
+
+新名称的精确安装命令（须确认 npm 已发布）：
+
+```sh
+dsh plugin --profile web add dsh-chat-buddy@0.1.1
+```
+
+浏览器准备、宿主兼容范围和使用方式与上文相同。已有旧包用户必须先停止对应 DSH，执行 `dsh plugin --profile web remove dsh-deepseek-companion` 后再安装新包，重启并刷新界面。卸载新包使用 `dsh plugin --profile web remove dsh-chat-buddy`。保留旧浏览器目录与设置，不能在同一 profile 并装新旧包。旧公开包和原市场索引地址仍保留。

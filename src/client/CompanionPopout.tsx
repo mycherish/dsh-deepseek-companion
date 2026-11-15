@@ -44,8 +44,8 @@ export function CompanionPopout({ onClose, origin }: { onClose: () => void; orig
     <div data-companion-root="" style={rootStyle}>
       <CompanionStyles />
       <header style={headerStyle}>
-        <span style={titleStyle}>DeepSeek Companion</span>
-        <HeaderIconButton label="Close DeepSeek Companion" onClick={onClose}>
+        <span style={titleStyle}>DSH Chat Buddy</span>
+        <HeaderIconButton label="Close DSH Chat Buddy" onClick={onClose}>
           ×
         </HeaderIconButton>
       </header>

@@ -116,7 +116,7 @@ function ResizeHandle({ dock }: { dock: DockController }): JSX.Element {
     <div
       role="separator"
       aria-orientation="vertical"
-      aria-label="Resize DeepSeek Companion"
+      aria-label="Resize DSH Chat Buddy"
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
@@ -164,19 +164,19 @@ export function CompanionDock({ dock, variant }: { dock: DockController; variant
   }, [variant, dock])
 
   return (
-    <aside data-companion-root="" aria-label="DeepSeek Companion" style={surfaceStyle(variant, dockWidth)}>
+    <aside data-companion-root="" aria-label="DSH Chat Buddy" style={surfaceStyle(variant, dockWidth)}>
       <CompanionStyles />
       {variant === 'overlay' ? <ResizeHandle dock={dock} /> : null}
       <header style={headerStyle}>
-        <span style={titleStyle}>DeepSeek</span>
+        <span style={titleStyle}>DSH Chat Buddy</span>
         <div style={headerActionsStyle}>
           <HeaderIconButton label="在页面内浮动" onClick={dock.enterFloat}>
             □
           </HeaderIconButton>
-          <HeaderIconButton label="Open DeepSeek Companion in new window" onClick={dock.openPopout}>
+          <HeaderIconButton label="Open DSH Chat Buddy in new window" onClick={dock.openPopout}>
             ↗
           </HeaderIconButton>
-          <HeaderIconButton label="Close DeepSeek Companion" onClick={dock.close}>
+          <HeaderIconButton label="Close DSH Chat Buddy" onClick={dock.close}>
             ×
           </HeaderIconButton>
         </div>

@@ -1,7 +1,7 @@
 {
-  "name": "dsh-deepseek-companion",
-  "version": "0.1.0",
-  "description": "DeepSeek Web Companion plugin for DeepSeek Harness (DSH)",
+  "name": "dsh-chat-buddy",
+  "version": "0.1.1",
+  "description": "DeepSeek web chat buddy for DeepSeek Harness (DSH)",
   "type": "module",
   "license": "MIT",
   "author": "caelum-maple",
@@ -68,7 +68,8 @@
     "deepseek-harness",
     "cordis",
     "plugin",
-    "web-companion"
+    "web-companion",
+    "chat-buddy"
   ],
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.2",

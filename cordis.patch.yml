@@ -6,4 +6,4 @@
 
 - insert:
     - id: deepseek-companion
-      name: 'dsh-deepseek-companion'
+      name: 'dsh-chat-buddy'

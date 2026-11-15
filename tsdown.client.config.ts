@@ -5,7 +5,7 @@ const shim = (name: string): string => fileURLToPath(new URL(`./src/client/shims
 
 // Browser client bundle: a lazy-CJS factory registered through the DSH
 // `window.__ModuleLoader__` table. The host serves this artifact at
-// `/plugins/dsh-deepseek-companion/client.js`.
+// `/plugins/dsh-chat-buddy/client.js`.
 //
 // The factory scope provides `module`/`exports` (declared in the banner), so
 // tsdown's CJS body can assign `exports.apply` / `exports.inject` and the
@@ -31,7 +31,7 @@ export default defineConfig({
   // Only wrap the JS artifact; keep the .d.ts a clean declaration file.
   banner: {
     js:
-      'window.__ModuleLoader__.load({ id: "dsh-deepseek-companion", factory: (require) => {\n' +
+      'window.__ModuleLoader__.load({ id: "dsh-chat-buddy", factory: (require) => {\n' +
       'var module = { exports: {} };\n' +
       'var exports = module.exports;',
   },

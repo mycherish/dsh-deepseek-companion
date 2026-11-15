@@ -119,18 +119,18 @@ test('FR-3 rendered interactions and detached window lifecycle', { timeout: 9000
   await input(page).waitFor()
 
   await t.test('标题栏 hover / active 和输入区焦点提供实际视觉反馈', async () => {
-    const button = page.getByRole('button', { name: 'Open DeepSeek Companion in new window', exact: true })
+    const button = page.getByRole('button', { name: 'Open DSH Chat Buddy in new window', exact: true })
     await button.hover()
     await page.waitForFunction(
       () =>
-        getComputedStyle(document.querySelector('[aria-label="Open DeepSeek Companion in new window"]')!)
+        getComputedStyle(document.querySelector('[aria-label="Open DSH Chat Buddy in new window"]')!)
           .backgroundColor === 'rgb(238, 238, 238)',
     )
     assert.equal(await button.evaluate((n) => getComputedStyle(n).backgroundColor), 'rgb(238, 238, 238)')
     await page.mouse.down()
     await page.waitForFunction(
       () =>
-        getComputedStyle(document.querySelector('[aria-label="Open DeepSeek Companion in new window"]')!)
+        getComputedStyle(document.querySelector('[aria-label="Open DSH Chat Buddy in new window"]')!)
           .backgroundColor === 'rgb(221, 221, 221)',
     )
     assert.equal(await button.evaluate((n) => getComputedStyle(n).backgroundColor), 'rgb(221, 221, 221)')
@@ -189,7 +189,7 @@ test('FR-3 rendered interactions and detached window lifecycle', { timeout: 9000
     assert.equal(await input(page).inputValue(), '断流保留草稿')
   })
   const pending = page.waitForEvent('popup')
-  await page.getByRole('button', { name: 'Open DeepSeek Companion in new window', exact: true }).click()
+  await page.getByRole('button', { name: 'Open DSH Chat Buddy in new window', exact: true }).click()
   let popup = await pending
   await input(popup).waitFor()
   await t.test('Pop-out 跟随系统主题及已打开后的字体字号变化', async () => {
@@ -323,7 +323,7 @@ test('FR-3 rendered interactions and detached window lifecycle', { timeout: 9000
     await page.getByRole('alert').filter({ hasText: '无法确认' }).waitFor()
     assert.equal(await page.getByRole('button', { name: '发送', exact: true }).isDisabled(), true)
     publish(s)
-    await page.getByRole('button', { name: 'Dock DeepSeek Companion', exact: true }).click()
+    await page.getByRole('button', { name: 'Dock DSH Chat Buddy', exact: true }).click()
   })
   await t.test('用户阅读历史时流式更新不抢滚动；关闭重开 Pop-out 清理订阅', async () => {
     const s = base()
@@ -384,11 +384,11 @@ test('FR-3 rendered interactions and detached window lifecycle', { timeout: 9000
     assert.equal(await root.evaluate((n) => n.scrollWidth <= n.clientWidth), true)
     await popup.close()
     const next = page.waitForEvent('popup')
-    await page.getByRole('button', { name: 'Open DeepSeek Companion in new window', exact: true }).click()
+    await page.getByRole('button', { name: 'Open DSH Chat Buddy in new window', exact: true }).click()
     popup = await next
     await input(popup).waitFor()
     const closed = popup.waitForEvent('close')
-    await popup.getByRole('button', { name: 'Close DeepSeek Companion', exact: true }).click()
+    await popup.getByRole('button', { name: 'Close DSH Chat Buddy', exact: true }).click()
     await closed
     await page.waitForTimeout(100)
     assert.equal(peers.size, 1, 'closed popup unsubscribes its state stream')

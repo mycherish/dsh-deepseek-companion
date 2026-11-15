@@ -1,8 +1,8 @@
 {
   "format": 1,
   "title": {
-    "en": "DeepSeek Companion",
-    "zh": "DeepSeek Companion"
+    "en": "DSH Chat Buddy",
+    "zh": "DSH Chat Buddy"
   },
   "description": {
     "en": "Unpublished local draft. Do not deploy this index.",
@@ -10,10 +10,10 @@
   },
   "plugins": [
     {
-      "name": "dsh-deepseek-companion",
+      "name": "dsh-chat-buddy",
       "title": {
-        "en": "DeepSeek Companion",
-        "zh": "DeepSeek 网页伴侣"
+        "en": "DSH Chat Buddy",
+        "zh": "DSH Chat Buddy"
       },
       "description": {
         "en": "DeepSeek web chat, images and history in DSH Web on macOS. Desktop is not supported.",
@@ -30,7 +30,7 @@
       },
       "versions": [
         {
-          "version": "0.1.0",
+          "version": "0.1.1",
           "publishTimestamp": 0,
           "source": {
             "type": "npm",
