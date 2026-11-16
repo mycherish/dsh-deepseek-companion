@@ -1,6 +1,6 @@
 # DSH Chat Buddy for DSH
 
-当前源码候选：`dsh-chat-buddy@0.1.3`（未发布）；已发布基线为 `0.1.2`。下文介绍 0.1.3 候选的行为；安装前以 [npm](https://www.npmjs.com/package/dsh-chat-buddy) 实际可下载版本为准。支持 **macOS、本地 DSH Web `0.1.5-rc.2` / `0.2.1-rc.2` / `0.2.2-rc.1`、Playwright `1.62.0` 匹配的 Chromium**；官方 Desktop、其它宿主版本／系统／浏览器及远程无界面部署未纳入兼容声明。插件要求 Node.js 22 或以上，同时需满足所选 DSH 宿主自身的 Node.js 要求。
+当前发布版本：`dsh-chat-buddy@0.1.3`。安装前以 [npm](https://www.npmjs.com/package/dsh-chat-buddy) 实际可下载版本为准。支持 **macOS、本地 DSH Web `0.1.5-rc.2` / `0.2.1-rc.2` / `0.2.2-rc.1`、Playwright `1.62.0` 匹配的 Chromium**；官方 Desktop、其它宿主版本／系统／浏览器及远程无界面部署未纳入兼容声明。插件要求 Node.js 22 或以上，同时需满足所选 DSH 宿主自身的 Node.js 要求。
 
 在 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 中使用自己的 DeepSeek 网页账号聊天，提供 Dock、页内 Float 与独立 Pop-out 三种窗口。`0.1.3` 改为打开面板后才启动后台网页会话，只有手动登录时显示工作浏览器窗口；窗口操作提示与侧栏入口样式同步优化。兼容声明保持原范围，本轮真实后台窗口验收使用 Web `0.2.2-rc.1`，未重做另外两个宿主的完整聊天矩阵。开发与验收记录见 [后台运行记录](docs/browser-background.md)，此前版本的发布记录见 [0.1.2 兼容记录](docs/web-022-compatibility.md)。
 
@@ -20,7 +20,7 @@ Search 只把真实取得并准确映射的来源变为链接，未映射编号�
 
 ## 安装与首次登录
 
-先运行 `dsh --version`，确认宿主属于上述三个固定版本。**0.1.3 尚未发布**：当前只使用本地候选归档安装；下面的 npm 安装命令须等该版本实际可下载后执行。已发布的 `0.1.2` 仍可安装，但使用此前的可见工作浏览器流程。
+先运行 `dsh --version`，确认宿主属于上述三个固定版本。通过官方 bundle 命令安装已发布的确切版本：
 
 ```sh
 dsh plugin --profile web add dsh-chat-buddy@0.1.3
@@ -56,7 +56,7 @@ dsh --profile web --no-open
 
 更新前停止对应 DSH 实例并保留上一份已验证归档，再用官方 add 命令安装目标确切版本。重启后确认实际版本、DeepSeek 登录和历史切换；未发送草稿和 Host 内存消息不承诺跨进程升级持久化。
 
-0.1.3 候选可回退到同一宿主兼容的已发布 `0.1.2`，回退后恢复此前可见工作浏览器的行为。回退只使用同一宿主兼容的归档，不绕过 engines。原来的两个固定宿主可回退到公开 `dsh-chat-buddy@0.1.1`；`0.2.2-rc.1` 不能安装只支持旧宿主的 `0.1.1` 或旧名 `0.1.0`，不要用版本豁免绕过兼容检查。
+0.1.3 可回退到同一宿主兼容的已发布 `0.1.2`，回退后恢复此前可见工作浏览器的行为。回退只使用同一宿主兼容的归档，不绕过 engines。原来的两个固定宿主可回退到公开 `dsh-chat-buddy@0.1.1`；`0.2.2-rc.1` 不能安装只支持旧宿主的 `0.1.1` 或旧名 `0.1.0`，不要用版本豁免绕过兼容检查。
 
 ```sh
 dsh plugin --profile web remove dsh-chat-buddy

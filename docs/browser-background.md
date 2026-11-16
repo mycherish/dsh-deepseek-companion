@@ -27,7 +27,10 @@
 - [x] 用户已明确授权审核并提交；本地提交归档本阶段实现与候选文档。
 - [x] 最终 0.1.3 归档构建、字节核对与最小安装烟测通过，测试进程／本步私有日志已清理。
 - [x] 验收记录复核通过，用户已明确授权本地提交；本提交归档三份验收文档。
-- [ ] 公开发布授权与执行；临时登录目录暂保留。
+- [x] 用户已明确授权 npm 0.1.3 与正式市场两项公开操作。
+- [x] npm 公开归档字节、正式市场 gh-pages 推送与公开 Pages 索引核验全部完成。
+- [x] 用户已明确授权提交五份发布收尾文档，本提交归档 0.1.3 公开发布完成状态。
+- [ ] 源码分支推送／合并、可选 tag 与个人网站同步另行决定；临时登录目录暂保留。
 
 证据存于 Git 忽略的 dist/review/browser-background-20261116/；仅保留脱敏结果，不保留认证原始日志、真实会话 ID 或临时登录目录。
 
@@ -152,3 +155,35 @@
 用户明确授权“继续审核提交这些记录”。本步仅审核并提交 browser-background.md、first-release.md、roadmap.md，未修改源码、版本、README／Changelog 或冻结归档，也未启动浏览器、推送、tag 或发布。
 
 逐项核对 artifact.json、installed.json、smoke.json、cleanup.json 与归档实际 SHA-256，记录一致，未发现可执行问题。清晰区分最终归档最小安装路径、本轮先前的人工关闭窗口证据、未重跑的完整聊天／旧宿主矩阵及 Desktop 边界。本提交归档上述验收记录；下一步为公开发布授权确认，仍未批准执行 npm、正式市场或线上站点操作。
+
+## 第 12 小步：公开授权已取得，npm 已受理、公开可用待核验
+
+用户明确授权以 caelum-maple 发布指定 SHA-256 的冻结 0.1.3 归档并设为 latest；只有公开下载字节核对一致后，才向 gh-pages 新增 0.1.3 正式市场条目并触发 Pages，保留全部旧条目。此授权不包含源码分支推送、合并 main、tag 或个人网站部署。
+
+- 原 npm 验证链接失效，发布进程以认证接口 404 退出；只读确认 0.1.3 不存在后重试一次，用户完成新链接验证。
+- 第二次 npm 发布进程退出 0，返回 `+ dsh-chat-buddy@0.1.3`，同时明确提示包正在 processing、可能数分钟后可用。此结果只记录为 npm 已受理，不记录为公开可下载。
+- 随后公开 registry 元数据尚无 0.1.3；等待 45 秒后仅重试一次仍无该版本，按全局 AGENTS 失败处理规则停止继续核验。没有重复发布、没有推送市场索引或部署网站。
+- 已准备 Git 忽略目录下的接续脚本：`dist/release/background-013-20261116/publish/deploy-market.sh`。脚本先重新拉取 gh-pages，再核对公开 npm 版本／latest／实际发布时间及下载 SHA-256；通过官方市场解析器校验，证明移除新增项后与旧索引完全一致，才创建临时 worktree、只提交 index.json 并正常推送 gh-pages；并发变更会使普通 push 拒绝，绝不 force-push。
+- 正式市场仍为旧包 0.1.0、Chat Buddy 0.1.2／0.1.1；本轮只 fetch，没有市场 commit／push 或临时市场 worktree。冻结归档仍为 `3ca8942881c17673637d26f8135e5c33c031506c227f11c8d0963e261e8e4881`，未改运行代码。
+
+接续方式：确认 `npm view dsh-chat-buddy@0.1.3 version --registry https://registry.npmjs.org/` 返回 0.1.3 后，执行上述 deploy-market.sh；不再 npm publish。市场 push 成功后仍需核对公开 Pages 索引，不能将 Git push 成功等同于线上部署完成。本步状态文档尚未提交，源码仍为 16e7412、验收记录为 f9d55d8。
+
+## 第 13 小步：npm 与正式市场发布闭环完成
+
+用户执行接续命令后，npm view 返回 0.1.3；部署脚本确认 registryArchiveMatches=true、distTagLatest=0.1.3、allPriorEntriesUnchanged=true，再创建并推送市场提交 `7e98787d456ea7241cd3890b6d3895e085e82b99` 到 gh-pages。正式发布时间来自 npm 元数据 `2026-11-16T15:18:54.974Z`，索引 publishTimestamp 为 `1794842334`，没有使用草案哨兵 0 或本地时间猜测。
+
+- npm 已公开：dsh-chat-buddy@0.1.3，latest 为 0.1.3。下载字节与用户授权的冻结归档 SHA-256 `3ca8942881c17673637d26f8135e5c33c031506c227f11c8d0963e261e8e4881` 一致。
+- Agent 随后读取公开 `https://mycherish.github.io/dsh-deepseek-companion/index.json`，通过官方解析器并与实际推送的索引逐项比较一致。已上线旧包 dsh-deepseek-companion@0.1.0 与 dsh-chat-buddy@0.1.3／0.1.2／0.1.1，全部旧条目保留。不是只依据 Git push 成功判定 Pages 完成。
+- 证据：dist/release/background-013-20261116/publish/npm-verification.json、market-commit、pages-verification.json、publication-state.json。市场临时 worktree 由部署脚本移除，未新增运行测试进程。
+- 本地 README／Changelog 更新为实际发布状态，first-release／roadmap 同步；冻结 npm 归档中的候选文字保留为打包时内容，不重打包、不覆盖已发布版本、不为文案另发版本。运行代码和兼容声明均未改变。
+- 已授权的两项公开操作全部完成；源码分支推送、main 合并、tag、个人网站同步不在授权范围，均未执行。本轮发布收尾文档仍待独立审核与明确提交授权，原临时登录目录暂保留。
+
+后续仅需审核提交本轮文档，并根据用户意愿另行处理源码分支推送／合并及个人产品页版本说明，不再重复发布 0.1.3 或重复部署同一市场条目。第 12 小步的 processing／待核验记录为历史，当前以本小步完成状态为准。
+
+发布收尾检查：format:check、lint、typecheck、build、pnpm test（715/715）、diff --check／status／diff 全通过；重建运行文件与冻结归档哈希保持一致，市场临时 worktree 的目录和 Git 登记均已移除。仅 README、Changelog、browser-background、first-release、roadmap 五份文档未提交；没有重新运行真实聊天或组件浏览器矩阵。
+
+## 第 14 小步：发布收尾文档提交
+
+用户明确要求提交发布收尾文档。本步仅复核并提交 README.md、CHANGELOG.md、browser-background.md、first-release.md、roadmap.md；记录与 npm 字节核验、市场提交和公开 Pages 证据一致，未发现可执行问题。本提交归档 0.1.3 发布闭环，不改运行代码、版本或冻结归档，不推送源码分支、不合并 main、不打 tag、不部署个人网站，也不重新发布 npm／市场。
+
+后续按需处理源码同步／分支归并及中英文产品页 0.1.3 说明，删除旧分支前确认已包含且无独有提交。当前发布本身已完成，不需要再次执行第 12 小步的接续命令。
