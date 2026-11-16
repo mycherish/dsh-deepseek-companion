@@ -1,5 +1,7 @@
 # DSH Chat Buddy for DSH
 
+> 开发候选 `0.1.2` 已完成 macOS 本地 DSH Web `0.2.2-rc.1` 的针对性兼容验收，尚未公开发布。进度及证据见 [本轮兼容记录](docs/web-022-compatibility.md)。下文公开版安装与兼容说明对应 `0.1.1` / 旧名 `0.1.0`。
+
 > 更名版本：`dsh-chat-buddy@0.1.1`。发布以 npm 实际可下载为准。旧公开包仍为 `dsh-deepseek-companion@0.1.0`，下面的公开安装命令继续有效。新旧包不可在同一 profile 同时启用。迁移须先保存草稿、停止 DSH，取得新包后用官方管理器移除旧包再安装新包；保留原登录目录。主基线登录与历史迁移／回退已验证；不支持新旧包并装，发布状态以版本记录为准。详见 [更名计划](docs/rename-migration.md)。
 
 在 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 中使用自己的 DeepSeek 网页账号聊天，提供 Dock、页内 Float 与独立 Pop-out 三种窗口。

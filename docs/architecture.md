@@ -57,7 +57,9 @@ Dock / Float / Pop-out 共享局部 `CompanionStyles` 和标题栏控件，字�
 
 ### 兼容性策略
 
-- `0.1.0` 已公开发布，继续精确限定 macOS 本地 DSH Web `0.1.5-rc.2 || 0.2.1-rc.2`。最终矩阵见 [候选记录](fr4-release-candidate.md)，公开包与市场实装结果见 [FR-5 发布记录](fr5-release.md)。官方 `0.2.2-rc.1` / Desktop 未验收，不扩大兼容声明。
+当前 `0.1.2` 本地候选按 [Web 0.2.2-rc.1 计划](web-022-compatibility.md) 完成针对性兼容验收，尚未公开发布；不将候选 engines 声明当作公开版承诺。当前未修改运行实现、公开接口或资源生命周期；开发类型依赖继续使用 `0.2.1-rc.2`，避免无关依赖升级。下述 `0.1.0` 范围为已发布历史基线。
+
+- `0.1.0` 已公开发布，继续精确限定 macOS 本地 DSH Web `0.1.5-rc.2 || 0.2.1-rc.2`。最终矩阵见 [候选记录](fr4-release-candidate.md)，公开包与市场实装结果见 [FR-5 发布记录](fr5-release.md)。该历史公开包未验收官方 `0.2.2-rc.1` / Desktop，不扩大其兼容声明。
 - 历史 preview.2 的两个固定 Web、FR-2 可靠性及 FR-3 UI 证据分别保留在 [web-compatibility.md](web-compatibility.md)、[release-hardening.md](release-hardening.md) 和 [fr3-ui-design.md](fr3-ui-design.md)，不能将旧归档证据直接标成新候选完整通过。
 
 - 后续兼容其他版本时优先做 capability detection。

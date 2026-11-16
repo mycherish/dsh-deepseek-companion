@@ -1,6 +1,6 @@
 {
   "name": "dsh-chat-buddy",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "DeepSeek web chat buddy for DeepSeek Harness (DSH)",
   "type": "module",
   "license": "MIT",
@@ -16,7 +16,7 @@
   "icon": "market/icons/companion.svg",
   "engines": {
     "node": ">=22",
-    "dsh": "0.1.5-rc.2 || 0.2.1-rc.2"
+    "dsh": "0.1.5-rc.2 || 0.2.1-rc.2 || 0.2.2-rc.1"
   },
   "packageManager": "pnpm@10.26.0",
   "main": "lib/index.js",

@@ -5,7 +5,6 @@ const read = (file: string): string => readFileSync(new URL(`../${file}`, import
 test('renamed package and client registration agree while stable identity remains', () => {
   const pkg = JSON.parse(read('package.json'))
   assert.equal(pkg.name, 'dsh-chat-buddy')
-  assert.equal(pkg.version, '0.1.1')
   assert.match(read('cordis.patch.yml'), /name: 'dsh-chat-buddy'/)
   assert.match(read('cordis.patch.yml'), /id: deepseek-companion/)
   assert.ok(read('tsdown.client.config.ts').includes('id: "dsh-chat-buddy"'))

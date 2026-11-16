@@ -1,10 +1,14 @@
 # Changelog
 
-## 0.1.1 — 未发布
+## 0.1.2 — 未发布候选
 
-- 本地包名改为 `dsh-chat-buddy`，界面名改为 DSH Chat Buddy。
+- 增加 macOS DSH Web `0.2.2-rc.1` 的精确版本候选声明，隔离安装、三窗口、文本流式、图片、Stop、历史和 SSE 断流重连通过；运行代码与 0.1.1 相同，实际验收记录见 `docs/web-022-compatibility.md`；不包含 Desktop 或其他 rc 版本。
+
+## 0.1.1
+
+- 包名改为 `dsh-chat-buddy`，界面名改为 DSH Chat Buddy。
 - 保留内部接口、插件节点、登录目录、环境变量、宽度设置及弹窗身份；不扩大宿主兼容范围。
-- 迁移、回退和公开发布待独立验收，旧公开 0.1.0 不变。
+- 更名包已公开发布；旧公开包 `dsh-deepseek-companion@0.1.0` 保留。迁移、回退和发布记录见 `docs/rename-migration.md`。
 
 公开发布状态与当前验收进度以仓库 Releases / `docs/first-release.md` 为准；下方版本说明不代替发布记录。
 
