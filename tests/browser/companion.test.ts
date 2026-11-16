@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { createServer, type ServerResponse } from 'node:http'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { resolve, join } from 'node:path'
 import test from 'node:test'
@@ -111,27 +111,32 @@ test('FR-3 rendered interactions and detached window lifecycle', { timeout: 9000
   t.after(() => browser.close())
   const context = await browser.newContext({ viewport: { width: 1100, height: 800 }, colorScheme: 'light' })
   const page = await context.newPage()
+  const proofDir = process.env.COMPANION_UI_PROOF_DIR
+  if (proofDir) await mkdir(proofDir, { recursive: true })
   const errors: string[] = []
   context.on('page', (p) => p.on('pageerror', (e) => errors.push(e.message)))
   page.on('pageerror', (e) => errors.push(e.message))
   await page.goto(`http://127.0.0.1:${address.port}/`)
   const input = (p: Page) => p.getByRole('textbox', { name: '输入消息', exact: true })
   await input(page).waitFor()
+  assert.equal(await page.getByTitle('在新窗口中打开', { exact: true }).count(), 1)
+  assert.equal(await page.getByTitle('关闭聊天窗口', { exact: true }).count(), 1)
+  if (proofDir) await page.screenshot({ path: join(proofDir, 'dock-light.png') })
 
   await t.test('标题栏 hover / active 和输入区焦点提供实际视觉反馈', async () => {
-    const button = page.getByRole('button', { name: 'Open DSH Chat Buddy in new window', exact: true })
+    const button = page.getByRole('button', { name: '在新窗口中打开', exact: true })
     await button.hover()
     await page.waitForFunction(
       () =>
-        getComputedStyle(document.querySelector('[aria-label="Open DSH Chat Buddy in new window"]')!)
-          .backgroundColor === 'rgb(238, 238, 238)',
+        getComputedStyle(document.querySelector('[aria-label="在新窗口中打开"]')!).backgroundColor ===
+        'rgb(238, 238, 238)',
     )
     assert.equal(await button.evaluate((n) => getComputedStyle(n).backgroundColor), 'rgb(238, 238, 238)')
     await page.mouse.down()
     await page.waitForFunction(
       () =>
-        getComputedStyle(document.querySelector('[aria-label="Open DSH Chat Buddy in new window"]')!)
-          .backgroundColor === 'rgb(221, 221, 221)',
+        getComputedStyle(document.querySelector('[aria-label="在新窗口中打开"]')!).backgroundColor ===
+        'rgb(221, 221, 221)',
     )
     assert.equal(await button.evaluate((n) => getComputedStyle(n).backgroundColor), 'rgb(221, 221, 221)')
     await page.mouse.move(10, 10)
@@ -189,7 +194,7 @@ test('FR-3 rendered interactions and detached window lifecycle', { timeout: 9000
     assert.equal(await input(page).inputValue(), '断流保留草稿')
   })
   const pending = page.waitForEvent('popup')
-  await page.getByRole('button', { name: 'Open DSH Chat Buddy in new window', exact: true }).click()
+  await page.getByRole('button', { name: '在新窗口中打开', exact: true }).click()
   let popup = await pending
   await input(popup).waitFor()
   await t.test('Pop-out 跟随系统主题及已打开后的字体字号变化', async () => {
@@ -202,6 +207,7 @@ test('FR-3 rendered interactions and detached window lifecycle', { timeout: 9000
     await page.emulateMedia({ colorScheme: 'dark' })
     await page.waitForTimeout(100)
     assert.equal((await styles(popup)).bg, 'rgb(21, 21, 23)')
+    if (proofDir) await popup.screenshot({ path: join(proofDir, 'popout-dark.png') })
     await page.evaluate(() => {
       document.body.style.setProperty('--dsw-font-family', 'serif')
       document.body.style.setProperty('--dsh-content-font-size', '20px')
@@ -323,7 +329,7 @@ test('FR-3 rendered interactions and detached window lifecycle', { timeout: 9000
     await page.getByRole('alert').filter({ hasText: '无法确认' }).waitFor()
     assert.equal(await page.getByRole('button', { name: '发送', exact: true }).isDisabled(), true)
     publish(s)
-    await page.getByRole('button', { name: 'Dock DSH Chat Buddy', exact: true }).click()
+    await page.getByRole('button', { name: '停靠到侧栏', exact: true }).click()
   })
   await t.test('用户阅读历史时流式更新不抢滚动；关闭重开 Pop-out 清理订阅', async () => {
     const s = base()
@@ -384,11 +390,11 @@ test('FR-3 rendered interactions and detached window lifecycle', { timeout: 9000
     assert.equal(await root.evaluate((n) => n.scrollWidth <= n.clientWidth), true)
     await popup.close()
     const next = page.waitForEvent('popup')
-    await page.getByRole('button', { name: 'Open DSH Chat Buddy in new window', exact: true }).click()
+    await page.getByRole('button', { name: '在新窗口中打开', exact: true }).click()
     popup = await next
     await input(popup).waitFor()
     const closed = popup.waitForEvent('close')
-    await popup.getByRole('button', { name: 'Close DSH Chat Buddy', exact: true }).click()
+    await popup.getByRole('button', { name: '关闭聊天窗口', exact: true }).click()
     await closed
     await page.waitForTimeout(100)
     assert.equal(peers.size, 1, 'closed popup unsubscribes its state stream')

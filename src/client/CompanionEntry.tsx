@@ -1,53 +1,46 @@
-import { useState, useSyncExternalStore, type CSSProperties } from 'react'
+import { useSyncExternalStore, type CSSProperties } from 'react'
 import type { DockController } from './index.ts'
 
-/**
- * Interactive background, mirroring the DSH sidebar footer actions (Settings):
- * transparent → `--dsw-alias-interactive-bg-hover` on hover →
- * `--dsw-alias-interactive-bg-active` while pressed. Focus stays on the browser
- * default `:focus-visible` ring, exactly like the DSH Settings trigger.
- */
-function triggerStyle(wide: boolean, hovered: boolean, pressed: boolean): CSSProperties {
-  const background = pressed
-    ? 'var(--dsw-alias-interactive-bg-active)'
-    : hovered
-      ? 'var(--dsw-alias-interactive-bg-hover)'
-      : 'transparent'
-
-  if (wide) {
-    return {
-      display: 'flex',
-      alignItems: 'center',
-      gap: 8,
-      height: 42,
-      padding: '0 10px 0 8px',
-      border: 'none',
-      background,
-      color: 'inherit',
-      cursor: 'pointer',
-      fontSize: 14,
-      lineHeight: '22px',
-      borderRadius: 12,
-      transition: 'background 120ms ease',
-    }
-  }
-  // Collapsed rail: a centered 36px round icon button, matching the footer rail.
+/** Public sidebar tokens keep the entry aligned with native footer actions. */
+function triggerStyle(wide: boolean): CSSProperties {
   return {
     display: 'flex',
     alignItems: 'center',
-    justifyContent: 'center',
-    width: 36,
-    height: 36,
-    padding: 0,
+    justifyContent: wide ? undefined : 'center',
+    gap: wide ? 'var(--dsh-sidebar-label-gap, 8px)' : 0,
+    width: wide ? '100%' : 36,
+    minWidth: 0,
+    height: wide ? 42 : 36,
+    margin: 0,
+    padding: wide ? '0 calc(var(--dsh-sidebar-row-padding, 11px) - var(--dsh-sidebar-paint-inset, 3px))' : 0,
+    boxSizing: 'border-box',
     border: 'none',
-    background,
-    color: 'inherit',
+    borderInline: wide ? 'var(--dsh-sidebar-paint-inset, 3px) solid transparent' : 'none',
+    background: 'var(--dsc-entry-bg, transparent)',
+    backgroundClip: wide ? 'padding-box' : 'border-box',
+    color: 'var(--dsw-alias-label-primary, inherit)',
     cursor: 'pointer',
+    fontFamily: 'inherit',
     fontSize: 14,
-    borderRadius: '50%',
-    transition: 'background 120ms ease',
+    lineHeight: '22px',
+    borderRadius: 'var(--dsw-radius-md, 12px)',
   }
 }
+
+const entryStyles = `
+[data-companion-entry] { outline: none; transition: background-color 120ms ease; }
+@media (hover: hover) {
+  [data-companion-entry]:hover { --dsc-entry-bg: var(--dsw-alias-interactive-bg-hover); }
+}
+[data-companion-entry]:active { --dsc-entry-bg: var(--dsw-alias-interactive-bg-active); }
+[data-companion-entry]:focus-visible {
+  outline: 2px solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary, Highlight));
+  outline-offset: -2px;
+}
+@media (prefers-reduced-motion: reduce) {
+  [data-companion-entry] { transition: none; }
+}
+`
 
 const markStyle: CSSProperties = {
   fontWeight: 600,
@@ -58,28 +51,23 @@ const markStyle: CSSProperties = {
 /** Sidebar footer entry that toggles the Companion Dock. */
 export function CompanionEntry({ wide, dock }: { wide: boolean; dock: DockController }): JSX.Element {
   const open = useSyncExternalStore(dock.subscribe, dock.isOpen)
-  const [hovered, setHovered] = useState(false)
-  const [pressed, setPressed] = useState(false)
+  const label = open ? '关闭快速聊天' : '打开快速聊天'
 
   return (
-    <button
-      type="button"
-      title="DSH Chat Buddy"
-      aria-label={open ? 'Close DSH Chat Buddy' : 'Open DSH Chat Buddy'}
-      aria-expanded={open}
-      onClick={dock.toggle}
-      onPointerEnter={() => setHovered(true)}
-      onPointerLeave={() => {
-        setHovered(false)
-        setPressed(false)
-      }}
-      onPointerDown={() => setPressed(true)}
-      onPointerUp={() => setPressed(false)}
-      onPointerCancel={() => setPressed(false)}
-      style={triggerStyle(wide, hovered, pressed)}
-    >
-      <span style={markStyle}>DS</span>
-      {wide ? <span>快速聊天</span> : null}
-    </button>
+    <>
+      <style>{entryStyles}</style>
+      <button
+        type="button"
+        data-companion-entry=""
+        title={label}
+        aria-label={label}
+        aria-expanded={open}
+        onClick={dock.toggle}
+        style={triggerStyle(wide)}
+      >
+        <span style={markStyle}>DS</span>
+        {wide ? <span>快速聊天</span> : null}
+      </button>
+    </>
   )
 }

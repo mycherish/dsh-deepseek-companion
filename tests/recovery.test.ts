@@ -120,7 +120,9 @@ test('recovery budget: 剩余预算不足时，步骤 timeout 被预算截断（
   assert.equal(tight.effectiveTimeoutMs(1_000), 1_000)
 })
 
-test('recovery budget: effectiveTimeoutMs 钳制任意 stepTimeout', () => {
+test('recovery budget: effectiveTimeoutMs 钳制任意 stepTimeout', (t) => {
+  // Keep the exact budget assertion independent of time spent between these calls.
+  t.mock.method(Date, 'now', () => 1_000)
   const fresh = createRecoveryBudget()
   assert.equal(fresh.effectiveTimeoutMs(500), 500)
   assert.equal(fresh.effectiveTimeoutMs(999_999), RECOVERY_TOTAL_BUDGET_MS)

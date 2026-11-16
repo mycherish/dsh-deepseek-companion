@@ -55,6 +55,8 @@ Dock / Float / Pop-out 共享局部 `CompanionStyles` 和标题栏控件，字�
 
 历史菜单使用控件自身 ownerDocument 处理外部点击、Esc 与局部方向键，避免跨窗口事件失效或抢占宿主编辑器；组合输入使用现代 composition 状态阻止误发。流式内容只在读者接近底部时跟随，显式切换会话后重置。Host 仍拥有消息与恢复门控；样式、焦点和滚动调整不改变发送、附件归属与 reconcile 协议。验收见 [FR-3 记录](fr3-ui-design.md)。
 
+侧栏入口的 UI 修复独立记录在 [窗口提示与侧栏按钮](ui-controls-polish.md)：中文动作提示同步 title／aria-label，使用公开 sidebar padding／paint-inset／radius token 对齐原生控件，局部 CSS 管理 hover／active／focus-visible 和 reduced-motion。此修复没有修改浏览器启动、恢复和 dispose；尚未发布到 npm。
+
 ### 兼容性策略
 
 `0.1.2` 已按 [Web 0.2.2-rc.1 记录](web-022-compatibility.md) 完成针对性兼容验收与公开发布，精确支持 macOS 本地 Web `0.1.5-rc.2 || 0.2.1-rc.2 || 0.2.2-rc.1`，Desktop 仍未兼容。当前未修改运行实现、公开接口或资源生命周期；开发类型依赖继续使用 `0.2.1-rc.2`，避免无关依赖升级。下述 `0.1.0` 范围为已发布历史基线。

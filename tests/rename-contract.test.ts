@@ -22,7 +22,8 @@ test('all visible surfaces use the new brand', () => {
     'popout.ts',
   ]) {
     const source = read(`src/client/${file}`)
-    assert.match(source, /DSH Chat Buddy/)
+    // The sidebar uses a localized action label; window titles retain the product brand.
+    if (file !== 'CompanionEntry.tsx') assert.match(source, /DSH Chat Buddy/)
     assert.doesNotMatch(source, /DeepSeek Companion/)
   }
 })

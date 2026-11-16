@@ -45,7 +45,7 @@ export function CompanionPopout({ onClose, origin }: { onClose: () => void; orig
       <CompanionStyles />
       <header style={headerStyle}>
         <span style={titleStyle}>DSH Chat Buddy</span>
-        <HeaderIconButton label="Close DSH Chat Buddy" onClick={onClose}>
+        <HeaderIconButton label="关闭聊天窗口" onClick={onClose}>
           ×
         </HeaderIconButton>
       </header>

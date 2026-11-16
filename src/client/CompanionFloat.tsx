@@ -209,13 +209,13 @@ export function CompanionFloat({ dock }: { dock: DockController }): JSX.Element 
       >
         <span style={titleStyle}>DSH Chat Buddy</span>
         <div style={headerActionsStyle}>
-          <HeaderIconButton label="Dock DSH Chat Buddy" onClick={dock.dockBack}>
+          <HeaderIconButton label="停靠到侧栏" onClick={dock.dockBack}>
             ◧
           </HeaderIconButton>
-          <HeaderIconButton label="Open DSH Chat Buddy in new window" onClick={dock.openPopout}>
+          <HeaderIconButton label="在新窗口中打开" onClick={dock.openPopout}>
             ↗
           </HeaderIconButton>
-          <HeaderIconButton label="Close DSH Chat Buddy" onClick={dock.close}>
+          <HeaderIconButton label="关闭聊天窗口" onClick={dock.close}>
             ×
           </HeaderIconButton>
         </div>
@@ -227,7 +227,7 @@ export function CompanionFloat({ dock }: { dock: DockController }): JSX.Element 
         <div
           key={edge.direction}
           role="separator"
-          aria-label="Resize DSH Chat Buddy"
+          aria-label="调整聊天窗口大小"
           onPointerDown={(event) => onResizePointerDown(event, edge.direction)}
           onPointerMove={onResizePointerMove}
           onPointerUp={endResize}

@@ -116,7 +116,7 @@ function ResizeHandle({ dock }: { dock: DockController }): JSX.Element {
     <div
       role="separator"
       aria-orientation="vertical"
-      aria-label="Resize DSH Chat Buddy"
+      aria-label="调整聊天窗口大小"
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
@@ -173,10 +173,10 @@ export function CompanionDock({ dock, variant }: { dock: DockController; variant
           <HeaderIconButton label="在页面内浮动" onClick={dock.enterFloat}>
             □
           </HeaderIconButton>
-          <HeaderIconButton label="Open DSH Chat Buddy in new window" onClick={dock.openPopout}>
+          <HeaderIconButton label="在新窗口中打开" onClick={dock.openPopout}>
             ↗
           </HeaderIconButton>
-          <HeaderIconButton label="Close DSH Chat Buddy" onClick={dock.close}>
+          <HeaderIconButton label="关闭聊天窗口" onClick={dock.close}>
             ×
           </HeaderIconButton>
         </div>
