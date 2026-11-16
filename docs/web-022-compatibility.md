@@ -1,6 +1,6 @@
 # Web 0.2.2-rc.1 兼容计划与验收
 
-日期：2026-11-16。用户已授权按以下步骤实施，当前状态为本地验收及独立复审通过，等待用户 Review／提交授权。只适配 macOS 本地 **DSH Web 0.2.2-rc.1**，候选为 `dsh-chat-buddy@0.1.2`；不包含 Desktop、rc.3、Orbis 修复或公开发布。本地候选的版本声明不等于公开兼容承诺。
+日期：2026-11-16。用户已授权按以下步骤实施，当前状态为已发布并完成公开 npm／市场／中英文官网核对；下文此前未发布、待授权及处理中的状态均为历史快照。只适配 macOS 本地 **DSH Web 0.2.2-rc.1**，候选为 `dsh-chat-buddy@0.1.2`；不包含 Desktop、rc.3、Orbis 修复或公开发布。本地候选的版本声明不等于公开兼容承诺。
 
 ## 2026-11-16 发布授权与顺序
 
@@ -135,3 +135,24 @@ git push origin master
 ```
 
 等待各自 GitHub Pages 部署成功后，再核对公开市场包含 Chat Buddy 0.1.2 和旧版本，且中英文产品页安装命令为 `dsh-chat-buddy@0.1.2`。当前未作这些线上通过声明；已受理的 npm 发布结果和公开下载可见性分开记录。剩余操作均由用户执行，本轮不再重试。
+
+## 2026-11-16 发布完成与线上核对
+
+用户执行交接命令后，本轮已完成 npm、正式市场与中英文产品页发布，无需再次 publish 或重新部署。
+
+| 项目         | 最终结果                                                                                                              |
+| ------------ | --------------------------------------------------------------------------------------------------------------------- |
+| npm          | `dsh-chat-buddy@0.1.2` 已公开可下载，latest 为 0.1.2；用户运行的发布校验脚本已下载并逐字节比对冻结发布归档            |
+| 发布归档     | SHA-256 `2e0392d8aca910d67037698d8d513dc961d398953c732593e9e71f83cf0694f8`；实际 npm publishTimestamp 为 `1794810456` |
+| 正式市场     | gh-pages 提交 `666d64d`，线上 index.json HTTP 200；Chat Buddy 版本为 0.1.2 / 0.1.1，旧 Companion 0.1.0 保留           |
+| 兼容声明     | `0.1.5-rc.2                                                                                                           |     | 0.2.1-rc.2 |     | 0.2.2-rc.1`，限 macOS 本地 Web；Desktop 未兼容 |
+| 市场 Pages   | [部署成功](https://github.com/mycherish/dsh-deepseek-companion/actions/runs/43817324846)，对应 666d64d                |
+| 网站         | master 提交 `e2f4697` 已推送，[部署成功](https://github.com/mycherish/mycherish.github.io/actions/runs/43817332222)   |
+| 中英文产品页 | 两页 HTTP 200，均已显示安装 `dsh-chat-buddy@0.1.2` 和 Web 0.2.2-rc.1 兼容范围                                         |
+| 源码         | 兼容提交及发布说明／交接记录均已推送 codex/web-022-compat；未自动合并 main                                            |
+
+线上地址：[正式市场索引](https://mycherish.github.io/dsh-deepseek-companion/index.json)、[中文产品页](https://mycherish.github.io/products/deepseek-companion/)、[英文产品页](https://mycherish.github.io/en/products/deepseek-companion/)。核对使用实际公开响应及对应提交的 Pages 工作流，不将 git push 输出单独当成部署成功。
+
+新宿主的运行验收仍以本篇既有隔离测试为准：本轮公开发布只核对归档、索引与网站，不操作日常 profile，也不将其写成新一轮 Discover 界面／真实聊天验收。此前临时环境清理结果保持不变，发布脚本的临时市场 worktree 已正常移除。
+
+后续必要工作：审阅并归并兼容分支至 main（未执行）；用户在日常 Web 0.2.2-rc.1 停止宿主后安装 0.1.2 并反馈实际使用；收集可复现缺陷。Desktop、其它宿主版本与功能扩展继续独立立项，不阻塞本次已完成发布。
