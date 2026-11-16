@@ -112,3 +112,26 @@ pnpm test:ui
 原验收归档保留不变。发布归档为 `dist/release/web-022-20261116/publish/dsh-chat-buddy-0.1.2.tgz`，SHA-256 `2e0392d8aca910d67037698d8d513dc961d398953c732593e9e71f83cf0694f8`。与原验收归档逐文件比较，仅 README.md / CHANGELOG.md 内容不同，运行文件、package.json、patch 与图标字节完全相同。验证记录为 `publish/verification.json`；不重做未变运行文件的真实聊天矩阵。
 
 个人网站仅两份产品 Markdown 已同步新版本、三项固定 Web 兼容声明及手动登录验收边界；Hugo 0.136.4 extended 构建成功，中英文输出均核对安装版本和宿主范围。npm 发布前未推送网站，也未部署新市场条目。
+
+## 发布受理后的交接状态
+
+- 源码兼容提交 `ed4e7d5`、发布说明提交 `5411362` 已推送至 `codex/web-022-compat`，未合并 main。
+- 用户完成本次发布 2FA 后，npm CLI 以 exit 0 返回 `+ dsh-chat-buddy@0.1.2`，同时提示包正在处理。随后两次公开 registry 检查均未取得该版本，不能标记为公开可安装；用户明确要求“不用重试了，给我命令”，本轮停止后续在线核验，不再次 publish。
+- 正式市场尚未修改／推送；网站两份 Markdown 已提交为 `e2f4697`，Hugo 构建和中英文产物检查通过，但未推送 master、未部署。
+- 后续本地脚本为 Git 忽略目录中的 `dist/release/web-022-20261116/publish/deploy-market.sh`。它从最新 gh-pages 读取基线，核对公开 npm 元数据、归档字节与实际发布时间，通过官方索引校验后才提交／推送新索引；任一核对失败立即退出，不改线上索引。保留旧 Companion 0.1.0 与 Chat Buddy 0.1.1，不强推。脚本已做语法检查，未执行部署；临时脚本仅在当前本地工作区存在。
+
+用户后续按顺序执行，第一步仍为 404 时不要执行后续步骤，也不要重复 npm publish：
+
+```sh
+# 1. 确认公开 registry 已能返回 0.1.2
+npm view dsh-chat-buddy@0.1.2 version --registry https://registry.npmjs.org/
+
+# 2. 在插件仓库运行，自动完成核验和市场部署
+bash dist/release/web-022-20261116/publish/deploy-market.sh
+
+# 3. 仅在上一步成功后推送已提交的中英文产品页
+# 在个人 Hugo 网站仓库运行
+git push origin master
+```
+
+等待各自 GitHub Pages 部署成功后，再核对公开市场包含 Chat Buddy 0.1.2 和旧版本，且中英文产品页安装命令为 `dsh-chat-buddy@0.1.2`。当前未作这些线上通过声明；已受理的 npm 发布结果和公开下载可见性分开记录。剩余操作均由用户执行，本轮不再重试。
