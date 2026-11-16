@@ -234,9 +234,13 @@ export interface ChatSessionSummary {
  */
 export type ChatMessageInput = Omit<ChatMessage, 'id'>
 
+export type BrowserSessionMode = 'idle' | 'starting' | 'background' | 'login' | 'switching' | 'error'
+
 export interface CompanionState {
   /** Host-state marker: the Host is up and publishing (never a page status). */
   status: 'ready'
+  /** Absent on older Hosts; intentional login transitions are not crash recovery. */
+  browserSession?: { mode: BrowserSessionMode }
   revision: number
   instanceId: string
   /** Unified connection projection (Phase 08.2). */

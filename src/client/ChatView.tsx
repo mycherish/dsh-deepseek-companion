@@ -3,6 +3,8 @@ import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import {
   addChatAttachment,
+  startDeepSeekBrowser,
+  finishDeepSeekLogin,
   fetchChatSessions,
   removeChatAttachment,
   sendChatMessage,
@@ -30,6 +32,7 @@ import { shouldSubmitMessage, shouldFollowTranscript, uiErrorText } from './ui-i
 import { browserSetupHint } from './browser-setup.ts'
 import { chatRequestErrorText } from './error-lifecycle.ts'
 import type {
+  BrowserSessionMode,
   ChatAttachment,
   ChatFormat,
   ChatMessage,
@@ -685,6 +688,8 @@ function ReasoningBlock({ reasoning }: { reasoning: ChatReasoning }): ReactNode 
  */
 export function ChatView({ origin }: { origin: string }): JSX.Element {
   const [status, setStatus] = useState<DeepSeekStatus>('checking')
+  const [browserMode, setBrowserMode] = useState<BrowserSessionMode | undefined>()
+  const [browserActionPending, setBrowserActionPending] = useState(false)
   const [streamStatus, setStreamStatus] = useState<StateStreamStatus>('connecting')
   /**
    * Unified Host connection (Phase 08.2). Local SSE readiness is a separate gate. The
@@ -747,6 +752,7 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
           latestHostStateRef.current = state
           setChatError((previous: unknown) => (chatRequestErrorText(previous, state) === null ? null : previous))
           setStatus(state.deepseek.status)
+          setBrowserMode(state.browserSession?.mode)
           setConnection(state.connection)
           setCurrentSession(state.currentSession)
           setRecoveryNotice(state.recoveryNotice)
@@ -774,6 +780,18 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
     [origin],
   )
 
+  useEffect(() => {
+    const controller = new AbortController()
+    let live = true
+    void startDeepSeekBrowser(origin, controller.signal).catch((error: unknown) => {
+      if (live) setError(error instanceof Error ? error.message : '网页会话准备失败，请重试。')
+    })
+    return () => {
+      live = false
+      controller.abort()
+    }
+  }, [origin])
+
   // `stopUi.sending` is the authoritative send state; `submitting` only covers
   // the short local window before the Host's first SSE push lands, so the button
   // stays disabled between the click and that push.
@@ -785,7 +803,9 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
   const recovering = connection.status === 'recovering'
   const streamConnected = streamStatus === 'connected'
   const sessionUnverified = recoveryNotice === 'session_unverified'
-  const pageBusy = busy || startingNew || switching || recovering || !streamConnected
+  const lifecycleBusy =
+    browserMode === 'idle' || browserMode === 'starting' || browserMode === 'switching' || browserMode === 'login'
+  const pageBusy = busy || startingNew || switching || recovering || lifecycleBusy || !streamConnected
 
   // Which history entry is「当前」(Phase 08.2): the Host's `currentSession` is
   // the authority (it follows the real page, manual navigation included); the
@@ -865,7 +885,7 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
   const canSend = canSendRound({
     text: input,
     attachments,
-    busy: busy || !streamConnected,
+    busy: busy || lifecycleBusy || !streamConnected,
     attaching,
     connection: connection.status,
     sessionUnverified,
@@ -1081,6 +1101,21 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
     }
   }
 
+  const browserAction = async (action: 'login' | 'background' | 'start'): Promise<void> => {
+    if (browserActionPending || !streamConnected) return
+    setBrowserActionPending(true)
+    clearErrors()
+    try {
+      if (action === 'login') await showDeepSeekBrowser(origin)
+      else if (action === 'background') await finishDeepSeekLogin(origin)
+      else await startDeepSeekBrowser(origin)
+    } catch (error) {
+      setError(error instanceof Error ? error.message : '登录操作未完成，请稍后重试。')
+    } finally {
+      setBrowserActionPending(false)
+    }
+  }
+
   const visibleError =
     error ?? (chatError instanceof Error ? chatError.message : chatError === null ? null : '发送失败')
 
@@ -1089,6 +1124,40 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
       {streamStatus === 'connecting' ? '正在连接聊天服务…' : '聊天连接已中断，正在重连…'}
     </div>
   )
+
+  if (browserMode === 'login') {
+    return (
+      <div style={rootStyle}>
+        {streamNotice}
+        <div role="status" style={hintStyle}>
+          {status === 'logged_in' ? '登录已完成，返回聊天后窗口将关闭。' : '请在独立窗口完成 DeepSeek 登录。'}
+        </div>
+        {error ? (
+          <div role="alert" style={hintStyle}>
+            {uiErrorText(error)}
+          </div>
+        ) : null}
+        <button
+          type="button"
+          style={sendButtonStyle}
+          disabled={!streamConnected || browserActionPending || status !== 'logged_in'}
+          onClick={() => void browserAction('background')}
+        >
+          完成登录，返回聊天
+        </button>
+      </div>
+    )
+  }
+  if (browserMode === 'idle' || browserMode === 'starting' || browserMode === 'switching') {
+    return (
+      <div style={rootStyle}>
+        {streamNotice}
+        <div role="status" style={hintStyle}>
+          正在准备网页会话…
+        </div>
+      </div>
+    )
+  }
 
   if (status === 'checking' && !recovering) {
     return <div style={rootStyle}>{streamNotice ?? <div style={hintStyle}>检测中…</div>}</div>
@@ -1099,13 +1168,16 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
       <div style={rootStyle}>
         {streamNotice}
         <div style={hintStyle}>未登录 DeepSeek</div>
+        {error ? (
+          <div role="alert" style={hintStyle}>
+            {uiErrorText(error)}
+          </div>
+        ) : null}
         <button
           type="button"
           style={sendButtonStyle}
-          disabled={!streamConnected}
-          onClick={() => {
-            void showDeepSeekBrowser(origin).catch(() => {})
-          }}
+          disabled={!streamConnected || browserActionPending}
+          onClick={() => void browserAction('login')}
         >
           登录 DeepSeek
         </button>
@@ -1119,6 +1191,19 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
       <div style={rootStyle}>
         {streamNotice}
         <div style={hintStyle}>检测失败</div>
+        {error ? (
+          <div role="alert" style={hintStyle}>
+            {uiErrorText(error)}
+          </div>
+        ) : null}
+        <button
+          type="button"
+          style={sendButtonStyle}
+          disabled={!streamConnected || browserActionPending}
+          onClick={() => void browserAction('start')}
+        >
+          重试准备
+        </button>
         {setupHint !== null ? (
           <div role="status" style={hintStyle}>
             {setupHint}
@@ -1258,6 +1343,17 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
           >
             {historyOpen ? '收起历史' : '历史会话'}
           </button>
+          {browserMode !== undefined ? (
+            <button
+              type="button"
+              style={{ ...newChatButtonStyle(pageBusy || attachments.length > 0), marginLeft: 0 }}
+              disabled={pageBusy || browserActionPending || attachments.length > 0}
+              title={attachments.length > 0 ? '请先发送或移除图片草稿，再管理登录' : '按需打开 DeepSeek 登录窗口'}
+              onClick={() => void browserAction('login')}
+            >
+              管理登录
+            </button>
+          ) : null}
           {/* New chat (Phase 07L): disabled while a reply streams, so a
               generation is never yanked out from under the page. */}
           <button
@@ -1358,7 +1454,9 @@ export function ChatView({ origin }: { origin: string }): JSX.Element {
             type="button"
             style={busy ? stopButtonStyle : sendButtonStyle}
             onClick={() => (busy ? void stop() : void send())}
-            disabled={!streamConnected || recovering || sessionUnverified || (busy ? stopping : !canSend)}
+            disabled={
+              !streamConnected || recovering || lifecycleBusy || sessionUnverified || (busy ? stopping : !canSend)
+            }
           >
             {STOP_PHASE_LABEL[busy ? phase : 'send']}
           </button>

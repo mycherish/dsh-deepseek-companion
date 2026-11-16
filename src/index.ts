@@ -3,6 +3,7 @@ import type {} from '@deepseek-ai/dsh-client-connection'
 import { handleAttachmentRequest } from './host/attachment-route.ts'
 import { createAttachmentResources } from './host/attachment-resources.ts'
 import { createDeepSeekBrowser, type DeepSeekBrowser } from './host/browser.ts'
+import { canSwitchBrowserMode, createBrowserSession } from './host/browser-session.ts'
 import { handleChatMessage } from './host/chat.ts'
 import { handleDeepThinkRequest } from './host/deep-think.ts'
 import { createPageGuard } from './host/guard.ts'
@@ -38,6 +39,8 @@ const STATE_PATH = '/api/deepseek-companion/state'
 const STREAM_PATH = '/api/deepseek-companion/state/stream'
 /** POST route to focus/reopen the DeepSeek login page (Phase 07B). */
 const SHOW_PATH = '/api/deepseek-companion/browser/show'
+const START_PATH = '/api/deepseek-companion/browser/start'
+const BACKGROUND_PATH = '/api/deepseek-companion/browser/background'
 /** POST route to send one chat message and await the final reply (Phase 07C). */
 const CHAT_PATH = '/api/deepseek-companion/chat'
 /** POST route to add / remove one draft image (Phase 18A). */
@@ -109,15 +112,25 @@ export function apply(ctx: Context): void {
   // route below can reach it. Closing a dock/float/pop-out never closes it;
   // only plugin dispose does.
   let browser: DeepSeekBrowser | null = null
+  let browserSession: ReturnType<typeof createBrowserSession> | null = null
 
   // Single readiness gate (Phase 20A): every page-touching route calls this
   // before doing browser work. `null` means the browser is (still) unavailable —
   // the route answers 503 and the recovery keeps running on its own.
   const readyBrowser = async (): Promise<DeepSeekBrowser | null> => {
-    if (browser === null) return null
-    const status = await browser.ensureReady()
-    return status === 'error' ? null : browser
+    const current = browser
+    if (current === null || !browserSession?.isCurrent(current)) return null
+    const status = await current.ensureReady()
+    return status === 'error' || !browserSession.isCurrent(current) ? null : current
   }
+
+  // Pin every finite page request until its response settles. Login cannot close
+  // a context underneath a send, upload, toggle, list or history operation.
+  const withBrowserUse =
+    (handler: (request: Request) => Promise<Response>) =>
+    async (request: Request): Promise<Response> =>
+      (await browserSession?.use(() => handler(request))) ??
+      Response.json({ error: 'browser not ready' }, { status: 503 })
 
   // One page is shared by every route, so the Host arbitrates its use (Phase
   // 07L → 08): while a page operation (new chat / history switch) is in flight,
@@ -158,7 +171,7 @@ export function apply(ctx: Context): void {
      * whole duration, and is strictly best-effort: any failure keeps the Host
      * transcript untouched and still reports the recovery as successful.
      */
-    const runReconcile = async (settlement: RecoverySettlement): Promise<void> => {
+    const runReconcile = async (settlement: RecoverySettlement, transitionOwnsGuard = false): Promise<void> => {
       if (disposed) return
       const verdict = recoverySessionVerdict(settlement)
       if (verdict === 'deleted' && settlement.target.kind === 'session') {
@@ -175,9 +188,10 @@ export function apply(ctx: Context): void {
       if (currentBrowser === null) return
       const sessionId = settlement.target.id
       if (store.getState().currentSession.id !== sessionId) return
+      // Intentional restoration already owns the guard until check() completes.
+      // Crash recovery claims its own guard; never release a borrowed claim here.
+      if (!transitionOwnsGuard && !pageGuard.tryClaim()) return
       store.clearSessionUnverified(sessionId)
-      // The guard arbitrates the ONE page: a busy page is skipped, never fought over.
-      if (!pageGuard.tryClaim()) return
       const generation = ++reconcileGeneration
       try {
         // Read → bounded stability wait → validate → plan (Phase 20B1, pure logic).
@@ -218,70 +232,82 @@ export function apply(ctx: Context): void {
           if (timer !== undefined) clearTimeout(timer)
         }
       } finally {
-        pageGuard.release()
+        if (!transitionOwnsGuard) pageGuard.release()
       }
     }
 
-    void createDeepSeekBrowser(
-      browserProfileDirForCtx,
-      (status) => {
-        if (!disposed) store.setDeepSeekStatus(status)
+    browserSession = createBrowserSession({
+      claim: () => {
+        const state = store.getState()
+        return canSwitchBrowserMode(state) && pageGuard.tryClaim()
       },
-      // Composer switches are only ever mirrored from the real page
-      // (Deep Think: Phase 07G, Search: Phase 07H).
-      (state) => {
-        if (!disposed) store.setDeepThinkState(state)
+      release: () => {
+        pageGuard.release()
+        if (!disposed && browserSession?.mode() === 'background') void sessionSync.drain()
       },
-      (state) => {
-        if (!disposed) store.setSearchState(state)
-      },
-      // Session navigation inside the DeepSeek window itself (Phase 08.1).
-      (location, info) => {
-        if (!disposed) sessionSync.onLocation(location, info)
-      },
-      // The page was closed and a fresh one opened: nothing the old page's draft
-      // was tied to exists any more (Phase 18A).
-      () => {
-        if (!disposed) void resources.resetDraft()
-      },
-      // Browser recovery (Phase 20A): drive `connection = recovering`, snapshot
-      // the last-known session to reopen, and align `sessionSync.lastKnown` with
-      // the page's real location once the rebuild settles.
-      {
-        onRecovering: (recovering) => {
-          if (!disposed) store.setRecovering(recovering)
-        },
-        getRecoverTarget: () => {
-          const session = store.getState().currentSession
-          return session.id !== null ? ({ kind: 'session', id: session.id } as const) : ({ kind: 'empty' } as const)
-        },
-        onMarkKnown: (location) => {
-          if (!disposed) sessionSync.markKnown(location)
-        },
-        // Phase 20B1: the last step of a successful recovery is reconciliation —
-        // it runs while `connection` still reads `recovering`, so the UI is only
-        // handed back once the transcript and the real page agree.
-        onSettled: (settlement) => runReconcile(settlement),
-      },
-    )
-      .then((created) => {
-        if (disposed) {
-          void created.dispose()
-          return
+      onMode: (mode) => {
+        if (disposed) return
+        store.setBrowserSessionMode(mode)
+        if (mode !== 'background') browser = null
+        store.setBrowserReady(mode === 'background' || mode === 'login')
+        if (mode === 'starting' || mode === 'switching') {
+          browser = null
+          store.setDeepSeekStatus('checking')
         }
-        browser = created
-        // Phase 08.2: the unified connection needs to know the browser EXISTS —
-        // the login probe below decides whether it is usable.
-        store.setBrowserReady(true)
-        return created.check()
-      })
-      .catch((error: unknown) => {
-        console.warn('[dsh-deepseek-companion] failed to start DeepSeek browser', error)
-        if (!disposed) {
-          store.setBrowserReady(false)
+        if (mode === 'error') {
+          store.setRecovering(false) // The failed owner and its recovery have been fully disposed.
           store.setDeepSeekStatus('error')
         }
-      })
+      },
+      onError: (error) => console.warn('[dsh-chat-buddy] browser preparation failed', error),
+      create: async (mode, isCurrent) => {
+        const live = () => !disposed && isCurrent()
+        const created = await createDeepSeekBrowser(
+          browserProfileDirForCtx,
+          (status) => {
+            if (live()) store.setDeepSeekStatus(status)
+          },
+          (state) => {
+            if (live() && mode === 'background') store.setDeepThinkState(state)
+          },
+          (state) => {
+            if (live() && mode === 'background') store.setSearchState(state)
+          },
+          (location, info) => {
+            if (live() && mode === 'background') sessionSync.onLocation(location, info)
+          },
+          () => {
+            if (live() && mode === 'background') void resources.resetDraft()
+          },
+          {
+            onRecovering: (recovering) => {
+              if (live() && mode === 'background') store.setRecovering(recovering)
+            },
+            getRecoverTarget: () => {
+              const session = store.getState().currentSession
+              return session.id !== null ? { kind: 'session', id: session.id } : { kind: 'empty' }
+            },
+            onMarkKnown: (location) => {
+              if (live() && mode === 'background') sessionSync.markKnown(location)
+            },
+            onSettled: (settlement) => {
+              if (!live() || mode !== 'background') return
+              const phase = browserSession?.mode()
+              return runReconcile(settlement, phase === 'starting' || phase === 'switching')
+            },
+          },
+          {
+            mode,
+            initialSessionId: store.getState().currentSession.id,
+            onLoginWindowClosed: () => {
+              if (live()) void browserSession?.loginClosed()
+            },
+          },
+        )
+        if (live() && mode === 'background') browser = created
+        return created
+      },
+    })
 
     return () => {
       disposed = true
@@ -291,36 +317,46 @@ export function apply(ctx: Context): void {
       // The page is about to go away, taking its drafts with it (Phase 18A).
       // Fire-and-forget: teardown must not block on file I/O.
       void resources.resetDraft()
-      if (browser !== null) {
-        void browser.dispose()
-        browser = null
-      }
+      const owned = browserSession
+      browserSession = null
+      browser = null
+      void owned?.dispose().catch((error: unknown) => console.warn('[dsh-chat-buddy] browser cleanup failed', error))
       store.setBrowserReady(false)
     }
   }, 'deepseek-companion: deepseek browser')
 
-  // Manual login entry: focus or reopen the DeepSeek page. The browser object,
-  // token, and cookies never leave the Host.
-  ctx.effect(
-    () =>
-      ctx.connection.fetch.register({
-        path: SHOW_PATH,
-        methods: ['POST'],
-        requestBody: 'buffered',
-        fetch: async () => {
-          const ready = await readyBrowser()
-          if (ready === null) return Response.json({ ok: false }, { status: 503 })
-          try {
-            await ready.showLogin()
-            return Response.json({ ok: true })
-          } catch (error) {
-            console.warn('[dsh-deepseek-companion] failed to show DeepSeek login', error)
-            return Response.json({ ok: false }, { status: 500 })
-          }
-        },
-      }),
-    'deepseek-companion: browser show route',
-  )
+  // Pure snapshots never start a browser. Only these explicit user actions do.
+  for (const [path, action] of [
+    [START_PATH, 'start'],
+    [SHOW_PATH, 'login'],
+    [BACKGROUND_PATH, 'background'],
+  ] as const) {
+    ctx.effect(
+      () =>
+        ctx.connection.fetch.register({
+          path,
+          methods: ['POST'],
+          requestBody: 'buffered',
+          fetch: async () => {
+            const current = browserSession
+            if (current === null) return Response.json({ error: 'browser unavailable' }, { status: 503 })
+            const ok =
+              action === 'start'
+                ? (await current.activate()) !== null
+                : action === 'login'
+                  ? await current.showLogin()
+                  : await current.finishLogin()
+            return ok
+              ? Response.json({ ok: true })
+              : Response.json(
+                  { error: '浏览器未就绪，或当前仍有操作／附件草稿。请完成登录或稍后重试。' },
+                  { status: current.mode() === 'error' ? 503 : 409 },
+                )
+          },
+        }),
+      `deepseek-companion: browser ${action} route`,
+    )
+  }
 
   // Minimal text chat: the Host is the authoritative message source. It claims
   // the send slot, appends the user message, sends via the browser, then
@@ -331,7 +367,7 @@ export function apply(ctx: Context): void {
         path: CHAT_PATH,
         methods: ['POST'],
         requestBody: 'buffered',
-        fetch: async (request) => {
+        fetch: withBrowserUse(async (request) => {
           let message: string
           try {
             const body = (await request.json()) as { message?: unknown }
@@ -416,7 +452,7 @@ export function apply(ctx: Context): void {
           // WHILE it streamed can now be applied (Phase 08.1, latest wins).
           void sessionSync.drain()
           return Response.json(result.body, { status: result.status })
-        },
+        }),
       }),
     'deepseek-companion: chat route',
   )
@@ -431,7 +467,7 @@ export function apply(ctx: Context): void {
         path: ATTACHMENT_PATH,
         methods: ['POST'],
         requestBody: 'buffered',
-        fetch: async (request) => {
+        fetch: withBrowserUse(async (request) => {
           const body: unknown = await request.json().catch(() => null)
           const ready = await readyBrowser()
           if (ready === null) return Response.json({ error: 'browser not ready' }, { status: 503 })
@@ -440,7 +476,7 @@ export function apply(ctx: Context): void {
             console.warn('[dsh-deepseek-companion] attachment request not applied:', result.status, result.body.error)
           }
           return Response.json(result.body, { status: result.status })
-        },
+        }),
       }),
     'deepseek-companion: chat attachment route',
   )
@@ -454,7 +490,7 @@ export function apply(ctx: Context): void {
         path: DEEP_THINK_PATH,
         methods: ['POST'],
         requestBody: 'buffered',
-        fetch: async (request) => {
+        fetch: withBrowserUse(async (request) => {
           // Delegate to the tested flow: validates the body, refuses while busy,
           // clicks the real toggle and always writes back the page's real state.
           const body: unknown = await request.json().catch(() => null)
@@ -465,7 +501,7 @@ export function apply(ctx: Context): void {
             console.warn('[dsh-deepseek-companion] failed to set Deep Think', result.body.error)
           }
           return Response.json(result.body, { status: result.status })
-        },
+        }),
       }),
     'deepseek-companion: deep think route',
   )
@@ -480,7 +516,7 @@ export function apply(ctx: Context): void {
         path: SEARCH_PATH,
         methods: ['POST'],
         requestBody: 'buffered',
-        fetch: async (request) => {
+        fetch: withBrowserUse(async (request) => {
           const body: unknown = await request.json().catch(() => null)
           const ready = await readyBrowser()
           if (ready === null) return Response.json({ error: 'browser not ready' }, { status: 503 })
@@ -489,7 +525,7 @@ export function apply(ctx: Context): void {
             console.warn('[dsh-deepseek-companion] failed to set Search', result.body.error)
           }
           return Response.json(result.body, { status: result.status })
-        },
+        }),
       }),
     'deepseek-companion: search route',
   )
@@ -505,13 +541,13 @@ export function apply(ctx: Context): void {
         // The stop request carries no payload, but the route table requires the
         // field; a buffered body is simply ignored.
         requestBody: 'buffered',
-        fetch: async () => {
+        fetch: withBrowserUse(async () => {
           const result = await handleStopRequest(store, browser)
           if (result.status !== 200) {
             console.warn('[dsh-deepseek-companion] stop request not applied:', result.status, result.body.error)
           }
           return Response.json(result.body, { status: result.status })
-        },
+        }),
       }),
     'deepseek-companion: stop route',
   )
@@ -528,7 +564,7 @@ export function apply(ctx: Context): void {
         // The request carries no payload, but the route table requires the
         // field; a buffered body is simply ignored.
         requestBody: 'buffered',
-        fetch: async () => {
+        fetch: withBrowserUse(async () => {
           const ready = await readyBrowser()
           if (ready === null) return Response.json({ error: 'browser not ready' }, { status: 503 })
           const result = await handleNewChatRequest(store, ready, pageGuard)
@@ -547,7 +583,7 @@ export function apply(ctx: Context): void {
           }
           void sessionSync.drain()
           return Response.json(result.body, { status: result.status })
-        },
+        }),
       }),
     'deepseek-companion: chat new route',
   )
@@ -562,7 +598,7 @@ export function apply(ctx: Context): void {
         path: SESSIONS_PATH,
         methods: ['GET'],
         requestBody: 'buffered',
-        fetch: async () => {
+        fetch: withBrowserUse(async () => {
           const ready = await readyBrowser()
           if (ready === null) return Response.json({ error: 'browser not ready' }, { status: 503 })
           // The active sidebar entry also refreshes `currentSession` (title
@@ -572,7 +608,7 @@ export function apply(ctx: Context): void {
             console.warn('[dsh-deepseek-companion] failed to list chat sessions:', result.body.error)
           }
           return Response.json(result.body, { status: result.status })
-        },
+        }),
       }),
     'deepseek-companion: chat sessions route',
   )
@@ -583,7 +619,7 @@ export function apply(ctx: Context): void {
         path: SWITCH_PATH,
         methods: ['POST'],
         requestBody: 'buffered',
-        fetch: async (request) => {
+        fetch: withBrowserUse(async (request) => {
           const body: unknown = await request.json().catch(() => null)
           const ready = await readyBrowser()
           if (ready === null) return Response.json({ error: 'browser not ready' }, { status: 503 })
@@ -604,7 +640,7 @@ export function apply(ctx: Context): void {
           }
           void sessionSync.drain()
           return Response.json(result.body, { status: result.status })
-        },
+        }),
       }),
     'deepseek-companion: chat switch route',
   )

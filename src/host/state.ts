@@ -10,6 +10,7 @@ import { randomUUID } from 'node:crypto'
 import { connectionFrom } from '../shared/state.ts'
 import type { IdentityBinding, ReconcileAppend, ReconcilePatch } from './reconcile.ts'
 import type {
+  BrowserSessionMode,
   ChatAttachment,
   ChatFormat,
   ChatMessage,
@@ -160,6 +161,7 @@ export interface CompanionStateStore {
    * makes the connection potentially usable — the login probe decides the rest.
    */
   setBrowserReady(ready: boolean): void
+  setBrowserSessionMode(mode: BrowserSessionMode): void
   /**
    * Override the derived connection with `recovering` while a single-flight
    * recovery (Phase 20A) is executing. Cleared the moment recovery settles, at
@@ -249,6 +251,7 @@ export function createCompanionStateStore(): CompanionStateStore {
   const search: SearchState = { available: false, enabled: false }
   let state: CompanionState = {
     status: 'ready',
+    browserSession: { mode: 'idle' },
     revision: 1,
     instanceId: randomUUID(),
     connection: connectionFrom('checking', false),
@@ -320,6 +323,12 @@ export function createCompanionStateStore(): CompanionStateStore {
         state.connection.browserReady,
         recovering,
       )
+      notify(state)
+    },
+
+    setBrowserSessionMode(mode: BrowserSessionMode) {
+      if (disposed || state.browserSession?.mode === mode) return
+      state = { ...state, browserSession: { mode } }
       notify(state)
     },
 

@@ -331,6 +331,15 @@ export type AttachImageResult =
       previewIdentity?: string
     }
 
+export interface DeepSeekBrowserOptions {
+  /** Background uses the installed full Chromium in headless mode; login is visible. */
+  mode?: 'background' | 'login'
+  /** Restore the Host-owned session after an intentional mode switch. */
+  initialSessionId?: string | null
+  /** A user closes the explicit login window; never recover it visibly. */
+  onLoginWindowClosed?: () => void
+}
+
 export interface DeepSeekBrowser {
   /** Run one initial check now (then re-checks automatically on navigation). */
   check(): Promise<DeepSeekStatus>
@@ -558,13 +567,16 @@ export async function createDeepSeekBrowser(
    */
   onPageReplaced?: () => void,
   recovery: RecoveryCallbacks = {},
+  options: DeepSeekBrowserOptions = {},
 ): Promise<DeepSeekBrowser> {
   // Playwright resolves its own matched Chromium via `chromium.executablePath()`;
   // a missing browser surfaces as a clear launch error (mapped to `error`).
-  let context: BrowserContext = await chromium.launchPersistentContext(profileDir, {
-    headless: false,
+  const launchOptions = {
+    headless: options.mode === 'background',
+    ...(options.mode === 'background' ? { channel: 'chromium' as const } : {}),
     viewport: { width: 1280, height: 800 },
-  })
+  }
+  let context: BrowserContext = await chromium.launchPersistentContext(profileDir, launchOptions)
 
   let page: Page = context.pages()[0] ?? (await context.newPage())
 
@@ -576,6 +588,8 @@ export async function createDeepSeekBrowser(
   // `disposed` is declared up here so every lifecycle listener and the recovery
   // engine can read it; `pageEpoch` / `browserEpoch` are the stale-event fences.
   let disposed = false
+  let disposalPromise: Promise<void> | null = null
+  const pendingContexts = new Set<Promise<BrowserContext>>()
   /** +1 whenever the page is replaced (Level 1 or Level 3) — fences old-page events. */
   let pageEpoch = 0
   /** +1 on every Level 3 rebuild — fences old-context/browser events. */
@@ -702,6 +716,18 @@ export async function createDeepSeekBrowser(
     return mode
   }
 
+  let loginCloseReported = false
+  const reportLoginClose = (): boolean => {
+    if (options.mode !== 'login' || options.onLoginWindowClosed === undefined) return false
+    if (!loginCloseReported) {
+      loginCloseReported = true
+      options.onLoginWindowClosed()
+    }
+    return true
+  }
+
+  let initialRestore: { target: SessionLocation; signals: Array<Promise<HistorySignal>> } | null = null
+
   // Wire every page-level trigger once per page object (Phase 08 + 20A). A page
   // is mounted exactly once (`WeakSet`), so repeated recovery can never stack
   // duplicate listeners; every callback first checks `disposed` and the epoch it
@@ -719,11 +745,11 @@ export async function createDeepSeekBrowser(
     })
     target.on('response', (response) => {
       if (disposed || myEpoch !== pageEpoch) return
-      if (recoveryNavigationActive && recoveryTarget?.kind === 'session') {
-        if (matchesRecoveryHistoryRequest(response.url(), recoveryTarget.id, response.request().method())) {
-          // Observe the frontend's OWN request. Never make a Host request or
-          // expose its body, cookies, or headers outside this classifier.
-          historySignals.push(
+      const observedTarget = initialRestore?.target ?? recoveryTarget
+      if ((initialRestore !== null || recoveryNavigationActive) && observedTarget?.kind === 'session') {
+        if (matchesRecoveryHistoryRequest(response.url(), observedTarget.id, response.request().method())) {
+          const signals = initialRestore?.signals ?? historySignals
+          signals.push(
             response
               .json()
               .then((body: unknown) => classifyHistoryResponse(response.status(), body))
@@ -738,7 +764,7 @@ export async function createDeepSeekBrowser(
       if (disposed || myEpoch !== pageEpoch) return
       if (frame !== target.mainFrame()) return
       // Recovery's own goto must never look like a user switch (§10.1).
-      if (recoveryNavigationActive) return
+      if (recoveryNavigationActive || initialRestore !== null) return
       // A failed login probe would hide every operation that calls ensureReady.
       // Recover an invalid main document before that UI dead end can occur.
       if (!isDeepSeekOrigin(frame.url())) {
@@ -750,7 +776,8 @@ export async function createDeepSeekBrowser(
     })
     target.on('close', () => {
       if (disposed || myEpoch !== pageEpoch) return
-      // The live page closed underneath us (external close) → recover.
+      if (reportLoginClose()) return
+      // The live background page closed underneath us → recover without a visible window.
       void triggerRecovery('page-closed')
     })
     target.on('crash', () => {
@@ -781,16 +808,39 @@ export async function createDeepSeekBrowser(
   await installBridges()
 
   const check = async (): Promise<DeepSeekStatus> => {
+    const restoring = options.initialSessionId
+      ? {
+          target: { kind: 'session', id: options.initialSessionId } as SessionLocation,
+          signals: [] as Array<Promise<HistorySignal>>,
+        }
+      : null
+    initialRestore = restoring
     try {
-      await page.goto(DEEPSEEK_URL, { waitUntil: 'domcontentloaded', timeout: 30000 })
+      const initialUrl = options.initialSessionId
+        ? `${DEEPSEEK_URL}/a/chat/s/${encodeURIComponent(options.initialSessionId)}`
+        : DEEPSEEK_URL
+      await page.goto(initialUrl, { waitUntil: 'domcontentloaded', timeout: 30000 })
       await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {})
       const status = await runDetect()
-      // Initial sync: mirror the composer's real switch states.
       await syncComposerMode()
+      if (restoring && !disposed) {
+        const signals = await bound(Promise.all(restoring.signals), 1000).catch(() => [])
+        const history: HistorySignal =
+          signals.length > 0 && signals.every((s) => s === 'not_found')
+            ? 'not_found'
+            : signals.length > 0 && signals.every((s) => s === 'found')
+              ? 'found'
+              : 'unknown'
+        const location = sessionLocationFromPath(page.url())
+        recovery.onMarkKnown?.(location)
+        await recovery.onSettled?.({ status, target: restoring.target, location, history })
+      }
       return status
     } catch {
-      onStatus('error')
+      if (!disposed) onStatus('error')
       return 'error'
+    } finally {
+      if (initialRestore === restoring) initialRestore = null
     }
   }
 
@@ -998,7 +1048,9 @@ export async function createDeepSeekBrowser(
       page.close().catch(() => {}),
       budget.effectiveTimeout('closeQuietly'),
     ).catch(() => {})
+    if (disposed) return 'error'
     page = await bound(context.newPage(), budget.effectiveTimeout('newPage'))
+    if (disposed) return 'error'
     mountPage(page)
     const location = await gotoRecoverTarget(target, budget)
     const status = await detectWithBudget(budget)
@@ -1016,12 +1068,38 @@ export async function createDeepSeekBrowser(
       context.close().catch(() => {}),
       budget.effectiveTimeout('closeQuietly'),
     ).catch(() => {})
-    context = await bound(
-      chromium.launchPersistentContext(profileDir, { headless: false, viewport: { width: 1280, height: 800 } }),
-      budget.effectiveTimeout('newPage'),
+    if (disposed) return 'error'
+    const mine = browserEpoch
+    const timeout = budget.effectiveTimeout('newPage')
+    if (timeout <= 0) return 'error'
+    let awaitingAdoption = true
+    const pending = chromium
+      .launchPersistentContext(profileDir, { ...launchOptions, timeout })
+      .then(async (created) => {
+        if (!awaitingAdoption || disposed || mine !== browserEpoch) {
+          await created.close().catch(() => {})
+          throw new Error('browser constructor no longer owned')
+        }
+        return created
+      })
+    pendingContexts.add(pending)
+    void pending.then(
+      () => pendingContexts.delete(pending),
+      () => pendingContexts.delete(pending),
     )
+    try {
+      const created = await bound(pending, timeout)
+      if (disposed || mine !== browserEpoch) {
+        await created.close().catch(() => {})
+        return 'error'
+      }
+      context = created
+    } finally {
+      awaitingAdoption = false
+    }
     mountBrowserLifecycle()
     await installBridges()
+    if (disposed) return 'error'
     page = context.pages()[0] ?? (await context.newPage())
     mountPage(page)
     const location = await gotoRecoverTarget(target, budget)
@@ -1050,7 +1128,7 @@ export async function createDeepSeekBrowser(
           await new Promise((resolve) =>
             setTimeout(resolve, Math.min(backoffForAttempt(attempt + 1), budget.remaining())),
           )
-          if (budget.exhausted()) break
+          if (disposed || budget.exhausted()) break
         }
         attempt += 1
         historySignals = []
@@ -1085,26 +1163,29 @@ export async function createDeepSeekBrowser(
       // before the transcript and the real page agree. Strictly best-effort — a
       // failure here can never turn a successful recovery into a failure.
       try {
-        let history: HistorySignal = 'unknown'
-        if (historySignals.length > 0 && budget.remaining() > 0) {
-          const signals = await bound(Promise.all(historySignals), budget.effectiveTimeoutMs(1_000)).catch(() => [])
-          if (signals.length > 0 && signals.every((signal) => signal === 'not_found')) history = 'not_found'
-          else if (signals.length > 0 && signals.every((signal) => signal === 'found')) history = 'found'
+        if (!disposed) {
+          let history: HistorySignal = 'unknown'
+          if (historySignals.length > 0 && budget.remaining() > 0) {
+            const signals = await bound(Promise.all(historySignals), budget.effectiveTimeoutMs(1_000)).catch(() => [])
+            if (signals.length > 0 && signals.every((signal) => signal === 'not_found')) history = 'not_found'
+            else if (signals.length > 0 && signals.every((signal) => signal === 'found')) history = 'found'
+          }
+          let location = settledLocation
+          try {
+            if (!page.isClosed()) location = sessionLocationFromPath(page.url())
+          } catch {
+            location = { kind: 'other' }
+          }
+          if (!disposed) await recovery.onSettled?.({ status: finalStatus, target, location, history })
         }
-        let location = settledLocation
-        try {
-          if (!page.isClosed()) location = sessionLocationFromPath(page.url())
-        } catch {
-          location = { kind: 'other' }
-        }
-        await recovery.onSettled?.({ status: finalStatus, target, location, history })
       } catch {
         // reconciliation never owns the recovery's outcome
       }
       recoveryTarget = null
       historySignals = []
-      recovery.onRecovering?.(false)
+      if (!disposed) recovery.onRecovering?.(false)
     }
+    if (disposed) return 'error'
     // The recovery has settled: report the page's real state (never optimistic).
     if (finalStatus === 'logged_in') onStatus('logged_in')
     else if (finalStatus === 'logged_out') onStatus('logged_out')
@@ -1150,12 +1231,14 @@ export async function createDeepSeekBrowser(
       browserObj.on('disconnected', () => {
         if (disposed || myEpoch !== browserEpoch) return
         knownHealthy = false
+        if (reportLoginClose()) return
         void triggerRecovery('browser-disconnected')
       })
     }
     context.on('close', () => {
       if (disposed || myEpoch !== browserEpoch) return
       knownHealthy = false
+      if (reportLoginClose()) return
       void triggerRecovery('context-closed')
     })
   }
@@ -2207,16 +2290,22 @@ export async function createDeepSeekBrowser(
     listSessions,
     switchChat,
     readTranscript,
-    async dispose() {
-      // Stop any in-flight background work before the page goes away. The epoch
-      // fences make every pending listener callback a no-op, and `disposed` stops
-      // the recovery engine from launching a fresh Chromium (design §12).
+    dispose() {
+      if (disposalPromise) return disposalPromise
+      // Stop new ownership before closing; join constructors so the next mode
+      // cannot race an old Level 3 launch for the same user-data-dir.
       disposed = true
       pageEpoch += 1
       browserEpoch += 1
       currentDeltaReceiver = null
       currentReasoningReceiver = null
-      await context.close().catch(() => {})
+      const recoveryInFlight = recoveryPromise
+      const constructors = [...pendingContexts]
+      disposalPromise = (async () => {
+        await context.close().catch(() => {})
+        await Promise.allSettled([...constructors, ...(recoveryInFlight ? [recoveryInFlight] : [])])
+      })()
+      return disposalPromise
     },
   }
 }

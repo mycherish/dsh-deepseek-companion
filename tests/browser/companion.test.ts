@@ -26,6 +26,7 @@ test('FR-3 rendered interactions and detached window lifecycle', { timeout: 9000
   const js = await readFile(join(dir, 'fixture.js'))
   const peers = new Set<ServerResponse>()
   let chatPosts = 0
+  const browserCalls = { start: 0, show: 0, background: 0 }
   let allowStreams = true
   let postError: string | null = null
   let sessionDelayMs = 0
@@ -80,6 +81,15 @@ test('FR-3 rendered interactions and detached window lifecycle', { timeout: 9000
       else reply()
       return
     }
+    if (path.includes('/browser/')) {
+      const action = path.split('/').at(-1) as keyof typeof browserCalls
+      if (action in browserCalls) browserCalls[action]++
+      if (action === 'show') publish({ ...state, browserSession: { mode: 'login' } })
+      if (action === 'background') publish({ ...state, browserSession: { mode: 'background' } })
+      res.setHeader('Content-Type', 'application/json')
+      res.end(JSON.stringify({ ok: true }))
+      return
+    }
     if (path.startsWith('/api/')) {
       if (path.endsWith('/chat')) chatPosts++
       res.setHeader('Content-Type', 'application/json')
@@ -119,10 +129,49 @@ test('FR-3 rendered interactions and detached window lifecycle', { timeout: 9000
   await page.goto(`http://127.0.0.1:${address.port}/`)
   const input = (p: Page) => p.getByRole('textbox', { name: '输入消息', exact: true })
   await input(page).waitFor()
+  await page.waitForTimeout(30)
+  assert.equal(browserCalls.start, 1, 'opening the surface explicitly activates the background engine')
   assert.equal(await page.getByTitle('在新窗口中打开', { exact: true }).count(), 1)
   assert.equal(await page.getByTitle('关闭聊天窗口', { exact: true }).count(), 1)
   if (proofDir) await page.screenshot({ path: join(proofDir, 'dock-light.png') })
 
+  await t.test('登录窗口由显式点击打开，完成后返回聊天并保留未发送草稿', async () => {
+    await input(page).fill('登录切换保留草稿')
+    publish({
+      ...base(),
+      browserSession: { mode: 'background' },
+      deepseek: { ...base().deepseek, status: 'logged_out' },
+      connection: { status: 'login_required', browserReady: true },
+    })
+    const login = page.getByRole('button', { name: '登录 DeepSeek', exact: true })
+    await login.click()
+    await page.getByRole('button', { name: '完成登录，返回聊天', exact: true }).waitFor()
+    assert.equal(browserCalls.show, 1)
+    assert.equal(await input(page).count(), 0)
+    assert.equal(await page.getByRole('button', { name: '完成登录，返回聊天', exact: true }).isDisabled(), true)
+    publish({ ...base(), browserSession: { mode: 'login' } })
+    await page.getByRole('button', { name: '完成登录，返回聊天', exact: true }).click()
+    await input(page).waitFor()
+    assert.equal(browserCalls.background, 1)
+    assert.equal(await input(page).inputValue(), '登录切换保留草稿')
+    assert.equal(chatPosts, 0)
+    await input(page).fill('')
+    publish(base())
+  })
+  await t.test('已登录也可显式管理登录，动作不会发送草稿', async () => {
+    const before = browserCalls.show
+    publish({ ...base(), browserSession: { mode: 'background' } })
+    await input(page).fill('不要发送的草稿')
+    await page.getByRole('button', { name: '管理登录', exact: true }).click()
+    await page.getByRole('button', { name: '完成登录，返回聊天', exact: true }).waitFor()
+    assert.equal(browserCalls.show, before + 1)
+    await page.getByRole('button', { name: '完成登录，返回聊天', exact: true }).click()
+    await input(page).waitFor()
+    assert.equal(await input(page).inputValue(), '不要发送的草稿')
+    assert.equal(chatPosts, 0)
+    await input(page).fill('')
+    publish(base())
+  })
   await t.test('标题栏 hover / active 和输入区焦点提供实际视觉反馈', async () => {
     const button = page.getByRole('button', { name: '在新窗口中打开', exact: true })
     await button.hover()

@@ -9,6 +9,7 @@ import { connectionFrom } from '../shared/state.ts'
 import { ChatRequestError } from './error-lifecycle.ts'
 import { subscribeStateStream, type StateStreamStatus } from './state-stream.ts'
 import type {
+  BrowserSessionMode,
   ChatAttachment,
   ChatMessage,
   ChatSessionSummary,
@@ -171,14 +172,24 @@ export async function stopChatMessage(origin: string): Promise<boolean> {
   return body?.stopped === true
 }
 
-/** Ask the Host to focus (or reopen) the DeepSeek login page. */
-export async function showDeepSeekBrowser(origin: string): Promise<void> {
-  const response = await fetch(`${origin}${SHOW_PATH}`, {
-    method: 'POST',
-    credentials: 'include',
-  })
-  if (!response.ok) throw new Error(`show browser failed (HTTP ${response.status})`)
+async function browserAction(origin: string, path: string, signal?: AbortSignal): Promise<void> {
+  const response = await fetch(`${origin}${path}`, { method: 'POST', credentials: 'include', signal })
+  if (response.status === 404 && path.endsWith('/start')) return // Older Hosts start eagerly.
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as { error?: unknown } | null
+    throw new Error(typeof body?.error === 'string' ? body.error : '网页会话准备未完成，请稍后重试。')
+  }
 }
+
+/** Explicit activation when a surface opens; state reads and streams stay pure. */
+export const startDeepSeekBrowser = (origin: string, signal?: AbortSignal): Promise<void> =>
+  browserAction(origin, '/api/deepseek-companion/browser/start', signal)
+
+/** Only this explicit action may open a visible login window. */
+export const showDeepSeekBrowser = (origin: string): Promise<void> => browserAction(origin, SHOW_PATH)
+
+export const finishDeepSeekLogin = (origin: string): Promise<void> =>
+  browserAction(origin, '/api/deepseek-companion/browser/background')
 
 /** Send one message and resolve with the final complete reply text. */
 export async function sendChatMessage(origin: string, message: string): Promise<string> {
@@ -437,6 +448,11 @@ export function normalizeCompanionState(raw: unknown): CompanionState {
 
   return {
     status: 'ready',
+    ...(['idle', 'starting', 'background', 'login', 'switching', 'error'].includes(
+      asRecord(value.browserSession).mode as string,
+    )
+      ? { browserSession: { mode: asRecord(value.browserSession).mode as BrowserSessionMode } }
+      : {}),
     revision: typeof value.revision === 'number' ? value.revision : 0,
     instanceId: typeof value.instanceId === 'string' ? value.instanceId : '',
     connection,

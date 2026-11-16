@@ -30,7 +30,7 @@
       },
       "versions": [
         {
-          "version": "0.1.2",
+          "version": "0.1.3",
           "publishTimestamp": 0,
           "source": {
             "type": "npm",

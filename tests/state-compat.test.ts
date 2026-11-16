@@ -389,3 +389,11 @@ test('20B1 兼容层: 旧 Host 无 deepSeekMessageId → 字段缺失（不是 0
   assert.equal(state.chat.messages[0]!.deepSeekMessageId, undefined)
   assert.equal('deepSeekMessageId' in state.chat.messages[0]!, false)
 })
+
+test('browser lifecycle modes are optional for old Hosts and validate the new projection', () => {
+  assert.equal(normalizeCompanionState({}).browserSession, undefined)
+  for (const mode of ['idle', 'starting', 'background', 'login', 'switching', 'error']) {
+    assert.deepEqual(normalizeCompanionState({ browserSession: { mode } }).browserSession, { mode })
+  }
+  assert.equal(normalizeCompanionState({ browserSession: { mode: 'unknown' } }).browserSession, undefined)
+})
