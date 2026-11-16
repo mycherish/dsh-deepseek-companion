@@ -104,3 +104,11 @@ pnpm test:ui
 - 独立只读复审覆盖全部未提交差异与脱敏烟测记录：Blocker / High / Medium / Low 均未发现可执行问题；独立契约检查 6/6、diff --check 通过。该复审不代替用户的阶段 Review，也不表示批准公开发布。
 - 隔离宿主已停止，专属 Chromium 残留为 0；临时登录目录、运行路径记录、含启动认证 URL 的日志及全部本轮临时日志已删除。保留 `checks.json`、`cleanup.json`、各项脱敏验收 JSON、测试驱动和归档。远端测试会话保留，日常 profile 未动。
 - 本轮结论：不需要修改聊天／恢复／窗口运行代码；只提交候选元数据、契约回归和相关文档即可进入发布准备。当前尚未 commit / push / tag / publish，官网与线上市场未改。
+
+## 发布准备补充
+
+兼容提交 `ed4e7d5` 已推送至 `codex/web-022-compat`。npm 登录由用户完成后已确认发布身份为 `caelum-maple`。发布前同步 README 中的主安装命令、精确宿主范围、回退限制和旧名迁移说明，避免 npm 页面继续展示旧包命令和未发布候选提示；CHANGELOG 0.1.2 同步为版本说明。
+
+原验收归档保留不变。发布归档为 `dist/release/web-022-20261116/publish/dsh-chat-buddy-0.1.2.tgz`，SHA-256 `2e0392d8aca910d67037698d8d513dc961d398953c732593e9e71f83cf0694f8`。与原验收归档逐文件比较，仅 README.md / CHANGELOG.md 内容不同，运行文件、package.json、patch 与图标字节完全相同。验证记录为 `publish/verification.json`；不重做未变运行文件的真实聊天矩阵。
+
+个人网站仅两份产品 Markdown 已同步新版本、三项固定 Web 兼容声明及手动登录验收边界；Hugo 0.136.4 extended 构建成功，中英文输出均核对安装版本和宿主范围。npm 发布前未推送网站，也未部署新市场条目。

@@ -1,8 +1,8 @@
 # Changelog
 
-## 0.1.2 — 未发布候选
+## 0.1.2
 
-- 增加 macOS DSH Web `0.2.2-rc.1` 的精确版本候选声明，隔离安装、三窗口、文本流式、图片、Stop、历史和 SSE 断流重连通过；运行代码与 0.1.1 相同，实际验收记录见 `docs/web-022-compatibility.md`；不包含 Desktop 或其他 rc 版本。
+- 增加 macOS DSH Web `0.2.2-rc.1` 的精确版本兼容声明，隔离安装、三窗口、文本流式、图片、Stop、历史和 SSE 断流重连通过；运行代码与 0.1.1 相同，实际验收记录见 `docs/web-022-compatibility.md`；不包含 Desktop 或其他 rc 版本。
 
 ## 0.1.1
 
